@@ -94,7 +94,7 @@ const d=useMemo(()=>buildMonth(year,month),[year,month]);const mi=Math.max(0,(ye
 /* ALL EFFECTS */
 useEffect(()=>{if(!sb)return setAuthReady(true);sb.auth.getSession().then(({data:{session:s}})=>{setSession(s);setAuthReady(true)});const{data:{subscription}}=sb.auth.onAuthStateChange((_,s)=>setSession(s));return()=>subscription.unsubscribe()},[]);
 useEffect(()=>{const t=setTimeout(()=>setSplash(false),2400);return()=>clearTimeout(t)},[]);
-useEffect(()=>{fetch('https://api.privatbank.ua/p24api/pubinfo?exchange&json&coursid=11').then(r=>r.json()).then(data=>{const r={};data.forEach(d=>{r[d.ccy]={buy:parseFloat(d.buy),sale:parseFloat(d.sale)}});if(r.USD)setRates(r)}).catch(()=>{})},[]);
+useEffect(()=>{if(!sb||!session)return;sb.from('exchange_rates').select('*').then(({data})=>{if(data&&data.length){const r={};data.forEach(d=>{r[d.ccy]={buy:parseFloat(d.buy),sale:parseFloat(d.sale)}});setRates(r)}})},[session]);
 useEffect(()=>{if(!sb||!session)return;const start=year+'-'+String(month+1).padStart(2,'0')+'-01';const endD=new Date(year,month+1,0);const end=year+'-'+String(month+1).padStart(2,'0')+'-'+String(endD.getDate()).padStart(2,'0');sb.from('transactions').select('*, categories(name, icon, color)').gte('date',start).lte('date',end).order('date').then(({data})=>{if(data)setDbTx(data)})},[session,year,month]);
 /* EARLY RETURNS */
 if(splash||!authReady)return h('div',{className:'splash'},h('div',{className:'splash-title'},'Korinevsky'),h('div',{className:'splash-sub'},'Finance App'));
