@@ -1,4 +1,4 @@
-const CACHE = 'cashflow-v19';
+const CACHE = 'cashflow-v20';
 const ASSETS = [
   './',
   './index.html',
@@ -22,7 +22,7 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // CDN — Cache First (рідко змінюються)
+  // CDN — Cache First
   if (e.request.url.includes('cdn') || e.request.url.includes('esm.sh')) {
     e.respondWith(
       caches.match(e.request).then(r => r || fetch(e.request).then(res => {
@@ -33,7 +33,7 @@ self.addEventListener('fetch', e => {
     );
     return;
   }
-  // Локальні файли — Network First (завжди свіжа версія)
+  // Локальні — Network First
   e.respondWith(
     fetch(e.request).then(res => {
       const clone = res.clone();
