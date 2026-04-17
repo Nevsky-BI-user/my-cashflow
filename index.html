@@ -49,24 +49,24 @@ const{useState,useMemo,useEffect,createElement:h,Fragment}=React;
 /* ——— SUPABASE ——— */
 const SUPABASE_URL='https://lisedsqwdzshsxydghag.supabase.co';
 const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxpc2Vkc3F3ZHpzaHN4eWRnaGFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NTg5MDQsImV4cCI6MjA5MjAzNDkwNH0.qrCvCy1i3pdlXeNN2yV4bdfJ_a1Lis2fmo7AwrmgJ7Y';
-const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 /* ——— LOGIN SCREEN ——— */
-function LoginScreen({onLogin}){
+function LoginScreen(){
   const[email,setEmail]=useState('');const[pass,setPass]=useState('');const[err,setErr]=useState('');const[loading,setLoading]=useState(false);
-  const submit=async()=>{setErr('');setLoading(true);const{error}=await sb.auth.signInWithPassword({email,password:pass});if(error)setErr(error.message);setLoading(false)};
-  const onKey=e=>{if(e.key==='Enter')submit()};
-  return h('div',{style:{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'40px 24px',background:'radial-gradient(ellipse at 50% 40%,#1a1a3a 0%,#0f0f1e 70%)'}},
-    h('div',{style:{fontSize:28,fontWeight:800,letterSpacing:'-0.02em',background:'linear-gradient(135deg,#a0a4ff 0%,#38ecf8 50%,#ff85bc 100%)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text',marginBottom:6}},'Korinevsky'),
-    h('div',{style:{fontSize:11,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.18em',fontWeight:600,marginBottom:40}},'Finance App'),
-    h('div',{style:{width:'100%',maxWidth:320,display:'flex',flexDirection:'column',gap:12}},
-      h('input',{type:'email',placeholder:'Email',value:email,onChange:e=>setEmail(e.target.value),onKeyDown:onKey,
-        style:{width:'100%',padding:'14px 16px',borderRadius:12,border:'1px solid rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.04)',color:'var(--head)',fontSize:15,outline:'none',fontFamily:'inherit'}}),
-      h('input',{type:'password',placeholder:'Пароль',value:pass,onChange:e=>setPass(e.target.value),onKeyDown:onKey,
-        style:{width:'100%',padding:'14px 16px',borderRadius:12,border:'1px solid rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.04)',color:'var(--head)',fontSize:15,outline:'none',fontFamily:'inherit'}}),
+  const submit=async()=>{setLoading(true);setErr('');const{error}=await sb.auth.signInWithPassword({email,password:pass});if(error)setErr(error.message);setLoading(false)};
+  return h('div',{style:{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'0 32px',background:'radial-gradient(ellipse at 50% 30%,#1a1a3a 0%,#0f0f1e 70%)'}},
+    h('div',{style:{marginBottom:32,textAlign:'center'}},
+      h('div',{style:{fontSize:24,fontWeight:800,background:'linear-gradient(135deg,#a0a4ff,#38ecf8,#ff85bc)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',backgroundClip:'text'}},'Korinevsky Family'),
+      h('div',{style:{fontSize:11,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.15em',marginTop:4}},'Finance App')),
+    h('div',{style:{width:'100%',maxWidth:320}},
+      h('input',{type:'email',placeholder:'Email',value:email,onChange:e=>setEmail(e.target.value),
+        style:{width:'100%',padding:'14px 16px',borderRadius:12,border:'1px solid var(--border)',background:'var(--card)',color:'var(--head)',fontSize:14,marginBottom:10,outline:'none'}}),
+      h('input',{type:'password',placeholder:'Пароль',value:pass,onChange:e=>setPass(e.target.value),onKeyDown:e=>e.key==='Enter'&&submit(),
+        style:{width:'100%',padding:'14px 16px',borderRadius:12,border:'1px solid var(--border)',background:'var(--card)',color:'var(--head)',fontSize:14,marginBottom:14,outline:'none'}}),
       h('button',{onClick:submit,disabled:loading,
-        style:{width:'100%',padding:'14px',borderRadius:12,border:'none',background:'linear-gradient(135deg,#a0a4ff,#38ecf8)',color:'#0f0f1e',fontSize:15,fontWeight:700,cursor:loading?'wait':'pointer',opacity:loading?0.7:1,fontFamily:'inherit'}},
+        style:{width:'100%',padding:'14px',borderRadius:12,border:'none',background:'linear-gradient(135deg,#a0a4ff,#38ecf8)',color:'#0f0f1e',fontSize:14,fontWeight:700,cursor:'pointer',opacity:loading?0.6:1}},
         loading?'Вхід...':'Увійти'),
-      err&&h('div',{style:{fontSize:12,color:'var(--red)',textAlign:'center',padding:'4px 0'}},err)))
+      err&&h('div',{style:{color:'var(--red)',fontSize:12,textAlign:'center',marginTop:10}},err)))
 }
 const SAL_ADV_DAY=6,SAL_MAIN_DAY=21,SAL_ADV=51000,SAL_MAIN=51000,RENT=16500;
 const getDow=(y,m,d)=>new Date(y,m,d).getDay();const adjSal=(y,m,d)=>{const w=getDow(y,m,d);return w===6?d-1:w===0?d+1:d};const getUtil=m=>[7500,7000,5000,4000,3000,2000,2000,2500,3500,5000,6000,7000][m]||4000;const szn=m=>[11,0,1].includes(m)?'зима':[2,3,4].includes(m)?'весна':[5,6,7].includes(m)?'літо':'осінь';
@@ -103,7 +103,7 @@ function TabIcon({id,active}){const color=active?'#a0a4ff':'#5c5f80';if(id==='bu
 function App(){
 const[session,setSession]=useState(null);const[authLoading,setAuthLoading]=useState(true);
 useEffect(()=>{sb.auth.getSession().then(({data:{session:s}})=>{setSession(s);setAuthLoading(false)});const{data:{subscription}}=sb.auth.onAuthStateChange((_,s)=>setSession(s));return()=>subscription.unsubscribe()},[]);
-if(authLoading)return h('div',{className:'splash'},h('div',{className:'splash-title'},'Korinevsky'),h('div',{className:'splash-sub'},'Finance App'));
+if(authLoading)return h('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',color:'var(--muted)'}},'Завантаження...');
 if(!session)return h(LoginScreen);
 const now=new Date();const[year,setYear]=useState(now.getFullYear());const[month,setMonth]=useState(now.getMonth());const[half,setHalf]=useState(now.getDate()>=SAL_MAIN_DAY?1:0);const[tab,setTab]=useState('overview');const[splash,setSplash]=useState(true);const d=useMemo(()=>buildMonth(year,month),[year,month]);const mi=Math.max(0,(year-2026)*12+month-3);
 useEffect(()=>{const t=setTimeout(()=>setSplash(false),2400);return()=>clearTimeout(t)},[]);
@@ -115,7 +115,7 @@ const segments=[{l:'Оренда',v:RENT,c:'var(--blue)'},{l:'Комунальн
 if(splash)return h('div',{className:'splash'},h('div',{className:'splash-title'},'Korinevsky'),h('div',{className:'splash-sub'},'Finance App'));
 const tabs=[{id:'overview',l:'Огляд'},{id:'budget',l:'Бюджет'},{id:'flow',l:'Витрати'},{id:'credits',l:'Календар'},{id:'goals',l:'Цілі'}];
 return h('div',{className:'shell'},
-h('div',{className:'header'},h(NavBtn,{onClick:prev},h(Chevron,{dir:'l'})),h('div',{style:{textAlign:'center'}},h('div',{style:{fontSize:18,fontWeight:700,color:'var(--head)',letterSpacing:'-0.02em'}},periodLabel),h('div',{style:{fontSize:10,color:'var(--muted2)',fontWeight:500}},year+' \u00b7 '+(half===0?'аванс':'зарплата'))),h('div',{style:{display:'flex',gap:6}},h(NavBtn,{onClick:next},h(Chevron,{dir:'r'})),h('button',{onClick:()=>sb.auth.signOut(),style:{background:'none',border:'none',color:'var(--muted2)',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}},h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2,strokeLinecap:'round'},h('path',{d:'M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9'}))))),
+h('div',{className:'header',style:{position:'relative'}},h(NavBtn,{onClick:prev},h(Chevron,{dir:'l'})),h('div',{style:{textAlign:'center'}},h('div',{style:{fontSize:18,fontWeight:700,color:'var(--head)',letterSpacing:'-0.02em'}},periodLabel),h('div',{style:{fontSize:10,color:'var(--muted2)',fontWeight:500}},year+' \u00b7 '+(half===0?'аванс':'зарплата'))),h(NavBtn,{onClick:next},h(Chevron,{dir:'r'})),h('button',{onClick:()=>sb.auth.signOut(),style:{position:'absolute',right:16,top:16,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)',color:'var(--muted)',fontSize:10,cursor:'pointer',padding:'5px 10px',borderRadius:8,backdropFilter:'blur(8px)',WebkitBackdropFilter:'blur(8px)'}},'Вийти')),
 h('div',{className:'content'},h('div',{key:tab+''+half,className:'tab-page'},
 tab==='overview'&&h(Fragment,null,
 h('div',{style:{display:'flex',gap:8,marginBottom:12}},...[{c:'USD',b:USD_BUY,s:USD_SELL,clr:'var(--green)'},{c:'EUR',b:EUR_BUY,s:EUR_SELL,clr:'var(--blue)'}].map(x=>h('div',{key:x.c,style:{flex:1,background:'var(--card)',backdropFilter:'blur(12px)',WebkitBackdropFilter:'blur(12px)',border:'1px solid var(--border)',borderRadius:12,padding:'10px 14px',display:'flex',alignItems:'center',justifyContent:'space-between'}},h('span',{style:{fontSize:12,color:'var(--muted)',fontWeight:600}},x.c),h('span',{style:{fontSize:14,fontWeight:700,color:x.clr,fontVariantNumeric:'tabular-nums'}},x.b.toFixed(2)+' / '+x.s.toFixed(2))))),
