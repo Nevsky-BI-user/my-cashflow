@@ -130,6 +130,27 @@ create trigger on_auth_user_created
   for each row execute function handle_new_user();
 
 -- ============================================
+-- STORAGE: bucket для чеків
+-- ============================================
+-- Створити вручну в Dashboard: Storage → New Bucket
+--   Name: receipts
+--   Public: OFF
+--   File size limit: 5MB
+--   Allowed MIME types: image/jpeg, image/png, image/webp
+
+-- RLS для storage — сімейний доступ (обидва бачать все)
+create policy "auth upload receipts" on storage.objects for insert
+  with check (bucket_id = 'receipts' and auth.uid() is not null);
+
+create policy "auth read receipts" on storage.objects for select
+  using (bucket_id = 'receipts' and auth.uid() is not null);
+
+create policy "auth delete receipts" on storage.objects for delete
+  using (bucket_id = 'receipts' and auth.uid() is not null);
+
+-- Edge Functions (service_role) мають повний доступ автоматично
+
+-- ============================================
 -- SEED DATA
 -- Замінити 'USER_UUID' на реальний UUID після створення акаунтів
 -- ============================================

@@ -223,19 +223,10 @@ SVG: <circle> з stroke-dasharray та stroke-dashoffset.
 1. Таблиці: profiles, categories, transactions, credits, goals, categorization_cache
    (повна схема з CLAUDE.md)
 
-2. RLS — РОЗДІЛЬНІ політики для кожної операції:
-   - profiles: select/update own (id = auth.uid()), no insert/delete від клієнта
-   - categories: select/insert/update/delete own (user_id = auth.uid())
-   - transactions: select/insert/update/delete own (user_id = auth.uid())
-   - credits: select/insert/update/delete own (user_id = auth.uid())
-   - goals: select/insert/update/delete own (user_id = auth.uid())
-   - categorization_cache: select для auth users, insert/update тільки через service_role
-
-3. Додаткова безпека для profiles:
-   - Заборонити читання mono_token через RLS:
-     create policy "select profile safe" on profiles for select
-       using (id = auth.uid())
-       -- або окремий view без mono_token для фронтенду
+2. RLS — СІМЕЙНИЙ ДОСТУП (обидва користувачі бачать ВСІ дані):
+   - Всі таблиці: auth.uid() is not null → повний доступ
+   - Незалогінені → нічого не бачать
+   - categorization_cache: select для auth users, insert/update через service_role
 
 4. Індекси: idx_tx_user_date, idx_tx_source_id, idx_cache_hash
 
@@ -269,31 +260,16 @@ SVG: <circle> з stroke-dasharray та stroke-dashoffset.
    - File size limit: 5MB
    - Allowed MIME types: image/jpeg, image/png, image/webp
 
-2. SQL для RLS на storage.objects:
+2. SQL для RLS на storage.objects — СІМЕЙНИЙ ДОСТУП (обидва бачать все):
 
-   -- Користувач може завантажувати і свою папку
-   create policy "user upload receipts" on storage.objects for insert
-     with check (
-       bucket_id = 'receipts'
-       and auth.uid() is not null
-       and (storage.foldername(name))[1] = auth.uid()::text
-     );
+   create policy "auth upload receipts" on storage.objects for insert
+     with check (bucket_id = 'receipts' and auth.uid() is not null);
 
-   -- Користувач може читати тільки свої файли
-   create policy "user read receipts" on storage.objects for select
-     using (
-       bucket_id = 'receipts'
-       and auth.uid() is not null
-       and (storage.foldername(name))[1] = auth.uid()::text
-     );
+   create policy "auth read receipts" on storage.objects for select
+     using (bucket_id = 'receipts' and auth.uid() is not null);
 
-   -- Видалення — тільки свої
-   create policy "user delete receipts" on storage.objects for delete
-     using (
-       bucket_id = 'receipts'
-       and auth.uid() is not null
-       and (storage.foldername(name))[1] = auth.uid()::text
-     );
+   create policy "auth delete receipts" on storage.objects for delete
+     using (bucket_id = 'receipts' and auth.uid() is not null);
 
 3. Edge Functions (service_role) мають повний доступ — вони завантажують чеки з Telegram.
 ```
@@ -438,11 +414,9 @@ SVG: <circle> з stroke-dasharray та stroke-dashoffset.
    }).then(r => r.json()).then(console.log)
    -- Має повернути порожній масив [] або 401, НЕ дані
 
-7. Перевірити RLS між користувачами (Supabase Dashboard → SQL Editor):
-   set role authenticated;
-   set request.jwt.claims = '{"sub":"<user2_uuid>"}';
-   select * from transactions;
-   -- Тільки транзакції user2
+7. Перевірити що обидва користувачі бачать ВСІ дані (сімейний доступ):
+   -- Залогінитися як user1 → бачить всі транзакції
+   -- Залогінитися як user2 → бачить ті самі транзакції
 
 8. Перевірити що sign up вимкнено:
    sb.auth.signUp({email:'test@test.com', password:'test1234'})
@@ -769,7 +743,7 @@ if (category_id === null) {
 ☐ Secrets: supabase secrets set
 ☐ Landscape → заглушка "Поверніть пристрій"
 ☐ Без session → тільки логін, жодних даних
-☐ Один user не бачить даних іншого
+☐ Обидва user бачать всі дані (сімейний доступ)
 ☐ DevTools: немає secret keys в Network/LocalStorage
 ☐ Офлайн: додаток відкривається з кешу
 ```
