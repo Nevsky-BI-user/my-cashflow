@@ -103,15 +103,22 @@ function SavingsChart({mi,goals}){const[hover,setHover]=useState(null);const svg
 const TAB_ICONS={overview:'M3 3h7v7H3V3zm11 0h7v7h-7V3zM3 14h7v7H3v-7zm11 0h7v7h-7v-7z',flow:'M4 6h16M4 12h16M4 18h10',budget:'M12 2a10 10 0 110 20 10 10 0 010-20zm0 0v10l7 4',credits:'M3 6h18v12H3V6zm0 4h18',goals:'M5 13l4 4L19 7'};
 function TabIcon({id,active}){const color=active?'#a0a4ff':'#5c5f80';if(id==='budget')return h('svg',{width:20,height:20,viewBox:'0 0 24 24',fill:'none',stroke:color,strokeWidth:1.8,strokeLinecap:'round',strokeLinejoin:'round'},h('circle',{cx:12,cy:12,r:10}),h('path',{d:'M12 2v10l7 4'}));if(id==='credits')return h('svg',{width:20,height:20,viewBox:'0 0 24 24',fill:'none',stroke:color,strokeWidth:1.8,strokeLinecap:'round',strokeLinejoin:'round'},h('rect',{x:2,y:5,width:20,height:14,rx:3}),h('path',{d:'M2 10h20'}));return h('svg',{width:20,height:20,viewBox:'0 0 24 24',fill:'none',stroke:color,strokeWidth:1.8,strokeLinecap:'round',strokeLinejoin:'round'},h('path',{d:TAB_ICONS[id]}))}
 function App(){
+/* ——— ALL HOOKS FIRST (React rules) ——— */
+const now=new Date();
 const[session,setSession]=useState(null);const[authLoading,setAuthLoading]=useState(true);
-useEffect(()=>{sb.auth.getSession().then(({data:{session:s}})=>{setSession(s);setAuthLoading(false)});const{data:{subscription}}=sb.auth.onAuthStateChange((_,s)=>setSession(s));return()=>subscription.unsubscribe()},[]);
-if(authLoading)return h('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',color:'var(--muted)'}},'Завантаження...');
-if(!session)return h(LoginScreen);
-/* ——— Supabase data loading ——— */
 const[categories,setCategories]=useState(DEFAULT_BCAT);
 const[dbCredits,setDbCredits]=useState(DEFAULT_CREDITS);
 const[dbGoals,setDbGoals]=useState(DEFAULT_GOALS);
 const[dataLoading,setDataLoading]=useState(true);
+const[year,setYear]=useState(now.getFullYear());const[month,setMonth]=useState(now.getMonth());
+const[half,setHalf]=useState(now.getDate()>=SAL_MAIN_DAY?1:0);
+const[tab,setTab]=useState('overview');const[splash,setSplash]=useState(true);
+const[dbTx,setDbTx]=useState([]);
+const[showAdd,setShowAdd]=useState(false);
+const[txType,setTxType]=useState('expense');const[txAmount,setTxAmount]=useState('');const[txCatId,setTxCatId]=useState('');const[txDesc,setTxDesc]=useState('');const[txDate,setTxDate]=useState(now.toISOString().split('T')[0]);const[txSaving,setTxSaving]=useState(false);const[txErr,setTxErr]=useState('');
+/* auth */
+useEffect(()=>{sb.auth.getSession().then(({data:{session:s}})=>{setSession(s);setAuthLoading(false)});const{data:{subscription}}=sb.auth.onAuthStateChange((_,s)=>setSession(s));return()=>subscription.unsubscribe()},[]);
+/* load categories/credits/goals */
 useEffect(()=>{if(!session)return;
   Promise.all([
     sb.from('categories').select('*').order('sort_order'),
@@ -124,20 +131,18 @@ useEffect(()=>{if(!session)return;
     setDataLoading(false);
   }).catch(()=>setDataLoading(false));
 },[session]);
-const BCAT=categories;const CREDITS=dbCredits;const GOALS=dbGoals;
-const TOTAL_VAR_DYN=BCAT.reduce((s,c)=>s+(c.limit||c.budget_limit||0),0)||TOTAL_VAR;
-const now=new Date();const[year,setYear]=useState(now.getFullYear());const[month,setMonth]=useState(now.getMonth());const[half,setHalf]=useState(now.getDate()>=SAL_MAIN_DAY?1:0);const[tab,setTab]=useState('overview');const[splash,setSplash]=useState(true);
-/* ——— Supabase transactions ——— */
-const[dbTx,setDbTx]=useState([]);
+/* load transactions */
 useEffect(()=>{if(!session)return;
   const start=year+'-'+String(month+1).padStart(2,'0')+'-01';
   const endD=new Date(year,month+1,0);
   const end=year+'-'+String(month+1).padStart(2,'0')+'-'+String(endD.getDate()).padStart(2,'0');
-  sb.from('transactions').select('*, categories(name, icon, color)').gte('date',start).lte('date',end).order('date').then(({data})=>{
-    if(data)setDbTx(data);
-  });
+  sb.from('transactions').select('*, categories(name, icon, color)').gte('date',start).lte('date',end).order('date').then(({data})=>{if(data)setDbTx(data)});
 },[session,year,month]);
-/* якщо є реальні транзакції — використовуємо їх, інакше buildMonth з демо */
+/* splash timer */
+useEffect(()=>{const t=setTimeout(()=>setSplash(false),2400);return()=>clearTimeout(t)},[]);
+/* ——— DERIVED STATE ——— */
+const BCAT=categories;const CREDITS=dbCredits;const GOALS=dbGoals;
+const TOTAL_VAR_DYN=BCAT.reduce((s,c)=>s+(c.limit||c.budget_limit||0),0)||TOTAL_VAR;
 const hasRealTx=dbTx.length>0;
 const realData=useMemo(()=>{
   if(!hasRealTx)return null;
@@ -152,24 +157,24 @@ const realData=useMemo(()=>{
   ev.sort((a,b)=>a.day-b.day);
   let bal=0;const tl=ev.map(x=>{bal+=x.type==='in'?x.amount:-x.amount;return{...x,bal}});
   const inc=tl.filter(x=>x.type==='in').reduce((s,x)=>s+x.amount,0);
-  const exp=tl.filter(x=>x.type==='out').reduce((s,x)=>s+x.amount,0);
   const util=getUtil(month);const fixedExp=RENT+util;
-  const free=inc-fixedExp;const savings=free-TOTAL_VAR_DYN;
   const activeCredits=CREDITS.filter(c=>crAct(c,year,month));
   const totalCrd=activeCredits.reduce((s,c)=>s+c.amount,0);
   return{y:year,m:month,ev,tl,inc,fixedExp:fixedExp+totalCrd,util,free:inc-fixedExp-totalCrd,savings:inc-fixedExp-totalCrd-TOTAL_VAR_DYN,activeCredits,totalCrd};
 },[dbTx,hasRealTx,year,month,CREDITS,TOTAL_VAR_DYN]);
-const d=hasRealTx?realData:useMemo(()=>buildMonth(year,month,CREDITS,BCAT,TOTAL_VAR_DYN),[year,month,CREDITS,BCAT,TOTAL_VAR_DYN]);
+const demoData=useMemo(()=>buildMonth(year,month,CREDITS,BCAT,TOTAL_VAR_DYN),[year,month,CREDITS,BCAT,TOTAL_VAR_DYN]);
+const d=hasRealTx?realData:demoData;
 const mi=Math.max(0,(year-2026)*12+month-3);
-useEffect(()=>{const t=setTimeout(()=>setSplash(false),2400);return()=>clearTimeout(t)},[]);
+/* ——— EARLY RETURNS (after all hooks) ——— */
+if(authLoading)return h('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',color:'var(--muted)'}},'Завантаження...');
+if(!session)return h(LoginScreen);
+/* ——— HANDLERS ——— */
 const prev=()=>{if(half===0){if(month===0){setMonth(11);setYear(year-1)}else setMonth(month-1);setHalf(1)}else setHalf(0)};
 const next=()=>{if(half===1){if(month===11){setMonth(0);setYear(year+1)}else setMonth(month+1);setHalf(0)}else setHalf(1)};
 const sal1=adjSal(year,month,SAL_ADV_DAY);const sal2=adjSal(year,month,SAL_MAIN_DAY);
 const periodLabel=half===0?sal1+'\u2013'+sal2+' '+MO_S[month]:sal2+' '+MO_S[month]+'\u2013'+'5 '+MO_S[(month+1)%12];
 const segments=[{l:'Оренда',v:RENT,c:'var(--blue)'},{l:'Комунальні',v:d.util,c:'var(--cyan)'},{l:'Кредити',v:d.totalCrd,c:'var(--yellow)'},{l:'Змінні',v:TOTAL_VAR_DYN,c:'var(--pink)'},{l:'Накопичення',v:Math.max(0,d.savings),c:'var(--indigo)'}].filter(s=>s.v>0);
 if(splash)return h('div',{className:'splash'},h('div',{className:'splash-title'},'Korinevsky'),h('div',{className:'splash-sub'},'Finance App'));
-const[showAdd,setShowAdd]=useState(false);
-const[txType,setTxType]=useState('expense');const[txAmount,setTxAmount]=useState('');const[txCatId,setTxCatId]=useState('');const[txDesc,setTxDesc]=useState('');const[txDate,setTxDate]=useState(new Date().toISOString().split('T')[0]);const[txSaving,setTxSaving]=useState(false);const[txErr,setTxErr]=useState('');
 const openAdd=()=>{setTxType('expense');setTxAmount('');setTxCatId('');setTxDesc('');setTxDate(new Date().toISOString().split('T')[0]);setTxErr('');setShowAdd(true)};
 const saveTx=async()=>{
   const amt=parseFloat(txAmount);if(!amt||amt<=0)return setTxErr('Введіть суму');
