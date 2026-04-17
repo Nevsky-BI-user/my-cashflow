@@ -37,8 +37,6 @@ button{font-family:inherit}
 ::-webkit-scrollbar{width:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:4px}
-
-/* splash */
 @keyframes splashFade{0%{opacity:1}80%{opacity:1}100%{opacity:0;pointer-events:none}}
 @keyframes logoGlow{0%{opacity:0;transform:scale(0.9) translateY(10px)}40%{opacity:1;transform:scale(1) translateY(0)}100%{opacity:1}}
 @keyframes subtitleIn{0%{opacity:0;letter-spacing:0.4em}60%{opacity:0}100%{opacity:0.6;letter-spacing:0.18em}}
@@ -52,22 +50,19 @@ button{font-family:inherit}
   background-clip:text;animation:logoGlow 1s ease-out}
 .splash-sub{font-size:11px;color:var(--muted);text-transform:uppercase;
   letter-spacing:0.18em;font-weight:600;animation:subtitleIn 2s ease-out}
-
-/* responsive shell */
 .shell{max-width:480px;margin:0 auto;min-height:100vh;min-height:100dvh}
 .header{padding:18px 16px 0;padding-top:calc(12px + env(safe-area-inset-top));
   display:flex;align-items:center;justify-content:space-between;
   position:sticky;top:0;background:rgba(15,15,30,0.85);backdrop-filter:blur(16px);
   -webkit-backdrop-filter:blur(16px);z-index:10}
-.content{padding:14px 16px 76px}
-/* bottom tab bar */
+.content{padding:14px 16px 100px}
 .tab-bar{position:fixed;bottom:0;left:0;right:0;z-index:100;
-  background:rgba(20,20,40,0.88);backdrop-filter:blur(20px);
+  background:rgba(20,20,40,0.92);backdrop-filter:blur(20px);
   -webkit-backdrop-filter:blur(20px);
   border-top:1px solid rgba(255,255,255,0.06);
   box-shadow:0 -4px 24px rgba(0,0,0,0.4);
-  display:flex;justify-content:space-around;align-items:center;
-  height:56px;padding-bottom:env(safe-area-inset-bottom);
+  display:flex;justify-content:space-around;align-items:flex-start;
+  padding-top:8px;padding-bottom:calc(10px + env(safe-area-inset-bottom));
   max-width:480px;margin:0 auto}
 .tab-btn{display:flex;flex-direction:column;align-items:center;gap:3px;
   background:none;border:none;cursor:pointer;padding:6px 12px;
@@ -75,7 +70,6 @@ button{font-family:inherit}
   -webkit-tap-highlight-color:transparent;transition:color 0.15s}
 .tab-btn svg{width:20px;height:20px}
 .tab-btn span{font-size:10px;font-weight:600;letter-spacing:0.02em}
-
 @media(min-width:420px){
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 }
@@ -83,15 +77,12 @@ button{font-family:inherit}
   .header{padding-left:20px;padding-right:20px}
   .content{padding-left:20px;padding-right:20px}
 }
-/* tooltip */
 .tip{position:absolute;background:rgba(22,22,44,0.92);backdrop-filter:blur(12px);
   -webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);
   border-radius:10px;padding:7px 12px;font-size:11px;color:#fff;
   white-space:nowrap;pointer-events:none;z-index:200;
   box-shadow:0 8px 32px rgba(0,0,0,0.5);transform:translateX(-50%);
   font-variant-numeric:tabular-nums}
-
-/* Блокування landscape на мобільних */
 @media(orientation:landscape) and (max-height:500px){
   #root{display:none !important}
   body::after{
@@ -102,7 +93,6 @@ button{font-family:inherit}
     padding:40px;background:#0f0f1e;z-index:9999;
   }
 }
-/* tab content animation */
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 .tab-page{animation:fadeIn 0.22s ease-out}
 @keyframes stagger{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
@@ -110,16 +100,12 @@ button{font-family:inherit}
 </head>
 <body>
 <div id="root"></div>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-
 <script>
 'use strict';
 const{useState,useMemo,useEffect,createElement:h,Fragment}=React;
 const e=(tag,props,...ch)=>h(tag,props,...ch);
-
-/* ——— HELPERS ——— */
 const getDow=(y,m,d)=>new Date(y,m,d).getDay();
 const adjSal=(y,m,d)=>{const w=getDow(y,m,d);return w===6?d-1:w===0?d+1:d};
 const getUtil=m=>[7500,7000,5000,4000,3000,2000,2000,2500,3500,5000,6000,7000][m]||4000;
@@ -128,18 +114,14 @@ const MO=['Січень','Лютий','Березень','Квітень','Тр�
 const fmt=n=>n.toLocaleString('uk-UA',{minimumFractionDigits:2,maximumFractionDigits:2});
 const fmtI=n=>Math.round(n).toLocaleString('uk-UA');
 const fmtK=n=>n>=1000?(n/1000).toFixed(n%1000===0?0:1)+'k':n.toFixed(0);
-
-/* ——— CREDITS ——— */
 const CREDITS=[
-  {name:'Золотий Вік',amount:3731.88,day:11,sy:2026,sm:3,total:8,color:'#a78bfa',src:'mono'},
-  {name:'Ц',amount:111.07,day:21,sy:2026,sm:2,total:11,color:'#fb923c',src:'mono'},
-  {name:'Foxtrot',amount:6133.27,day:24,sy:2026,sm:1,total:15,color:'#34d399',src:'privat'},
-  {name:'Comfy',amount:683.25,day:17,sy:2026,sm:3,total:12,color:'#fbbf24',src:'privat'},
+  {name:'Канцтовж',amount:3731.88,day:11,sy:2026,sm:3,total:8,color:'#a78bfa',src:'mono'},
+  {name:'Навушники',amount:111.07,day:21,sy:2026,sm:2,total:11,color:'#fb923c',src:'mono'},
+  {name:'Lenovo Legion 5 Pro',amount:6133.27,day:24,sy:2026,sm:1,total:15,color:'#34d399',src:'privat'},
+  {name:'Аерогриль',amount:683.25,day:17,sy:2026,sm:3,total:12,color:'#fbbf24',src:'privat'},
 ];
 const crAct=(c,y,m)=>{const s=c.sy*12+c.sm,cur=y*12+m;return cur>=s&&cur<=s+c.total-1};
 const crPN=(c,y,m)=>y*12+m-(c.sy*12+c.sm)+1;
-
-/* ——— BUDGET ——— */
 const BCAT=[
   {id:'food',name:'Продукти',limit:15000,color:'#f472b6',icon:'\u{1F6D2}'},
   {id:'cafe',name:'Кафе/Ресторани',limit:2000,color:'#fb923c',icon:'\u2615'},
@@ -156,8 +138,6 @@ const BCAT=[
   {id:'other',name:'Інше',limit:1800,color:'#6b7280',icon:'\u{1F4E6}'},
 ];
 const TOTAL_VAR=BCAT.reduce((s,c)=>s+c.limit,0);
-
-/* demo transactions for UI development */
 const DEMO_TX=[
   {day:1,type:'out',cat:'АТБ',amount:892,catId:'food',src:'mono',mcc:5411},
   {day:2,type:'out',cat:'Bolt',amount:67,catId:'transport',src:'mono',mcc:4121},
@@ -178,26 +158,22 @@ const DEMO_TX=[
   {day:19,type:'out',cat:'АТБ',amount:1156,catId:'food',src:'mono',mcc:5411},
   {day:20,type:'out',cat:'Bolt',amount:89,catId:'transport',src:'mono',mcc:4121},
 ];
-
 const DOW_UA=['неділя','понеділок','вівторок','середа','четвер','пʼятниця','субота'];
 const MON_UA_GEN=['січня','лютого','березня','квітня','травня','червня','липня','серпня','вересня','жовтня','листопада','грудня'];
 function dayLabel(y,m,d){return d+' '+MON_UA_GEN[m]+', '+DOW_UA[new Date(y,m,d).getDay()]}
-
-/* ——— SAVINGS ——— */
-const INIT_SAVINGS=49800; /* $1200 × 41.5 UAH */
+const USD_RATE=41.5;
+const EUR_RATE=45.2;
+const INIT_SAVINGS=Math.round(1200*USD_RATE);
 const GOALS=[
   {id:'cushion',name:'Подушка безпеки',target:240000,color:'#22d3ee',desc:'3 міс витрат'},
-  {id:'auto',name:'Фонд Авто',target:750000,color:'#60a5fa',desc:'б/в кросовер $19-22k'},
-  {id:'housing',name:'Фонд Житло',target:498000,color:'#a78bfa',desc:'перший внесок'},
+  {id:'auto',name:'Фонд Авто',target:Math.round(10000*USD_RATE),color:'#60a5fa',desc:'б/в кросовер $10k'},
+  {id:'housing',name:'Фонд Житло',target:Math.round(20000*USD_RATE),color:'#a78bfa',desc:'перший внесок $20k'},
 ];
-
 const TIMELINE_EVENTS=[
   {date:'08.2027',label:'Подушка безпеки повна',c:'#22d3ee',mo:16},
-  {date:'04-10.2030',label:'Купівля авто',c:'#60a5fa',mo:48},
-  {date:'06.2031',label:'Перший внесок зібрано',c:'#a78bfa',mo:62},
+  {date:'2029',label:'Купівля авто',c:'#60a5fa',mo:36},
+  {date:'2031',label:'Перший внесок зібрано',c:'#a78bfa',mo:60},
 ];
-
-/* ——— BUILD MONTH ——— */
 function buildMonth(y,m){
   const sal1=adjSal(y,m,6),sal2=adjSal(y,m,21),util=getUtil(m);
   const ev=[];
@@ -214,7 +190,6 @@ function buildMonth(y,m){
         meta:{pn,total:c.total,rem:c.total-pn,src:c.src,color:c.color}});
     }
   });
-  /* demo variable expenses */
   DEMO_TX.forEach(tx=>{
     const bc=BCAT.find(b=>b.id===tx.catId);
     ev.push({day:tx.day,type:tx.type,cat:tx.cat,amount:tx.amount,
@@ -231,15 +206,12 @@ function buildMonth(y,m){
   const activeCredits=CREDITS.filter(c=>crAct(c,y,m));
   return{y,m,ev,tl,inc,fixedExp,util,free,savings,activeCredits,totalCrd};
 }
-
 function getGoalAcc(goal,mi){
   if(goal.id==='cushion')return Math.min(goal.target,INIT_SAVINGS+mi*10000);
   if(goal.id==='auto'){const s=24;return mi>s?Math.min(goal.target,(mi-s)*25000):0}
   if(goal.id==='housing'){const s=18;return mi>s?Math.min(goal.target,(mi-s)*6500):0}
   return 0;
 }
-
-/* savings history: total accumulated per month for chart */
 function buildSavingsHistory(mi){
   const pts=[];
   for(let i=0;i<=Math.min(mi,36);i++){
@@ -251,25 +223,21 @@ function buildSavingsHistory(mi){
   }
   return pts;
 }
-
-/* ——— COMPONENTS ——— */
 function NavBtn({onClick,children}){
   return h('button',{onClick,style:{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)',color:'var(--muted)',width:38,height:38,borderRadius:10,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(8px)',WebkitBackdropFilter:'blur(8px)'}},children);
 }
-
 function Chevron({dir}){
   return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2.5,strokeLinecap:'round'},
     h('path',{d:dir==='l'?'M15 18l-6-6 6-6':'M9 18l6-6-6-6'}));
 }
-
 function Spark({tl,inc}){
   if(!tl.length)return null;
   const[hover,setHover]=useState(null);
   const svgRef=React.useRef(null);
   const vals=tl.map(t=>t.bal);
   const minV=Math.min(...vals),maxV=Math.max(...vals);
-  const range=Math.max(maxV-minV,1)*1.15;
-  const W=500,H=110,PX=6,PT=14,PB=14;
+  const range=Math.max(maxV-minV,1)*1.2;
+  const W=500,H=120,PX=6,PT=6,PB=6;
   const mapY=v=>H-PB-((v-minV)/range)*(H-PT-PB);
   const zeroY=mapY(0);
   const pts=tl.map((t,i)=>{
@@ -280,49 +248,57 @@ function Spark({tl,inc}){
   const areaBase=Math.min(zeroY,H-PB);
   const area=PX+','+areaBase+' '+line+' '+(W-PX)+','+areaBase;
   const minI=vals.indexOf(minV);
-  const onMove=e=>{
-    const svg=svgRef.current;if(!svg)return;
+  const getIdx=e=>{
+    const svg=svgRef.current;if(!svg)return-1;
     const rect=svg.getBoundingClientRect();
-    const xPx=e.clientX-rect.left;
-    const xRatio=xPx/rect.width;
-    const idx=Math.round(xRatio*(tl.length-1));
-    setHover(Math.max(0,Math.min(tl.length-1,idx)));
+    const cx=e.touches?e.touches[0].clientX:e.clientX;
+    const ratio=(cx-rect.left)/rect.width;
+    return Math.max(0,Math.min(tl.length-1,Math.round(ratio*(tl.length-1))));
   };
+  const onMove=e=>{const i=getIdx(e);if(i>=0)setHover(i)};
   const hp=hover!==null?pts[hover]:null;
   const hd=hover!==null?tl[hover]:null;
-  return h('div',{style:{position:'relative'}},
-    h('svg',{ref:svgRef,viewBox:'0 0 '+W+' '+H,style:{width:'100%',display:'block'},
-      onPointerMove:onMove,onPointerLeave:()=>setHover(null)},
-      h('defs',null,h('linearGradient',{id:'sg',x1:0,y1:0,x2:0,y2:1},
-        h('stop',{offset:'0%',stopColor:'#818cf8',stopOpacity:0.18}),
-        h('stop',{offset:'100%',stopColor:'#818cf8',stopOpacity:0}))),
-      /* zero line */
-      minV<0&&h('line',{x1:PX,x2:W-PX,y1:zeroY,y2:zeroY,stroke:'#4e536833',strokeWidth:0.5,strokeDasharray:'4 3'}),
-      h('polygon',{points:area,fill:'url(#sg)'}),
-      h('polyline',{points:line,fill:'none',stroke:'#818cf8',strokeWidth:1.8,strokeLinejoin:'round',strokeLinecap:'round'}),
-      /* points */
-      ...pts.map(([x,y],i)=>h('circle',{key:i,cx:x,cy:y,
-        r:hover===i?4:i===minI?3:1.5,
-        fill:i===minI?'#ef4444':hover===i?'#818cf8':'#12121a',
-        stroke:i===minI?'#fca5a5':'#818cf8',strokeWidth:hover===i?1.5:1,
-        style:{transition:'r 0.1s'}})),
-      /* crosshair */
-      hp&&h('line',{x1:hp[0],x2:hp[0],y1:PT-4,y2:H-PB+4,stroke:'#818cf855',strokeWidth:0.8,strokeDasharray:'3 2'}),
-      /* labels */
-      h('text',{x:pts[0][0]+3,y:pts[0][1]+(vals[0]<0?10:-6),fill:vals[0]<0?'#f8717199':'#4e536866',
-        fontSize:7,fontWeight:500,fontFamily:'inherit'},fmtI(vals[0])),
-      h('text',{x:pts[pts.length-1][0]-3,y:pts[pts.length-1][1]-6,fill:'#a5b4fc88',
-        fontSize:7,fontWeight:500,textAnchor:'end',fontFamily:'inherit'},fmtI(vals[vals.length-1])),
-      minV<0&&h('text',{x:pts[minI][0],y:pts[minI][1]+10,fill:'#f8717177',
-        fontSize:6.5,fontWeight:500,textAnchor:'middle',fontFamily:'inherit'},fmtI(minV)),
-      /* invisible overlay */
-      h('rect',{x:0,y:0,width:W,height:H,fill:'transparent',style:{cursor:'crosshair'}})
+  return h('div',null,
+    h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,minHeight:28}},
+      hd?h(Fragment,null,
+        h('span',{style:{fontSize:12,color:'var(--text)',fontWeight:500}},hd.cat),
+        h('span',{style:{fontSize:14,fontWeight:700,color:hd.type==='in'?'var(--green)':'var(--red)',fontVariantNumeric:'tabular-nums'}},
+          (hd.type==='in'?'+':'\u2212')+fmtI(hd.amount)+' \u20b4'),
+        h('span',{style:{fontSize:13,fontWeight:700,color:'var(--head)',fontVariantNumeric:'tabular-nums'}},
+          'бал: '+fmtI(hd.bal)+' \u20b4')
+      ):h(Fragment,null,
+        h('span',{style:{fontSize:13,fontWeight:600,color:vals[0]<0?'var(--red)':'var(--muted)',fontVariantNumeric:'tabular-nums'}},
+          fmtI(vals[0])+' \u20b4'),
+        h('span',{style:{fontSize:13,fontWeight:700,color:'var(--indigo)',fontVariantNumeric:'tabular-nums'}},
+          fmtI(vals[vals.length-1])+' \u20b4')
+      )),
+    h('div',{style:{position:'relative'}},
+      h('svg',{ref:svgRef,viewBox:'0 0 '+W+' '+H,style:{width:'100%',display:'block',touchAction:'none'},
+        onPointerMove:onMove,onPointerLeave:()=>setHover(null),
+        onTouchStart:e=>{e.preventDefault();onMove(e)},
+        onTouchMove:e=>{e.preventDefault();onMove(e)},
+        onTouchEnd:()=>setHover(null)},
+        h('defs',null,h('linearGradient',{id:'sg',x1:0,y1:0,x2:0,y2:1},
+          h('stop',{offset:'0%',stopColor:'#a0a4ff',stopOpacity:0.2}),
+          h('stop',{offset:'100%',stopColor:'#a0a4ff',stopOpacity:0}))),
+        minV<0&&h('line',{x1:PX,x2:W-PX,y1:zeroY,y2:zeroY,stroke:'rgba(255,255,255,0.06)',strokeWidth:0.5,strokeDasharray:'4 3'}),
+        h('polygon',{points:area,fill:'url(#sg)'}),
+        h('polyline',{points:line,fill:'none',stroke:'#a0a4ff',strokeWidth:2,strokeLinejoin:'round',strokeLinecap:'round'}),
+        ...pts.map(([x,y],i)=>h('circle',{key:i,cx:x,cy:y,
+          r:hover===i?5:i===minI?3.5:1.5,
+          fill:i===minI?'#ff6b7f':hover===i?'#a0a4ff':'rgba(15,15,30,0.8)',
+          stroke:i===minI?'#ff6b7f':'#a0a4ff',strokeWidth:hover===i?2:1,
+          style:{transition:'r 0.1s'}})),
+        hp&&h('line',{x1:hp[0],x2:hp[0],y1:0,y2:H,stroke:'rgba(160,164,255,0.3)',strokeWidth:1}),
+        h('rect',{x:0,y:0,width:W,height:H,fill:'transparent'})
+      )
     ),
-    hp&&hd&&h('div',{className:'tip',style:{left:(hp[0]/W*100)+'%',top:Math.max(0,hp[1]/H*100-30)+'%'}},
-      hd.cat+': '+(hd.type==='in'?'+':'\u2212')+fmtI(hd.amount)+' \u20b4 \u00b7 бал: '+fmtI(hd.bal))
+    h('div',{style:{display:'flex',justifyContent:'space-between',marginTop:4}},
+      h('span',{style:{fontSize:11,color:'var(--muted2)'}},'початок'),
+      minV<0&&h('span',{style:{fontSize:11,color:'var(--red)',fontWeight:600,fontVariantNumeric:'tabular-nums'}},'мін: '+fmtI(minV)),
+      h('span',{style:{fontSize:11,color:'var(--muted2)'}},'кінець'))
   );
 }
-
 function Row({ev,last}){
   const isIn=ev.type==='in',accent=isIn?'var(--green)':'var(--red)';
   const bgAlpha=isIn?'rgba(52,211,153,0.08)':((ev.color||'#888')+'14');
@@ -343,29 +319,29 @@ function Row({ev,last}){
       h('div',{style:{fontSize:10,color:'var(--muted2)',fontVariantNumeric:'tabular-nums'}},fmtI(ev.bal)))
   );
 }
-
-function BudgetRow({cat}){
+function BudgetRow({cat,spent}){
   const[hover,setHover]=useState(false);
-  const pct=(cat.limit/TOTAL_VAR)*100;
-  const a80=cat.limit*0.8;
-  return h('div',{style:{display:'flex',alignItems:'center',gap:12,padding:'10px 0',position:'relative'},
+  const sp=spent||0;
+  const pct=Math.min(100,(sp/cat.limit)*100);
+  const barColor=pct>=100?'var(--red)':pct>=80?'var(--yellow)':cat.color;
+  const planPct=(cat.limit/TOTAL_VAR)*100;
+  return h('div',{style:{display:'flex',alignItems:'center',gap:12,padding:'12px 0',position:'relative'},
     onPointerEnter:()=>setHover(true),onPointerLeave:()=>setHover(false)},
-    h('div',{style:{width:28,textAlign:'center',fontSize:14,flexShrink:0}},cat.icon),
+    h('div',{style:{width:32,height:32,borderRadius:10,background:cat.color+'18',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:15}},cat.icon),
     h('div',{style:{flex:1,minWidth:0}},
-      h('div',{style:{display:'flex',justifyContent:'space-between',marginBottom:3}},
+      h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}},
         h('span',{style:{fontSize:12,color:'var(--text)',fontWeight:500}},cat.name),
-        h('span',{style:{fontSize:12,color:'var(--text)',fontWeight:600,fontVariantNumeric:'tabular-nums'}},fmtI(cat.limit))),
-      h('div',{style:{height:4,background:'var(--border)',borderRadius:3,overflow:'hidden',position:'relative'}},
-        h('div',{style:{width:pct+'%',height:'100%',background:cat.color,borderRadius:3,opacity:hover?1:0.8,transition:'opacity 0.15s'}}),
-        h('div',{style:{position:'absolute',left:'80%',top:0,width:1,height:'100%',background:'rgba(251,191,36,0.4)'}})),
-      h('div',{style:{display:'flex',justifyContent:'space-between',marginTop:2}},
-        h('span',{style:{fontSize:9,color:'var(--muted2)'}},'\u26a0 80% = '+fmtI(a80)),
-        h('span',{style:{fontSize:9,color:'var(--muted2)'}},pct.toFixed(1)+'%'))),
-    hover&&h('div',{className:'tip',style:{right:0,top:-28}},
-      cat.name+': '+fmtI(cat.limit)+' \u20b4 \u00b7 '+pct.toFixed(1)+'% бюджету')
+        h('div',{style:{textAlign:'right'}},
+          h('span',{style:{fontSize:15,fontWeight:700,color:pct>=80?barColor:'var(--head)',fontVariantNumeric:'tabular-nums'}},fmtI(sp)),
+          h('span',{style:{fontSize:11,color:'var(--muted2)',fontWeight:500}},' / '+fmtI(cat.limit)))),
+      h('div',{style:{height:5,background:'rgba(255,255,255,0.04)',borderRadius:3,overflow:'hidden',position:'relative'}},
+        h('div',{style:{width:pct+'%',height:'100%',background:barColor,borderRadius:3,opacity:hover?1:0.85,transition:'width 0.5s, opacity 0.15s'}}),
+        h('div',{style:{position:'absolute',left:'80%',top:0,width:1,height:'100%',background:'rgba(255,200,68,0.3)'}})),
+      h('div',{style:{display:'flex',justifyContent:'space-between',marginTop:3}},
+        h('span',{style:{fontSize:10,color:'var(--muted2)'}},pct.toFixed(0)+'% витрачено'),
+        h('span',{style:{fontSize:10,color:'var(--muted2)'}},planPct.toFixed(0)+'% плану')))
   );
 }
-
 function CreditCard({c,y,m}){
   if(!crAct(c,y,m))return null;
   const pn=crPN(c,y,m),pct=(pn/c.total)*100,rem=(c.total-pn)*c.amount;
@@ -382,7 +358,6 @@ function CreditCard({c,y,m}){
       h('span',null,'залишок: '+fmtI(rem)+' \u20b4'))
   );
 }
-
 function GoalBar({goal,mi}){
   const[hover,setHover]=useState(false);
   const acc=getGoalAcc(goal,mi);
@@ -404,8 +379,6 @@ function GoalBar({goal,mi}){
       'Залишок: '+fmtI(rem)+' \u20b4 \u00b7 '+pct.toFixed(1)+'%')
   );
 }
-
-/* card wrapper */
 function Card({children,style,noPress}){
   const[pressed,setPressed]=useState(false);
   const base={background:'var(--card)',backdropFilter:'blur(12px)',WebkitBackdropFilter:'blur(12px)',
@@ -420,8 +393,6 @@ function Card({children,style,noPress}){
 function CardLabel({text}){
   return h('div',{style:{fontSize:11,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'0.06em',fontWeight:700,marginBottom:10}},text);
 }
-
-/* donut chart */
 function Donut({segments,total}){
   const[hover,setHover]=useState(null);
   const SIZE=160,CX=80,CY=80,R=58,SW=28;
@@ -434,9 +405,6 @@ function Donut({segments,total}){
     const len=pct*C-GAP;
     const dash=Math.max(0,len);
     const o=offset;
-    const midAngle=((o+pct*C/2)/C)*2*Math.PI-Math.PI/2;
-    const tx=CX+Math.cos(midAngle)*(R);
-    const ty=CY+Math.sin(midAngle)*(R);
     offset+=pct*C;
     return h('circle',{key:i,cx:CX,cy:CY,r:R,fill:'none',
       stroke:seg.c,strokeWidth:hover===i?SW+6:SW,
@@ -463,8 +431,6 @@ function Donut({segments,total}){
         s.l+' '+fmtK(s.v))))
   );
 }
-
-/* savings history area chart */
 function SavingsChart({mi}){
   const[hover,setHover]=useState(null);
   const svgRef2=React.useRef(null);
@@ -511,8 +477,6 @@ function SavingsChart({mi}){
     )
   );
 }
-
-/* tab bar icons (inline SVG paths) */
 const TAB_ICONS={
   overview:'M3 3h7v7H3V3zm11 0h7v7h-7V3zM3 14h7v7H3v-7zm11 0h7v7h-7v-7z',
   flow:'M4 6h16M4 12h16M4 18h10',
@@ -533,8 +497,6 @@ function TabIcon({id,active}){
   return h('svg',{width:20,height:20,viewBox:'0 0 24 24',fill:'none',stroke:color,strokeWidth:1.8,strokeLinecap:'round',strokeLinejoin:'round'},
     h('path',{d:TAB_ICONS[id]}));
 }
-
-/* ——— APP ——— */
 function App(){
   const now=new Date();
   const[year,setYear]=useState(now.getFullYear());
@@ -543,12 +505,9 @@ function App(){
   const[splash,setSplash]=useState(true);
   const d=useMemo(()=>buildMonth(year,month),[year,month]);
   const mi=Math.max(0,(year-2026)*12+month-3);
-
   useEffect(()=>{const t=setTimeout(()=>setSplash(false),2400);return()=>clearTimeout(t)},[]);
-
   const prev=()=>{if(month===0){setMonth(11);setYear(year-1)}else setMonth(month-1)};
   const next=()=>{if(month===11){setMonth(0);setYear(year+1)}else setMonth(month+1)};
-
   const segments=[
     {l:'Оренда',v:16500,c:'var(--blue)'},
     {l:'Комунальні',v:d.util,c:'var(--cyan)'},
@@ -556,11 +515,9 @@ function App(){
     {l:'Змінні',v:TOTAL_VAR,c:'var(--pink)'},
     {l:'Накопичення',v:Math.max(0,d.savings),c:'var(--indigo)'},
   ].filter(s=>s.v>0);
-
   if(splash)return h('div',{className:'splash'},
     h('div',{className:'splash-title'},'Korinevsky'),
     h('div',{className:'splash-sub'},'Finance App'));
-
   const tabs=[
     {id:'overview',l:'Огляд'},
     {id:'budget',l:'Бюджет'},
@@ -568,68 +525,121 @@ function App(){
     {id:'credits',l:'Кредити'},
     {id:'goals',l:'Цілі'},
   ];
-
   return h('div',{className:'shell'},
-
-    /* header */
     h('div',{className:'header'},
       h(NavBtn,{onClick:prev},h(Chevron,{dir:'l'})),
       h('div',{style:{textAlign:'center'}},
         h('div',{style:{fontSize:20,fontWeight:700,color:'var(--head)',letterSpacing:'-0.03em'}},MO[month]),
         h('div',{style:{fontSize:11,color:'var(--muted2)',fontWeight:500}},year)),
       h(NavBtn,{onClick:next},h(Chevron,{dir:'r'}))),
-
     h('div',{className:'content'},
      h('div',{key:tab,className:'tab-page'},
-
-      /* —— OVERVIEW —— */
       tab==='overview'&&h(Fragment,null,
-        /* hero */
-        h('div',{style:{background:'linear-gradient(135deg,#1e1848 0%,#1a2456 30%,#162040 60%,#1c1840 100%)',borderRadius:20,padding:'22px 22px 20px',marginBottom:14,border:'1px solid rgba(160,164,255,0.10)',boxShadow:'0 8px 40px rgba(100,80,255,0.12), 0 2px 0 rgba(255,255,255,0.04) inset',position:'relative',overflow:'hidden'}},
-          h('div',{style:{position:'absolute',top:-30,right:-20,width:120,height:120,borderRadius:'50%',background:'radial-gradient(circle,rgba(160,164,255,0.15) 0%,transparent 70%)',pointerEvents:'none'}}),
-          h('div',{style:{fontSize:10,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.1em',fontWeight:600,marginBottom:4}},'Вільні кошти (після фіксованих)'),
-          h('div',{style:{display:'flex',alignItems:'baseline',gap:6,marginBottom:2}},
-            h('span',{style:{fontSize:32,fontWeight:800,color:'var(--head)',fontVariantNumeric:'tabular-nums',letterSpacing:'-0.03em'}},fmtI(d.free)),
+        h('div',{style:{display:'flex',gap:8,marginBottom:12}},
+          ...[{c:'USD',r:USD_RATE,clr:'var(--green)'},{c:'EUR',r:EUR_RATE,clr:'var(--blue)'}].map(x=>
+            h('div',{key:x.c,style:{flex:1,background:'var(--card)',backdropFilter:'blur(12px)',WebkitBackdropFilter:'blur(12px)',border:'1px solid var(--border)',borderRadius:12,padding:'8px 14px',display:'flex',alignItems:'center',justifyContent:'space-between'}},
+              h('span',{style:{fontSize:11,color:'var(--muted)',fontWeight:600}},x.c),
+              h('span',{style:{fontSize:14,fontWeight:700,color:x.clr,fontVariantNumeric:'tabular-nums'}},x.r.toFixed(2))))),
+        h('div',{style:{background:'linear-gradient(135deg,#1e1848 0%,#1a2456 40%,#1c1840 100%)',borderRadius:20,padding:'20px 22px 18px',marginBottom:12,border:'1px solid rgba(160,164,255,0.10)',boxShadow:'0 8px 40px rgba(100,80,255,0.12), 0 2px 0 rgba(255,255,255,0.04) inset',position:'relative',overflow:'hidden'}},
+          h('div',{style:{position:'absolute',top:-40,right:-30,width:140,height:140,borderRadius:'50%',background:'radial-gradient(circle,rgba(160,164,255,0.12) 0%,transparent 70%)',pointerEvents:'none'}}),
+          h('div',{style:{fontSize:10,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.1em',fontWeight:600,marginBottom:4}},'Вільні кошти'),
+          h('div',{style:{display:'flex',alignItems:'baseline',gap:6,marginBottom:12}},
+            h('span',{style:{fontSize:36,fontWeight:800,color:'var(--head)',fontVariantNumeric:'tabular-nums',letterSpacing:'-0.03em'}},fmtI(d.free)),
             h('span',{style:{fontSize:14,color:'var(--indigo)',fontWeight:700}},'\u20b4')),
-          h('div',{style:{fontSize:11,color:'var(--muted)',marginBottom:14}},
-            'Змінні: '+fmtI(TOTAL_VAR)+' \u00b7 Накопичення: ',
-            h('span',{style:{color:d.savings>0?'var(--green)':'var(--red)',fontWeight:600}},fmtI(d.savings))),
-          h('div',{style:{display:'flex',gap:2,height:5,borderRadius:4,overflow:'hidden',marginBottom:16}},
-            ...segments.map((s,i)=>h('div',{key:i,style:{flex:s.v,background:s.c,opacity:0.85}}))),
-          h(Donut,{segments,total:d.fixedExp+TOTAL_VAR})),
-
-        /* stats */
-        h('div',{className:'grid2',style:{marginBottom:14,gap:12}},
-          ...[
-            {l:'Дохід',v:d.inc,c:'var(--green)'},
-            {l:'Фіксовані',v:d.fixedExp,c:'var(--red)'},
-            {l:'Кредити',v:d.totalCrd,c:'var(--yellow)'},
-            {l:'Накопичення',v:Math.max(0,d.savings),c:'var(--indigo)'},
-          ].map((s,i)=>h('div',{key:i,style:{background:'var(--card)',backdropFilter:'blur(12px)',WebkitBackdropFilter:'blur(12px)',border:'1px solid var(--border)',borderRadius:16,padding:'14px',textAlign:'center',boxShadow:'0 4px 20px rgba(0,0,0,0.25), 0 1px 0 rgba(255,255,255,0.04) inset'}},
-            h('div',{style:{fontSize:10,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'0.06em',fontWeight:700,marginBottom:4}},s.l),
-            h('div',{style:{fontSize:19,fontWeight:800,color:s.c,fontVariantNumeric:'tabular-nums'}},fmtK(s.v))))),
-
-        /* sparkline */
-        h(Card,{style:{marginBottom:0}},h(CardLabel,{text:'Баланс'}),h(Spark,{tl:d.tl,inc:d.inc}))
+          h('div',{style:{display:'flex',gap:0,borderTop:'1px solid rgba(255,255,255,0.06)',paddingTop:12}},
+            ...[
+              {l:'Дохід',v:d.inc,c:'var(--green)',pre:'+'},
+              {l:'Витрати',v:d.fixedExp+TOTAL_VAR,c:'var(--red)',pre:'\u2212'},
+              {l:'Накопичення',v:Math.max(0,d.savings),c:'var(--indigo)',pre:'+'},
+            ].map((s,i)=>h('div',{key:i,style:{flex:1,textAlign:'center',borderRight:i<2?'1px solid rgba(255,255,255,0.06)':'none'}},
+              h('div',{style:{fontSize:9,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.05em',fontWeight:600,marginBottom:3}},s.l),
+              h('div',{style:{fontSize:14,fontWeight:700,color:s.c,fontVariantNumeric:'tabular-nums'}},s.pre+fmtK(s.v)))))),
+        (()=>{
+          const varSpent=d.tl.filter(t=>t.type==='out'&&t.catName).reduce((s,t)=>s+t.amount,0);
+          const pct=Math.min(100,(varSpent/TOTAL_VAR)*100);
+          return h('div',{style:{background:'var(--card)',backdropFilter:'blur(12px)',WebkitBackdropFilter:'blur(12px)',border:'1px solid var(--border)',borderRadius:14,padding:'14px 16px',marginBottom:12}},
+            h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}},
+              h('span',{style:{fontSize:11,color:'var(--muted)',fontWeight:600}},'\u{1F4CA} Бюджет'),
+              h('span',{style:{fontSize:13,fontWeight:700,color:pct>80?'var(--yellow)':'var(--head)',fontVariantNumeric:'tabular-nums'}},
+                fmtI(varSpent)+' / '+fmtI(TOTAL_VAR))),
+            h('div',{style:{height:5,background:'rgba(255,255,255,0.04)',borderRadius:4,overflow:'hidden'}},
+              h('div',{style:{width:pct+'%',height:'100%',background:pct>80?'var(--yellow)':'var(--indigo)',borderRadius:4,transition:'width 0.5s'}})));
+        })(),
+        h(Card,{noPress:true,style:{marginBottom:12,padding:'14px 18px'}},
+          h(CardLabel,{text:'Витрати по тижнях'}),
+          (()=>{
+            const weeks=[0,0,0,0,0];
+            d.tl.filter(t=>t.type==='out').forEach(t=>{
+              const w=Math.min(4,Math.floor((t.day-1)/7));
+              weeks[w]+=t.amount;
+            });
+            const mx=Math.max(...weeks,1);
+            const wLabels=['Тиж 1','Тиж 2','Тиж 3','Тиж 4','Тиж 5'];
+            return h('div',null,
+              h('div',{style:{display:'flex',alignItems:'flex-end',gap:8,height:70}},
+                ...weeks.map((w,i)=>{
+                  const pct=Math.max(5,(w/mx)*100);
+                  return h('div',{key:i,style:{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3}},
+                    h('div',{style:{fontSize:10,color:'var(--head)',fontWeight:600,fontVariantNumeric:'tabular-nums',opacity:w>0?1:0.3}},w>0?fmtK(w):''),
+                    h('div',{style:{width:'100%',height:pct*0.65,background:'linear-gradient(180deg,var(--indigo),rgba(160,164,255,0.2))',borderRadius:6,minHeight:3,transition:'height 0.5s'}}));
+                })),
+              h('div',{style:{display:'flex',gap:8,marginTop:6}},
+                ...wLabels.map((l,i)=>h('div',{key:i,style:{flex:1,textAlign:'center',fontSize:9,color:'var(--muted2)'}},l))));
+          })()),
+        h(Card,{noPress:true,style:{marginBottom:12,padding:'14px 18px'}},
+          h(CardLabel,{text:'Найближчі оплати'}),
+          (()=>{
+            const today=new Date().getDate();
+            const upcoming=d.tl.filter(t=>t.type==='out'&&t.day>=today).slice(0,4);
+            if(!upcoming.length)return h('div',{style:{fontSize:12,color:'var(--muted)',padding:'8px 0'}},'Немає запланованих оплат');
+            return upcoming.map((t,i)=>h('div',{key:i,style:{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:i<upcoming.length-1?'1px solid var(--border2)':'none'}},
+              h('div',{style:{width:30,height:30,borderRadius:8,background:(t.color||'#666')+'18',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,flexShrink:0}},t.icon||'\u{1F4B3}'),
+              h('div',{style:{flex:1,minWidth:0}},
+                h('div',{style:{fontSize:12,fontWeight:500,color:'var(--text2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.cat),
+                h('div',{style:{fontSize:10,color:'var(--muted)'}},t.day+' '+MON_UA_GEN[month])),
+              h('div',{style:{fontSize:13,fontWeight:700,color:'var(--red)',fontVariantNumeric:'tabular-nums'}},'\u2212'+fmtI(t.amount))));
+          })()),
+        h(Card,{noPress:true,style:{marginBottom:0,padding:'14px 18px'}},
+          h(CardLabel,{text:'Останні транзакції'}),
+          ...d.tl.slice(-5).reverse().map((ev,i,arr)=>h(Row,{key:i,ev,last:i===arr.length-1})))
       ),
-
-      /* —— BUDGET —— */
       tab==='budget'&&h(Fragment,null,
-        h('div',{style:{background:'linear-gradient(135deg,#201838 0%,#261840 50%,#1c1838 100%)',borderRadius:20,padding:'18px 20px',marginBottom:14,border:'1px solid rgba(255,133,188,0.10)',boxShadow:'0 8px 40px rgba(255,80,160,0.08), 0 2px 0 rgba(255,255,255,0.04) inset',position:'relative',overflow:'hidden'}},
-          h('div',{style:{position:'absolute',bottom:-40,left:-20,width:100,height:100,borderRadius:'50%',background:'radial-gradient(circle,rgba(255,133,188,0.12) 0%,transparent 70%)',pointerEvents:'none'}}),
-          h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:10}},
-            h('div',null,
-              h('div',{style:{fontSize:10,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.1em',fontWeight:600}},'Бюджет змінних витрат'),
-              h('div',{style:{fontSize:24,fontWeight:800,color:'var(--head)',fontVariantNumeric:'tabular-nums',marginTop:4}},fmtI(TOTAL_VAR)+' \u20b4')),
-            h('div',{style:{textAlign:'right'}},
-              h('div',{style:{fontSize:10,color:'var(--muted)'}},'з '+fmtI(d.free)),
-              h('div',{style:{fontSize:14,fontWeight:700,color:'var(--indigo)'}},((TOTAL_VAR/d.free)*100).toFixed(0)+'%'))),
-          h('div',{style:{fontSize:10,color:'var(--muted)',background:'rgba(251,191,36,0.06)',borderRadius:6,padding:'6px 10px'}},
-            '\u26a0 Жовта мітка \u2014 80% ліміту \u00b7 Алерт і Telegram при досягненні')),
-        h(Card,null,...BCAT.map((cat,i)=>h('div',{key:cat.id,style:{borderBottom:i<BCAT.length-1?'1px solid var(--border2)':'none'}},h(BudgetRow,{cat}))))
+        (()=>{
+          const HALF=TOTAL_VAR/2;
+          const spending={};
+          d.tl.filter(t=>t.type==='out'&&t.catName).forEach(t=>{
+            const bc=BCAT.find(b=>b.name===t.catName);
+            if(bc){spending[bc.id]=(spending[bc.id]||0)+t.amount}
+          });
+          const totalSpent=Object.values(spending).reduce((s,v)=>s+v,0);
+          const savingsContrib=Math.max(0,d.savings/2);
+          const sorted=[...BCAT].sort((a,b)=>(b.limit/TOTAL_VAR)-(a.limit/TOTAL_VAR));
+          return h(Fragment,null,
+            h('div',{style:{background:'linear-gradient(135deg,#201838 0%,#261840 50%,#1c1838 100%)',borderRadius:20,padding:'18px 20px',marginBottom:14,border:'1px solid rgba(255,133,188,0.10)',boxShadow:'0 8px 40px rgba(255,80,160,0.08), 0 2px 0 rgba(255,255,255,0.04) inset',position:'relative',overflow:'hidden'}},
+              h('div',{style:{position:'absolute',bottom:-40,left:-20,width:100,height:100,borderRadius:'50%',background:'radial-gradient(circle,rgba(255,133,188,0.12) 0%,transparent 70%)',pointerEvents:'none'}}),
+              h('div',{style:{fontSize:10,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.1em',fontWeight:600,marginBottom:2}},'Період: зарплата \u2014 зарплата'),
+              h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:10}},
+                h('div',null,
+                  h('div',{style:{display:'flex',alignItems:'baseline',gap:8,marginTop:4}},
+                    h('span',{style:{fontSize:26,fontWeight:800,color:'var(--head)',fontVariantNumeric:'tabular-nums'}},fmtI(totalSpent)),
+                    h('span',{style:{fontSize:14,color:'var(--muted)'}},'/'),
+                    h('span',{style:{fontSize:16,fontWeight:600,color:'var(--muted)',fontVariantNumeric:'tabular-nums'}},fmtI(HALF)+' \u20b4'))),
+                h('div',{style:{textAlign:'right'}},
+                  h('div',{style:{fontSize:22,fontWeight:800,color:totalSpent/HALF>0.8?'var(--yellow)':'var(--indigo)',fontVariantNumeric:'tabular-nums'}},
+                    ((totalSpent/HALF)*100).toFixed(0)+'%')))),
+            h(Card,{noPress:true},
+              ...sorted.map((cat,i)=>h('div',{key:cat.id,style:{borderBottom:'1px solid var(--border2)'}},
+                h(BudgetRow,{cat:{...cat,limit:cat.limit/2},spent:spending[cat.id]||0}))),
+              h('div',{style:{display:'flex',alignItems:'center',gap:12,padding:'12px 0'}},
+                h('div',{style:{width:32,height:32,borderRadius:10,background:'rgba(160,164,255,0.12)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:15}},'\u{1F4B0}'),
+                h('div',{style:{flex:1}},
+                  h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}},
+                    h('span',{style:{fontSize:12,color:'var(--text)',fontWeight:500}},'Накопичення'),
+                    h('span',{style:{fontSize:15,fontWeight:700,color:'var(--green)',fontVariantNumeric:'tabular-nums'}},'+'+fmtI(savingsContrib)+' \u20b4')),
+                  h('div',{style:{fontSize:10,color:'var(--muted2)'}},'Внесок і фонди за цей період'))))
+          );
+        })()
       ),
-
-      /* —— FLOW —— */
       tab==='flow'&&h(Fragment,null,
         (()=>{
           const groups={};
@@ -645,8 +655,6 @@ function App(){
               ...groups[day].map((ev,i)=>h(Row,{key:i,ev,last:i===groups[day].length-1})))
           ));
         })()),
-
-      /* —— CREDITS —— */
       tab==='credits'&&h(Fragment,null,
         h(Card,{style:{textAlign:'center',marginBottom:12}},
           h('div',{style:{fontSize:10,color:'var(--muted2)',textTransform:'uppercase',letterSpacing:'0.08em',fontWeight:600,marginBottom:4}},'Загальний залишок боргу'),
@@ -654,26 +662,53 @@ function App(){
             fmtI(d.activeCredits.reduce((s,c)=>(c.total-crPN(c,year,month))*c.amount+s,0))+' \u20b4'),
           h('div',{style:{fontSize:11,color:'var(--muted)',marginTop:4}},
             d.activeCredits.length+' активних \u00b7 '+fmtI(d.totalCrd)+' \u20b4/міс')),
+        h(Card,{noPress:true,style:{marginBottom:12}},
+          h(CardLabel,{text:'Календар оплат'}),
+          (()=>{
+            const daysInMonth=new Date(year,month+1,0).getDate();
+            const firstDow=(new Date(year,month,1).getDay()+6)%7;
+            const dayNames=['Пн','Вт','Ср','Чт','Пт','Сб','Нд'];
+            const payDays={};
+            d.activeCredits.forEach(c=>{
+              const d2=c.day;
+              if(!payDays[d2])payDays[d2]=[];
+              payDays[d2].push({name:c.name,amount:c.amount,color:c.color});
+            });
+            const cells=[];
+            for(let i=0;i<firstDow;i++)cells.push(null);
+            for(let d2=1;d2<=daysInMonth;d2++)cells.push(d2);
+            return h('div',null,
+              h('div',{style:{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2,marginBottom:4}},
+                ...dayNames.map(n=>h('div',{key:n,style:{textAlign:'center',fontSize:9,color:'var(--muted2)',padding:'4px 0',fontWeight:600}},n))),
+              h('div',{style:{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:2}},
+                ...cells.map((d2,i)=>{
+                  if(d2===null)return h('div',{key:'e'+i});
+                  const pays=payDays[d2];
+                  const isToday=d2===new Date().getDate()&&month===new Date().getMonth()&&year===new Date().getFullYear();
+                  return h('div',{key:d2,style:{textAlign:'center',padding:'6px 2px',borderRadius:8,fontSize:11,fontWeight:pays?700:400,
+                    color:pays?'var(--head)':isToday?'var(--indigo)':'var(--muted)',
+                    background:pays?pays[0].color+'20':isToday?'rgba(160,164,255,0.08)':'transparent',
+                    border:isToday?'1px solid var(--indigo)':'1px solid transparent',position:'relative'}},
+                    d2,
+                    pays&&h('div',{style:{fontSize:8,color:pays[0].color,fontWeight:700,marginTop:1,fontVariantNumeric:'tabular-nums'}},
+                      fmtK(pays.reduce((s,p)=>s+p.amount,0))));
+                })));
+          })()),
         ...d.activeCredits.map((c,i)=>h(CreditCard,{key:i,c,y:year,m:month})),
         !d.activeCredits.length&&h('div',{style:{textAlign:'center',color:'var(--green)',padding:'30px 0',fontSize:14,fontWeight:600}},'Всі кредити закриті')
       ),
-
-      /* —— GOALS —— */
       tab==='goals'&&h(Fragment,null,
         h('div',{style:{background:'linear-gradient(135deg,#141838 0%,#182040 50%,#141830 100%)',borderRadius:20,padding:'18px 20px',marginBottom:14,border:'1px solid rgba(56,236,248,0.10)',boxShadow:'0 8px 40px rgba(56,236,248,0.08), 0 2px 0 rgba(255,255,255,0.04) inset',position:'relative',overflow:'hidden'}},
           h('div',{style:{position:'absolute',top:-30,left:'50%',width:140,height:80,borderRadius:'50%',background:'radial-gradient(circle,rgba(56,236,248,0.10) 0%,transparent 70%)',pointerEvents:'none'}}),
           h('div',{style:{fontSize:10,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'0.1em',fontWeight:600,marginBottom:6}},'Стратегічний план'),
           h('div',{style:{fontSize:12,color:'var(--text)',lineHeight:1.6}},
             h('span',{style:{color:'var(--cyan)',fontWeight:600}},'Етап 0'),' \u2014 Подушка (240k) \u2192 ',
-            h('span',{style:{color:'var(--blue)',fontWeight:600}},'Етап 1'),' \u2014 Авто (750k) \u2192 ',
-            h('span',{style:{color:'var(--purple)',fontWeight:600}},'Етап 2'),' \u2014 Житло (498k)'),
+            h('span',{style:{color:'var(--blue)',fontWeight:600}},'Етап 1'),' \u2014 Авто ($10k) \u2192 ',
+            h('span',{style:{color:'var(--purple)',fontWeight:600}},'Етап 2'),' \u2014 Житло ($20k)'),
           mi>=0&&h('div',{style:{marginTop:10,fontSize:11,color:'var(--muted)'}},
             'Місяць плану: ',h('span',{style:{color:'var(--head)',fontWeight:700}},mi+1))),
-
         h(Card,{style:{marginBottom:12}},...GOALS.map((g,i)=>h('div',{key:g.id,style:{borderBottom:i<GOALS.length-1?'1px solid var(--border2)':'none'}},h(GoalBar,{goal:g,mi})))),
-
         h(SavingsChart,{mi}),
-
         h(Card,null,
           h(CardLabel,{text:'Горизонт подій'}),
           ...TIMELINE_EVENTS.map((ev,i)=>{
@@ -684,10 +719,8 @@ function App(){
               h('span',{style:{fontSize:11,color:'var(--muted)',fontVariantNumeric:'tabular-nums'}},ev.date));
           }))
       )
-     )/* /tab-page */
+     )
     ),
-
-    /* bottom tab bar */
     h('div',{className:'tab-bar'},
       ...tabs.map(t=>{
         const active=tab===t.id;
@@ -697,15 +730,10 @@ function App(){
       }))
   );
 }
-
 ReactDOM.createRoot(document.getElementById('root')).render(h(App));
-
-/* register SW */
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
-
-/* portrait lock (standalone PWA) */
 if(screen.orientation&&screen.orientation.lock){
   screen.orientation.lock('portrait').catch(()=>{});
 }
