@@ -45,10 +45,12 @@ button{font-family:inherit}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script>
 'use strict';
+try{
 const{useState,useMemo,useEffect,createElement:h,Fragment}=React;
 /* ——— SUPABASE ——— */
 const SUPABASE_URL='https://lisedsqwdzshsxydghag.supabase.co';
 const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxpc2Vkc3F3ZHpzaHN4eWRnaGFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NTg5MDQsImV4cCI6MjA5MjAzNDkwNH0.qrCvCy1i3pdlXeNN2yV4bdfJ_a1Lis2fmo7AwrmgJ7Y';
+if(typeof supabase==='undefined'){throw new Error('Supabase CDN not loaded')}
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 /* ——— LOGIN SCREEN ——— */
 function LoginScreen(){
@@ -248,6 +250,7 @@ render(){if(this.state.err)return h('div',{style:{padding:40,color:'#ff6b7f',fon
 try{ReactDOM.createRoot(document.getElementById('root')).render(h(EB,null,h(App)))}catch(e){document.getElementById('root').innerHTML='<pre style="color:#ff6b7f;padding:40px;font-size:13px">'+e.message+'\n'+e.stack+'</pre>'}
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{})}
 if(screen.orientation&&screen.orientation.lock){screen.orientation.lock('portrait').catch(()=>{})}
+}catch(e){document.getElementById('root').innerHTML='<pre style="color:#ff6b7f;padding:20px;font-size:12px;white-space:pre-wrap;word-break:break-all">INIT ERROR:\n'+e.message+'\n\n'+e.stack+'</pre>'}
 </script>
 </body>
 </html>
