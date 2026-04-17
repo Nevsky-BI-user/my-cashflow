@@ -240,7 +240,12 @@ showAdd&&h('div',{style:{position:'fixed',inset:0,zIndex:200,background:'rgba(0,
     txErr&&h('div',{style:{color:'var(--red)',fontSize:12,textAlign:'center',marginTop:8}},txErr))),
 h('div',{className:'tab-bar'},...tabs.map(t=>{const active=tab===t.id;return h('button',{key:t.id,className:'tab-btn',onClick:()=>setTab(t.id),style:{color:active?'#a0a4ff':'#5c5f80'}},h(TabIcon,{id:t.id,active}),h('span',null,t.l))})));
 }
-ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+/* Error boundary */
+class EB extends React.Component{constructor(p){super(p);this.state={err:null}}
+static getDerivedStateFromError(e){return{err:e}}
+render(){if(this.state.err)return h('div',{style:{padding:40,color:'#ff6b7f',fontFamily:'monospace',fontSize:13,whiteSpace:'pre-wrap',background:'#0f0f1e',minHeight:'100vh'}},
+'Помилка: '+this.state.err.message+'\n\n'+this.state.err.stack);return this.props.children}}
+try{ReactDOM.createRoot(document.getElementById('root')).render(h(EB,null,h(App)))}catch(e){document.getElementById('root').innerHTML='<pre style="color:#ff6b7f;padding:40px;font-size:13px">'+e.message+'\n'+e.stack+'</pre>'}
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{})}
 if(screen.orientation&&screen.orientation.lock){screen.orientation.lock('portrait').catch(()=>{})}
 </script>
