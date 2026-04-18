@@ -105,7 +105,7 @@ useEffect(()=>{if(!sb||!session)return;sb.from('savings_log').select('*').order(
 useEffect(()=>{if(!sb||!session)return;sb.from('fixed_payments').select('*').eq('active',true).order('day_of_month').then(({data})=>{if(data)setFixedPay(data)})},[session]);
 useEffect(()=>{if(!sb||!session)return;const start=year+'-'+String(month+1).padStart(2,'0')+'-01';const endD=new Date(year,month+1,0);const end=year+'-'+String(month+1).padStart(2,'0')+'-'+String(endD.getDate()).padStart(2,'0');sb.from('transactions').select('*, categories(name, icon, color)').gte('date',start).lte('date',end).order('date').then(({data})=>{if(data)setDbTx(data)})},[session,year,month]);
 /* EARLY RETURNS */
-if(splash||!authReady)return h('div',{className:'splash'},h('div',{className:'splash-title'},'Korinevsky'),h('div',{className:'splash-sub'},'Finance App'));
+if(splash||!authReady)return h('div',{className:'splash'},h('div',{className:'splash-title'},'Korinevsky Family'),h('div',{className:'splash-sub'},'Finance App'));
 if(sb&&!session)return h(LoginScreen);
 /* HANDLERS */
 const reloadTx=()=>{const start=year+'-'+String(month+1).padStart(2,'0')+'-01';const endD=new Date(year,month+1,0);const end=year+'-'+String(month+1).padStart(2,'0')+'-'+String(endD.getDate()).padStart(2,'0');sb.from('transactions').select('*, categories(name, icon, color)').gte('date',start).lte('date',end).order('date').then(({data})=>{if(data)setDbTx(data)})};
@@ -124,7 +124,7 @@ const pInc=periodTl.filter(t=>t.type==='in').reduce((s,t)=>s+t.amount,0);
 const pExp=periodTl.filter(t=>t.type==='out').reduce((s,t)=>s+t.amount,0);
 const pFree=pInc-pExp;const HALF_VAR=TOTAL_VAR/2;
 const pVarSpent=periodTl.filter(t=>t.type==='out'&&t.catName).reduce((s,t)=>s+t.amount,0);
-if(splash)return h('div',{className:'splash'},h('div',{className:'splash-title'},'Korinevsky'),h('div',{className:'splash-sub'},'Finance App'));
+if(splash)return h('div',{className:'splash'},h('div',{className:'splash-title'},'Korinevsky Family'),h('div',{className:'splash-sub'},'Finance App'));
 const tabs=[{id:'overview',l:'Огляд'},{id:'budget',l:'Бюджет'},{id:'flow',l:'Витрати'},{id:'credits',l:'Календар'},{id:'goals',l:'Цілі'}];
 return h('div',{className:'shell'},
 h('div',{className:'header'},h(NavBtn,{onClick:prev},h(Chevron,{dir:'l'})),h('div',{style:{textAlign:'center',cursor:'pointer'},onClick:()=>setShowPeriod(true)},h('div',{style:{fontSize:18,fontWeight:700,color:'var(--head)',letterSpacing:'-0.02em'}},periodLabel,' \u25BE'),h('div',{style:{fontSize:10,color:'var(--muted2)',fontWeight:500}},year+' \u00b7 '+(half===0?'аванс':'зарплата'))),h(NavBtn,{onClick:next},h(Chevron,{dir:'r'})),sb&&h('button',{onClick:()=>sb.auth.signOut(),style:{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)',color:'#7d80a1',fontSize:10,cursor:'pointer',padding:'5px 10px',borderRadius:8}},'Вийти')),
