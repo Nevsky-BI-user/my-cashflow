@@ -97,7 +97,7 @@ CLAUDE_API_KEY=sk-ant-...
 
 - Whitelist: тільки chat_id, збережені в `profiles.telegram_chat_id`.
 - Повідомлення від невідомого chat_id — відхилити з відповіддю "Доступ закритий".
-- Команда `/start` потребує верифікацію (email + пароль або одноразовий код).
+- Команда `/start` потребує email + password для привʼязки (або одноразовий код).
 - Бот приватний — НЕ публікувати в каталозі ботів.
 
 ### Monobank X-Token
@@ -374,6 +374,122 @@ feat: / fix: / style: / refactor: / chore: / security:
 - Не додавати npm / build step
 - Не видаляти `skipWaiting()` / `clients.claim()` з SW
 - Не змінювати orientation на "any" або "landscape"
+- Не комітити без проходження всіх перевірок (див. нижче)
+- Не рефакторити код, який працює, якщо промпт цього не просить
+- Не перейменовувати змінні, не видаляти коментарі без причини
+
+### Принцип мінімальних змін
+
+- Змінювати ТІЛЬКИ те, що просить промпт
+- Перед str_replace — спочатку `grep` щоб знайти точний рядок
+- Після str_replace — `grep` щоб переконатися що заміна відбулася
+- Один промпт = одна логічна задача. Не додавати "бонусних" покращень
+
+### Валідація перед комітом (ОБОВ'ЯЗКОВО)
+
+Перед КОЖНИМ `git commit` виконати ВСІ перевірки. Якщо хоча б одна не пройшла — НЕ КОМІТИТИ, а виправити.
+
+**Крок 1 — Бекап:**
+```bash
+cp index.html index.backup.html
+```
+
+**Крок 2 — Синтаксис JS (незакриті дужки, помилки):**
+```bash
+node -e "
+const fs=require('fs');
+const html=fs.readFileSync('index.html','utf8');
+const m=html.match(/<script[^>]*>([\s\S]*?)<\/script>/g);
+if(!m){console.log('FAIL: no script tags');process.exit(1)}
+const last=m[m.length-1].replace(/<\/?script[^>]*>/g,'');
+try{new Function(last);console.log('JS OK')}
+catch(e){console.log('JS FAIL:',e.message);process.exit(1)}
+"
+```
+Має вивести `JS OK`. Якщо `JS FAIL` — є синтаксична помилка.
+
+**Крок 3 — Структурна цілісність:**
+```bash
+# Має бути рівно 1 функція App
+grep -c "^function App()" index.html
+# Очікується: 1
+
+# Має бути рівно 1 ReactDOM.createRoot
+grep -c "ReactDOM.createRoot" index.html
+# Очікується: 1
+
+# Має бути рівно 1 LoginScreen (якщо auth підключено)
+grep -c "^function LoginScreen()" index.html
+# Очікується: 1
+
+# Service Worker реєстрація присутня
+grep -c "serviceWorker" index.html
+# Очікується: 1 або більше
+
+# CACHE інкрементовано
+grep "const CACHE" sw.js
+# Перевірити що номер збільшився
+```
+
+**Крок 4 — HTML валідність:**
+```bash
+# Кількість <script> == </script>
+node -e "
+const h=require('fs').readFileSync('index.html','utf8');
+const o=(h.match(/<script/g)||[]).length;
+const c=(h.match(/<\/script>/g)||[]).length;
+console.log(o===c?'HTML OK ('+o+' scripts)':'HTML FAIL: open='+o+' close='+c);
+if(o!==c)process.exit(1);
+"
+```
+
+**Крок 5 — Критичні рядки не зникли:**
+```bash
+node -e "
+const h=require('fs').readFileSync('index.html','utf8');
+const checks=[
+  ['SUPABASE_URL','Supabase URL'],
+  ['SUPABASE_KEY','Supabase Key'],
+  ['supabase.createClient','Supabase client init'],
+  ['function App','App component'],
+  ['className:..shell','Shell wrapper'],
+  ['tab-bar','Tab bar'],
+  ['sw.js','SW registration'],
+  ['orientation.*lock','Orientation lock'],
+];
+let ok=true;
+checks.forEach(([pat,name])=>{
+  if(!h.includes(pat)&&!new RegExp(pat).test(h)){
+    console.log('MISSING:',name,'('+pat+')');ok=false;
+  }
+});
+console.log(ok?'ALL CHECKS PASSED':'SOME CHECKS FAILED');
+if(!ok)process.exit(1);
+"
+```
+
+**Крок 6 — Візуальна перевірка (якщо можливо):**
+```bash
+# Відкрити і браузері
+npx live-server --port=8080 --no-browser &
+echo "Відкрий http://localhost:8080 і перевір що UI рендериться"
+echo "DevTools Console (F12) — має бути 0 помилок (червоних)"
+```
+
+**Якщо всі перевірки пройшли:**
+```bash
+rm -f index.backup.html
+git add -A
+git commit -m "feat: опис"
+git push origin master
+```
+
+**Якщо перевірка НЕ пройшла:**
+```bash
+# Відкотити до робочого стану
+cp index.backup.html index.html
+echo "Відкотено. Переформулюй промпт і спробуй знову."
+```
 
 ### Git
 
