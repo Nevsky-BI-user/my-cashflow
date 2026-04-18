@@ -39,12 +39,13 @@ button{font-family:inherit}
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#7d80a1;font-family:system-ui;text-align:center;padding:40px"><div><div style="font-size:24px;margin-bottom:12px">Завантаження...</div><div style="font-size:13px">Якщо довго — перевірте інтернет</div></div></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script>
 'use strict';
+if(typeof React==='undefined'){document.getElementById('root').innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#ff6b7f;font-family:system-ui;text-align:center;padding:40px"><div><div style="font-size:18px;margin-bottom:8px">Помилка завантаження</div><div style="font-size:13px;color:#7d80a1">CDN недоступний. Перевірте інтернет та оновіть сторінку.</div></div></div>';throw new Error('CDN failed')}
 const{useState,useMemo,useEffect,createElement:h,Fragment}=React;
 var sb=null;
 try{sb=supabase.createClient('https://lisedsqwdzshsxydghag.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxpc2Vkc3F3ZHpzaHN4eWRnaGFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0NTg5MDQsImV4cCI6MjA5MjAzNDkwNH0.qrCvCy1i3pdlXeNN2yV4bdfJ_a1Lis2fmo7AwrmgJ7Y')}catch(e){}
