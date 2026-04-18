@@ -118,10 +118,10 @@ const prev=()=>{if(half===0){if(month===0){setMonth(11);setYear(year-1)}else set
 const next=()=>{if(half===1){if(month===11){setMonth(0);setYear(year+1)}else setMonth(month+1);setHalf(0)}else setHalf(1)};
 const sal1=adjSal(year,month,sAdvDay);const sal2=adjSal(year,month,sMainDay);
 const periodLabel=half===0?sal2+'\u2013'+sal1+' '+MO_S[month]:sal1+' '+MO_S[month]+'\u2013'+sal2+' '+MO_S[(month+1)%12];
-const segments=[{l:'Оренда',v:RENT,c:'var(--blue)'},{l:'Комунальні',v:d.util,c:'var(--cyan)'},{l:'Кредити',v:activeTotalCrd,c:'var(--yellow)'},{l:'Змінні',v:TOTAL_VAR,c:'var(--pink)'},{l:'Накопичення',v:Math.max(0,d.savings),c:'var(--indigo)'}].filter(s=>s.v>0);
 const usdR=rates.USD?rates.USD.buy:USD_BUY;const eurR=rates.EUR?rates.EUR.buy:EUR_BUY;
 const sAdvDay=salCfg?salCfg.advance_day:SAL_ADV_DAY;const sMainDay=salCfg?salCfg.salary_day:SAL_MAIN_DAY;const sAdvAmt=salCfg?Number(salCfg.advance_amount):SAL_ADV;const sMainAmt=salCfg?Number(salCfg.salary_amount):SAL_MAIN;
 const activeCats=dbCats||BCAT;const activeCreditsData=dbCredits||CREDITS;const activeCreditsNow=activeCreditsData.filter(function(c){return crAct(c,year,month)});const activeTotalCrd=activeCreditsNow.reduce(function(s,c){return s+c.amount},0);const activeTotalVar=activeCats.reduce(function(s,c){return s+(c.limit||0)},0)||TOTAL_VAR;
+const segments=[{l:'Кредити',v:activeTotalCrd,c:'var(--yellow)'},{l:'Змінні',v:activeTotalVar,c:'var(--pink)'}].filter(s=>s.v>0);
 const totalSavedUAH=savingsLog.reduce(function(s,x){var a=Number(x.amount);var c=x.currency||'UAH';return s+(c==='USD'?a*usdR:c==='EUR'?a*eurR:a)},0);
 const gConv=v=>goalCcy==='USD'?Math.round(v/usdR):v;
 const gFmt=v=>goalCcy==='USD'?'$'+fmtI(v):fmtI(v)+' \u20b4';
