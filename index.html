@@ -39,7 +39,8 @@ button{font-family:inherit}
 </style>
 </head>
 <body>
-<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#7d80a1;font-family:system-ui;text-align:center;padding:40px"><div><div style="font-size:24px;margin-bottom:12px">Завантаження...</div><div style="font-size:13px">Якщо довго — перевірте інтернет</div></div></div></div>
+<div id="root"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:8px;background:radial-gradient(ellipse at 50% 40%,#1a1a3a 0%,#0f0f1e 70%)"><div style="font-size:28px;font-weight:800;letter-spacing:-0.02em;background:linear-gradient(135deg,#a0a4ff 0%,#38ecf8 50%,#ff85bc 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">Korinevsky</div><div style="font-size:11px;color:#7d80a1;text-transform:uppercase;letter-spacing:0.18em;font-weight:600">Finance App</div></div></div>
+<script>setTimeout(function(){var r=document.getElementById('root');if(r&&r.childNodes.length===1&&!r.querySelector('.shell'))r.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#7d80a1;font-family:system-ui;text-align:center;padding:40px"><div><div style="font-size:18px;margin-bottom:8px">Не вдалося завантажити</div><div style="font-size:13px">Перевірте інтернет та оновіть сторінку</div></div></div>'},60000)</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
