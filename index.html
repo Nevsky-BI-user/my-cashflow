@@ -199,7 +199,7 @@ showAdd&&h('div',{style:{position:'fixed',inset:0,zIndex:200,background:'rgba(0,
 h('div',{className:'tab-bar'},...tabs.map(t=>{const active=tab===t.id;return h('button',{key:t.id,className:'tab-btn',onClick:()=>setTab(t.id),style:{color:active?'#a0a4ff':'#5c5f80'}},h(TabIcon,{id:t.id,active}),h('span',null,t.l))})));
 }
 ReactDOM.createRoot(document.getElementById('root')).render(h(App));
-if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{})}
+if('serviceWorker' in navigator){var _wc=!!navigator.serviceWorker.controller;var _r=false;navigator.serviceWorker.addEventListener('controllerchange',function(){if(!_wc||_r)return;_r=true;location.reload()});navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(function(reg){document.addEventListener('visibilitychange',function(){if(!document.hidden)reg.update()})}).catch(function(){})}
 if(screen.orientation&&screen.orientation.lock){screen.orientation.lock('portrait').catch(()=>{})}
 </script>
 </body>
