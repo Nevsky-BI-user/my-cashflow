@@ -1,0 +1,5 @@
+project_id = "lisedsqwdzshsxydghag"
+
+# Monobank б'є вебхук без JWT — вимикаємо перевірку
+[functions.mono-webhook]
+verify_jwt = false
