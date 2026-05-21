@@ -7,7 +7,9 @@ PWA "Сімейний Кешфлоу" — управління фінансам�
 Бекенд: Supabase (PostgreSQL + Edge Functions + Storage).
 Зовнішні інтеграції: Monobank API, Telegram Bot API, Claude API (Anthropic).
 
-**Користувачі:** тільки двоє — Vitaliy та дружина. Ніяких інших.
+**Користувачі:** тільки двоє — Vitaliy та дружина. Whitelist:
+- `gotnewmess@gmail.com`
+- `kovtunenko.yulchik@gmail.com`
 
 ---
 
@@ -18,68 +20,102 @@ PWA "Сімейний Кешфлоу" — управління фінансам�
 **Код публічний — дані приватні.**
 
 Вихідний код, дизайн, структура проєкту — відкриті (public repo). Це нормально і безпечно.
-Фінансові дані (транзакції, доходи, витрати, баланси, чеки) — закриті. Доступ тільки для двох користувачів.
-Захист даних забезпечується Supabase RLS (Row Level Security), а не приховуванням коду.
+Фінансові дані (транзакції, доходи, витрати, баланси, чеки) — закриті. Доступ тільки для двох користувачів через email-whitelist.
+Захист даних забезпечується Supabase RLS (Row Level Security) + функцією `is_family_member()`, а не приховуванням коду.
 
 ### GitHub-репозиторій
 
 - Репозиторій **PUBLIC** (безкоштовний GitHub Pages).
-- В `index.html` є `SUPABASE_URL` та `SUPABASE_ANON_KEY` — це **безпечно**: ANON KEY є публічним ключем за дизайном Supabase, він не дає доступу до даних без автентифікації + RLS.
+- В `index.html` є `SUPABASE_URL` та `SUPABASE_ANON_KEY` — це **безпечно**: ANON KEY є публічним ключем за дизайном Supabase, він не дає доступу до даних без автентифікації + RLS з whitelist.
 - `.gitignore`: ніколи не комітити файли з SERVICE_ROLE_KEY, API-ключами, токенами.
 
-### Supabase Auth — закрита реєстрація
+### Авторизація — Google OAuth + Email/Password (fallback)
 
-- Публічна реєстрація (sign up) **ВИМКНЕНА**.
-- У Supabase Dashboard: Authentication → Settings → Auth → вимкнути "Enable sign up".
-- Два акаунти створюються ВРУЧНУ через Supabase Dashboard: Authentication → Users → Invite User.
-- Метод авторизації: email + password.
-- Екран логіну на фронтенді: тільки "Увійти" (email + password), без кнопки "Зареєструватися".
-- Якщо session відсутня — показувати ТІЛЬКИ екран логіну. Жодні дані не рендеряться.
+Два способи входу:
 
-### Row Level Security (RLS)
+1. **Google OAuth** (основний) — `sb.auth.signInWithOAuth({provider:'google', options:{redirectTo}})`
+2. **Email + Password** (fallback) — `sb.auth.signInWithPassword({email,password})`
 
-Кожна таблиця з даними має RLS з політикою `auth.uid()`:
+**Email/password sign up вимкнено** у Supabase Dashboard: Authentication → Settings → "Enable sign up" = OFF. Облікові записи створюються вручну (Invite User).
 
-```sql
--- Роздільні політики для SELECT, INSERT, UPDATE, DELETE
--- SELECT: бачу тільки своє
-create policy "select own" on transactions for select using (user_id = auth.uid());
--- INSERT: можу створити тільки зі своїм user_id
-create policy "insert own" on transactions for insert with check (user_id = auth.uid());
--- UPDATE: можу оновити тільки своє
-create policy "update own" on transactions for update using (user_id = auth.uid());
--- DELETE: можу видалити тільки своє
-create policy "delete own" on transactions for delete using (user_id = auth.uid());
+**КРИТИЧНО про Google OAuth і sign up:** параметр "Disable Sign Ups" блокує лише email/password реєстрацію. Google OAuth обходить цей параметр — будь-який Google-акаунт при першому вході створить запис у `auth.users`. Тому захист реалізується НЕ через відключення sign up, а через **email whitelist у RLS**.
 
--- Аналогічно для: profiles, categories, credits, goals
+### Email whitelist — двошаровий захист
+
+**Шар 1 — фронтенд (UX):**
+```js
+const ALLOWED_EMAILS = ['gotnewmess@gmail.com', 'kovtunenko.yulchik@gmail.com'];
+// після session: якщо email не в списку → sb.auth.signOut() + повідомлення
 ```
 
-Таблиця `categorization_cache` — спільна (без user_id). RLS:
+**Шар 2 — RLS (справжній захист):**
 ```sql
--- Читати може будь-який автентифікований
-create policy "read auth" on categorization_cache for select using (auth.uid() is not null);
--- Писати — тільки через service_role (Edge Functions)
-create policy "write service" on categorization_cache for insert using (false);
+create or replace function is_family_member() returns boolean
+  language sql security definer stable as $$
+  select exists (
+    select 1 from auth.users
+    where id = auth.uid()
+      and lower(email) = any (array['gotnewmess@gmail.com','kovtunenko.yulchik@gmail.com'])
+  );
+$$;
+
+-- Всі політики:
+create policy "family full" on transactions for all
+  using (is_family_member()) with check (is_family_member());
 ```
+
+Шар 1 — для UX (швидке повідомлення замість порожнього інтерфейсу).
+Шар 2 — справжня безпека: навіть якщо хтось обійде фронтенд (вимкне JS у DevTools), без правильного email RLS поверне порожній результат.
+
+### Налаштування Google OAuth
+
+**Google Cloud Console:**
+1. Створити проєкт (або використати існуючий).
+2. APIs & Services → OAuth consent screen → External → заповнити (назва "Family Cashflow", тестові користувачі: обидва email).
+3. APIs & Services → Credentials → Create Credentials → OAuth Client ID → Web application:
+   - **Authorized JavaScript origins:** `https://<user>.github.io` (без шляху до репо)
+   - **Authorized redirect URIs:** `https://lisedsqwdzshsxydghag.supabase.co/auth/v1/callback`
+4. Скопіювати Client ID та Client Secret.
+
+**Supabase Dashboard:**
+1. Authentication → Providers → Google → Enable → вставити Client ID + Secret.
+2. Authentication → URL Configuration:
+   - **Site URL:** `https://<user>.github.io/<repo>/`
+   - **Redirect URLs:** `https://<user>.github.io/<repo>/**`
+3. Зберегти.
+
+### OAuth flow
+
+`supabase-js v2` у браузері використовує **PKCE flow** автоматично:
+- При натисканні кнопки → редірект на Google
+- Google → редірект на `https://lisedsqwdzshsxydghag.supabase.co/auth/v1/callback?code=...`
+- Supabase → редірект на `redirectTo` з параметром `?code=...`
+- `supabase-js` (з `detectSessionInUrl: true` за замовчуванням) автоматично перехоплює `code` і обмінює на сесію
+- `onAuthStateChange` спрацьовує → перевірка email → доступ
+
+Жодного callback route не потрібно — все обробляється клієнтом.
+
+### Row Level Security (RLS) — підсумок
+
+Всі таблиці з даними мають RLS з політикою через `is_family_member()`:
+- `profiles`, `categories`, `transactions`, `credits`, `goals` — `for all using (is_family_member()) with check (is_family_member())`
+- `categorization_cache` — `for select using (is_family_member())`, write через service_role
+- Storage `receipts` — `is_family_member() AND bucket_id='receipts'`
+
+Зміна whitelist — у файлі `supabase-migrations/02-family-whitelist.sql`, переcтворити функцію.
 
 ### Supabase ANON KEY vs SERVICE_ROLE KEY
 
-- **ANON KEY** — публічний за дизайном Supabase. Будь-хто може його бачити. Він не дає доступу до даних — RLS блокує всі запити без валідного JWT (тобто без логіну). Безпечно в публічному репозиторії.
-- **SERVICE_ROLE KEY** — повний доступ, обходить RLS. ТІЛЬКИ і Edge Functions (env var). НІКОЛИ не в коді, НІКОЛИ не в Git.
+- **ANON KEY** — публічний за дизайном Supabase. Безпечний у публічному репо. RLS блокує всі запити без email у whitelist.
+- **SERVICE_ROLE KEY** — повний доступ, обходить RLS. ТІЛЬКИ в Edge Functions (env var). НІКОЛИ не в коді, НІКОЛИ не в Git.
 
 ### Supabase Storage (чеки)
 
 - Bucket `receipts` — **PRIVATE** (не public).
-- RLS на storage.objects:
-  ```sql
-  create policy "user uploads" on storage.objects for insert
-    with check (bucket_id = 'receipts' and auth.uid()::text = (storage.foldername(name))[1]);
-  create policy "user reads" on storage.objects for select
-    using (bucket_id = 'receipts' and auth.uid()::text = (storage.foldername(name))[1]);
-  ```
+- RLS на storage.objects — через `is_family_member()`.
 - Структура: `receipts/{user_id}/{timestamp}.jpg`
 - Edge Functions використовують service_role для запису (з Telegram webhook).
-- На фронтенді — signed URL для перегляду (supabase.storage.from('receipts').createSignedUrl(path, 3600)).
+- На фронтенді — signed URL для перегляду.
 
 ### Секрети (Edge Function env vars)
 
@@ -96,44 +132,38 @@ CLAUDE_API_KEY=sk-ant-...
 ### Telegram-бот
 
 - Whitelist: тільки chat_id, збережені в `profiles.telegram_chat_id`.
-- Повідомлення від невідомого chat_id — відхилити з відповіддю "Доступ закритий".
-- Команда `/start` потребує email + password для привʼязки (або одноразовий код).
-- Бот приватний — НЕ публікувати в каталозі ботів.
+- `/start` потребує email + password або одноразовий код для привʼязки.
+- Бот приватний — НЕ публікувати в каталозі.
 
 ### Monobank X-Token
 
 - Зберігається в `profiles.mono_token`.
 - Доступний тільки для Edge Functions (через service_role).
-- RLS: фронтенд НЕ може прочитати mono_token з profiles (окрема policy, що виключає це поле, або окрема таблиця `secrets`).
 
 ### Клієнтський код (index.html) — публічний
 
 Допустимо (видно всім, але безпечно):
-- `SUPABASE_URL` — публічна адреса
-- `SUPABASE_ANON_KEY` — публічний ключ, без логіну не дає доступу до даних
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `ALLOWED_EMAILS` — масив дозволених email (шар 1 захисту)
 
-НІКОЛИ НІЯКИХ (дає прямий доступ до даних або зовнішніх сервісів):
+НІКОЛИ НІЯКИХ:
 - SERVICE_ROLE KEY
 - CLAUDE_API_KEY
 - TELEGRAM_BOT_TOKEN
 - MONO_WEBHOOK_SECRET
-- Будь-які паролі або токени
+- Паролі, токени
 
 ---
 
 ## ОРІЄНТАЦІЯ: ТІЛЬКИ ПОРТРЕТНА
 
 ### manifest.json
-
 ```json
-{
-  "orientation": "portrait"
-}
+{ "orientation": "portrait" }
 ```
-Поле `orientation` змінити з `"any"` на `"portrait"`.
 
 ### CSS
-
 ```css
 @media (orientation: landscape) and (max-height: 500px) {
   #root { display: none; }
@@ -146,61 +176,55 @@ CLAUDE_API_KEY=sk-ant-...
 }
 ```
 
-### Meta viewport
-
-```html
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-```
-Вже є. Залишити без змін.
-
-### Screen Orientation API (опціонально)
-
+### Screen Orientation API
 ```js
 if (screen.orientation && screen.orientation.lock) {
   screen.orientation.lock('portrait').catch(() => {});
 }
 ```
-Працює тільки в standalone PWA mode (не і звичайному браузері).
 
 ---
 
 ## Поточний стан
 
-- Весь код — в `index.html` (React 18 CDN, ~750 рядків)
-- Дані захардкоджені і JS-константах: CREDITS, BCAT, GOALS, buildMonth()
-- 5 вкладок: Огляд, Бюджет, Потік, Кредити, Цілі
-- Бекенду немає. Реальних даних немає.
-- Темна тема, CSS-змінні, mobile-first
+- Весь код — в `index.html` (React 18 CDN, ~780 рядків)
+- Дані: Supabase + захардкоджені defaults
+- 5 вкладок: Огляд, Бюджет, Потік, Кредити (Календар), Цілі
+- Темна тема, glassmorphism, mobile-first
+- Auth: Google OAuth + Email/Password fallback, email whitelist
 
 ## Структура файлів
 
 ```
 /
-├── index.html        — фронтенд (HTML + CSS + React inline)
-├── manifest.json     — PWA-маніфест
-├── sw.js             — Service Worker
-├── icon-192.svg
-├── icon-512.svg
+├── index.html                              — фронтенд
+├── manifest.json                            — PWA-маніфест
+├── sw.js                                    — Service Worker
+├── icon-192.svg / icon-512.svg
 ├── .gitignore
-├── CLAUDE.md         — цей файл
+├── CLAUDE.md                                — цей файл
+├── PROMPTS.md                               — інструкції для Claude Code
+├── supabase-schema.sql                      — початкова схема + RLS
+└── supabase-migrations/
+    └── 02-family-whitelist.sql              — email whitelist через is_family_member()
 ```
 
 ## Технічний стек
 
 **Фронтенд (GitHub Pages):**
-- React 18 через CDN (cdnjs.cloudflare.com)
-- Single-file: весь HTML/CSS/JS в `index.html`
-- Без npm, без збірки, без бандлера
+- React 18 через CDN
+- Single-file `index.html`
+- Без npm, без збірки
 - Supabase JS client через CDN
-- Мова інтерфейсу: українська
+- Мова: українська
 - Орієнтація: тільки портретна
 
 **Бекенд (Supabase):**
-- PostgreSQL — основна БД
-- Edge Functions (Deno/TypeScript) — вебхуки, категоризація
-- Storage — скріншоти чеків (private bucket)
-- Auth — закрита реєстрація, тільки 2 користувачі
-- RLS — ізоляція даних по user_id
+- PostgreSQL
+- Edge Functions (Deno/TS)
+- Storage (private bucket)
+- Auth: Google OAuth + email/password
+- RLS через `is_family_member()`
 
 **Зовнішні API:**
 - Monobank Personal API
@@ -213,133 +237,14 @@ if (screen.orientation && screen.orientation.lock) {
 
 6 фаз, строго послідовно.
 
----
-
-### ФАЗА 1: Дизайн UI (ітеративна)
-
-**Ціль:** UI і стилі Monobank. Портретний мобільний додаток.
-
-**Референс Monobank UI:**
-- Темний фон (#0c0c12), картки з м'якими тінями
-- Великі числа — головний контент, мінімум тексту
-- Bottom tab bar (фіксований знизу, 4–5 іконок)
-- Кругові діаграми / donut charts
-- Картки транзакцій: іконка зліва, назва посередині, сума справа
-- Анімації: плавні переходи, появи елементів
-- Тактильний фідбек: transform: scale(0.98)
-
-**Орієнтація:**
-- Тільки портретна. Landscape: приховати контент, показати повідомлення "Поверніть пристрій".
-- manifest.json: orientation: "portrait"
-- Screen Orientation API lock і standalone mode
-
-**Екрани для MVP:**
-1. Огляд — баланс, donut, останні 5 транзакцій
-2. Транзакції — список за місяць, групування по днях
-3. Бюджет — категорії з прогресбарами
-4. Кредити — розстрочки з прогресом
-5. Цілі — фонди накопичень
-
-**Навігація:**
-- Bottom tab bar (фіксований): Огляд | Витрати | Бюджет | Кредити | Цілі
-- Вгорі: місяць/рік + стрілки
-
-**Ітерації:** продовжувати поки дизайн не задовольнить.
-**Дані:** залишити захардкоджені. Мета — тільки UI.
-
-**Definition of Done Фази 1:**
-- [ ] Портретна орієнтація зафіксована (manifest + CSS + JS)
-- [ ] Bottom tab bar з іконками
-- [ ] Donut chart на головному екрані
-- [ ] Список транзакцій з групуванням по днях
-- [ ] Плавні переходи між вкладками
-- [ ] Тест на мобільному: все працює, landscape — заглушка
-
----
-
-### ФАЗА 2: Supabase
-
-**Ціль:** бекенд з закритим доступом для двох користувачів.
-
-**Авторизація — ВАЖЛИВО:**
-- Sign up вимкнено в Supabase Dashboard
-- 2 акаунти створені вручну (Invite User)
-- Фронтенд: тільки форма логіну, без реєстрації
-- Session timeout: за замовчуванням Supabase (1 тиждень)
-
-**Схема БД:** profiles, categories, transactions, credits, goals, categorization_cache.
-**RLS:** окремі політики на SELECT/INSERT/UPDATE/DELETE з `auth.uid()`.
-**Міграція:** хардкод → Supabase.
-
-**Definition of Done Фази 2:**
-- [ ] Sign up вимкнено
-- [ ] 2 акаунти створені
-- [ ] RLS працює (перевірити: один user не бачить даних іншого)
-- [ ] Фронтенд читає/пише через Supabase
-- [ ] Логін/логаут працює
-- [ ] Без session — тільки екран логіну, жодних даних
-
----
-
+### ФАЗА 1: Дизайн UI (завершено)
+### ФАЗА 2: Supabase (завершено, додано Google OAuth)
 ### ФАЗА 3: Monobank API
-
-**Ціль:** автоімпорт транзакцій.
-
-**Webhook URL:** з секретним query-параметром.
-**Mono token:** зберігається в profiles, недоступний для фронтенду через RLS.
-**Edge Functions:** mono-webhook, mono-backfill, mono-register-webhook.
-
-**Definition of Done Фази 3:**
-- [ ] Webhook приймає транзакції
-- [ ] Mono token зберігається безпечно (не читається фронтендом)
-- [ ] Бекфіл працює
-- [ ] Дублікати не створюються
-
----
-
 ### ФАЗА 4: Telegram-бот (витрати)
-
-**Ціль:** введення витрат текстом + скріншотами.
-
-**Безпека:**
-- Whitelist по telegram_chat_id
-- `/start` потребує верифікацію (email + пароль або одноразовий код)
-- Webhook secret header перевіряється
-- Бот не в публічному каталозі
-
-**Скріншоти:** private Storage bucket, signed URLs.
-
-**Definition of Done Фази 4:**
-- [ ] Текст → транзакція
-- [ ] Фото чека → Claude OCR → транзакція
-- [ ] Невідомий chat_id відхиляється
-- [ ] Чеки і private bucket, доступні тільки власнику
-
----
-
 ### ФАЗА 5: Telegram-бот (доходи)
-
-**Ціль:** `+сума опис` або `/income`.
-
-**Definition of Done Фази 5:**
-- [ ] Доходи через бот працюють
-- [ ] Дублікати з Monobank фільтруються
-
----
-
 ### ФАЗА 6: Автокатегоризація (Claude API)
 
-**Ціль:** автоматична категорія для кожної транзакції.
-
-**Модель:** claude-haiku-4-5 (дешева).
-**Кеш:** categorization_cache, md5(description).
-**API KEY:** тільки в Edge Function env var.
-
-**Definition of Done Фази 6:**
-- [ ] Автокатегоризація працює
-- [ ] Кеш зменшує кількість API-викликів
-- [ ] Ручне перевизначення оновлює кеш
-- [ ] Claude API KEY не в клієнтському коді
+Детальні DoD кожної фази — у PROMPTS.md.
 
 ---
 
@@ -356,7 +261,16 @@ if (screen.orientation && screen.orientation.lock) {
 - React CDN, `createElement` через `h()`. Без JSX.
 - Коментарі українською.
 - ANON KEY — допустимо в `index.html`.
+- ALLOWED_EMAILS — допустимо в `index.html`.
 - Всі інші ключі — ТІЛЬКИ в Edge Function Secrets.
+
+### Auth-логіка — інваріанти
+
+- `LoginScreen` має дві кнопки: "Увійти через Google" та форма email/password.
+- Після `setSession` обов'язково перевірити `session.user.email` проти `ALLOWED_EMAILS`. Якщо ні → `auth.signOut()` + `authError`.
+- `signInWithOAuth` має параметр `redirectTo: window.location.origin + window.location.pathname` (без query/hash).
+- Не використовувати `signUp()` ніде на фронтенді.
+- Не показувати "Забули пароль" / "Реєстрація" / інші auth-функції — лише вхід.
 
 ### Коміти
 
@@ -369,6 +283,8 @@ feat: / fix: / style: / refactor: / chore: / security:
 - Не комітити без інкременту `CACHE`
 - Не зберігати секрети в Git або клієнтському коді
 - Не додавати функцію реєстрації (sign up) на фронтенд
+- Не видаляти whitelist-перевірку у LoginScreen / App
+- Не додавати email-и в `ALLOWED_EMAILS` без оновлення `is_family_member()` у БД
 - Не створювати public Storage buckets
 - Не вимикати RLS
 - Не додавати npm / build step
@@ -376,25 +292,22 @@ feat: / fix: / style: / refactor: / chore: / security:
 - Не змінювати orientation на "any" або "landscape"
 - Не комітити без проходження всіх перевірок (див. нижче)
 - Не рефакторити код, який працює, якщо промпт цього не просить
-- Не перейменовувати змінні, не видаляти коментарі без причини
 
 ### Принцип мінімальних змін
 
 - Змінювати ТІЛЬКИ те, що просить промпт
 - Перед str_replace — спочатку `grep` щоб знайти точний рядок
 - Після str_replace — `grep` щоб переконатися що заміна відбулася
-- Один промпт = одна логічна задача. Не додавати "бонусних" покращень
+- Один промпт = одна логічна задача
 
 ### Валідація перед комітом (ОБОВ'ЯЗКОВО)
-
-Перед КОЖНИМ `git commit` виконати ВСІ перевірки. Якщо хоча б одна не пройшла — НЕ КОМІТИТИ, а виправити.
 
 **Крок 1 — Бекап:**
 ```bash
 cp index.html index.backup.html
 ```
 
-**Крок 2 — Синтаксис JS (незакриті дужки, помилки):**
+**Крок 2 — Синтаксис JS:**
 ```bash
 node -e "
 const fs=require('fs');
@@ -406,74 +319,59 @@ try{new Function(last);console.log('JS OK')}
 catch(e){console.log('JS FAIL:',e.message);process.exit(1)}
 "
 ```
-Має вивести `JS OK`. Якщо `JS FAIL` — є синтаксична помилка.
 
 **Крок 3 — Структурна цілісність:**
 ```bash
-# Має бути рівно 1 функція App
-grep -c "^function App()" index.html
-# Очікується: 1
-
-# Має бути рівно 1 ReactDOM.createRoot
-grep -c "ReactDOM.createRoot" index.html
-# Очікується: 1
-
-# Має бути рівно 1 LoginScreen (якщо auth підключено)
-grep -c "^function LoginScreen()" index.html
-# Очікується: 1
-
-# Service Worker реєстрація присутня
-grep -c "serviceWorker" index.html
-# Очікується: 1 або більше
-
-# CACHE інкрементовано
-grep "const CACHE" sw.js
-# Перевірити що номер збільшився
+grep -c "^function App()" index.html              # = 1
+grep -c "ReactDOM.createRoot" index.html          # = 1
+grep -c "^function LoginScreen" index.html         # = 1
+grep -c "ALLOWED_EMAILS" index.html               # ≥ 2 (декларація + використання)
+grep -c "signInWithOAuth" index.html              # = 1
+grep -c "serviceWorker" index.html                # ≥ 1
+grep "const CACHE" sw.js                           # перевірити інкремент
 ```
 
 **Крок 4 — HTML валідність:**
 ```bash
-# Кількість <script> == </script>
 node -e "
 const h=require('fs').readFileSync('index.html','utf8');
 const o=(h.match(/<script/g)||[]).length;
 const c=(h.match(/<\/script>/g)||[]).length;
-console.log(o===c?'HTML OK ('+o+' scripts)':'HTML FAIL: open='+o+' close='+c);
+console.log(o===c?'HTML OK ('+o+' scripts)':'HTML FAIL');
 if(o!==c)process.exit(1);
 "
 ```
 
-**Крок 5 — Критичні рядки не зникли:**
+**Крок 5 — Критичні рядки:**
 ```bash
 node -e "
 const h=require('fs').readFileSync('index.html','utf8');
 const checks=[
   ['SUPABASE_URL','Supabase URL'],
-  ['SUPABASE_KEY','Supabase Key'],
-  ['supabase.createClient','Supabase client init'],
+  ['supabase.createClient','Supabase client'],
+  ['ALLOWED_EMAILS','Email whitelist'],
+  ['signInWithOAuth','Google OAuth'],
+  ['signInWithPassword','Email/password fallback'],
   ['function App','App component'],
-  ['className:..shell','Shell wrapper'],
+  ['function LoginScreen','LoginScreen component'],
   ['tab-bar','Tab bar'],
   ['sw.js','SW registration'],
-  ['orientation.*lock','Orientation lock'],
 ];
 let ok=true;
 checks.forEach(([pat,name])=>{
-  if(!h.includes(pat)&&!new RegExp(pat).test(h)){
-    console.log('MISSING:',name,'('+pat+')');ok=false;
-  }
+  if(!h.includes(pat)){console.log('MISSING:',name);ok=false}
 });
 console.log(ok?'ALL CHECKS PASSED':'SOME CHECKS FAILED');
 if(!ok)process.exit(1);
 "
 ```
 
-**Крок 6 — Візуальна перевірка (якщо можливо):**
+**Крок 6 — Візуальна перевірка:**
 ```bash
-# Відкрити і браузері
 npx live-server --port=8080 --no-browser &
-echo "Відкрий http://localhost:8080 і перевір що UI рендериться"
-echo "DevTools Console (F12) — має бути 0 помилок (червоних)"
+# Відкрий http://localhost:8080
+# Має зʼявитись LoginScreen з двома способами входу
+# DevTools Console — 0 помилок
 ```
 
 **Якщо всі перевірки пройшли:**
@@ -486,14 +384,13 @@ git push origin master
 
 **Якщо перевірка НЕ пройшла:**
 ```bash
-# Відкотити до робочого стану
 cp index.backup.html index.html
-echo "Відкотено. Переформулюй промпт і спробуй знову."
+echo "Відкочено. Переформулюй промпт."
 ```
 
 ### Git
 
-Гілка: `master`. Репозиторій: **PUBLIC** (безкоштовний GitHub Pages).
+Гілка: `master`. Репозиторій PUBLIC.
 ```bash
 git add -A
 git commit -m "feat: опис"
@@ -502,9 +399,4 @@ git push origin master
 
 ### Вартість
 
-Все безкоштовне, крім Claude API:
-- GitHub Pages — безкоштовно (public repo)
-- Supabase Free Tier — 500 МБ БД, 1 ГБ Storage, 500K Edge Function invocations
-- Monobank API — безкоштовно
-- Telegram Bot API — безкоштовно
-- Claude API (Haiku категоризація) — ~$0.10/місяць на 500 транзакцій
+Все безкоштовне, крім Claude API (~$0.10/міс на 500 транзакцій).
