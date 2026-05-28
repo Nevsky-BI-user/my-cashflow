@@ -214,19 +214,28 @@
 
 ### 3.1 — Edge Function: mono-webhook
 
-(без змін, див. попередню версію)
+(виконано — `supabase/functions/mono-webhook/index.ts`, коміт `04f19f0`)
 
 ### 3.2 — Edge Function: mono-backfill
 
-(без змін)
+(виконано — `supabase/functions/mono-backfill/index.ts`, коміт `d4de973`)
+Підвантаження історії: `GET /personal/statement/{account}/{from}/{to}`, один запит (rate limit 1/60с), вікно ≤31 день, дедуп по `source_id`, JWT + email whitelist. Ідемпотентно.
 
 ### 3.3 — Реєстрація webhook + UI налаштувань
 
-(без змін)
+(виконано — `supabase/functions/mono-register/index.ts` + UI-модалка, коміт `f9d00f6`)
+Шестерня в хедері → модалка «Monobank»: поле X-Token (write-only → `profiles.mono_token`), кнопки «Автооновлення» (mono-register) і «Історія 31 день» (mono-backfill). `mono-register` реєструє webhook у Mono, `MONO_WEBHOOK_SECRET` лишається серверним.
 
 ### 3.4 — Індикатор джерела в UI
 
-(без змін)
+(виконано — коміти `31562ea`, `dfdeb27`)
+`buildMonth(y,m,txs)` вливає реальні транзакції з Supabase у таймлайн (`Потік`, `Останні`, `Найближчі`, тижні) + бюджет-агрегацію. `Row` показує бейдж джерела (mono/вручну/telegram) + MCC. Виправлено double-count кредитів у `pExp`.
+
+**Ручні кроки після деплою фронтенду:**
+
+- `supabase functions deploy mono-backfill mono-register`
+- Секрети: `MONO_WEBHOOK_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`
+- У застосунку: шестерня → ввести X-Token → «Автооновлення» → (пауза ~хв) → «Історія 31 день»
 
 ---
 

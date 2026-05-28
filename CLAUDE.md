@@ -29,12 +29,13 @@ PWA "Сімейний Кешфлоу" — управління фінансам�
 - В `index.html` є `SUPABASE_URL` та `SUPABASE_ANON_KEY` — це **безпечно**: ANON KEY є публічним ключем за дизайном Supabase, він не дає доступу до даних без автентифікації + RLS з whitelist.
 - `.gitignore`: ніколи не комітити файли з SERVICE_ROLE_KEY, API-ключами, токенами.
 
-### Авторизація — Google OAuth + Email/Password (fallback)
+### Авторизація — тільки Google OAuth
 
-Два способи входу:
+Єдиний спосіб входу:
 
-1. **Google OAuth** (основний) — `sb.auth.signInWithOAuth({provider:'google', options:{redirectTo}})`
-2. **Email + Password** (fallback) — `sb.auth.signInWithPassword({email,password})`
+1. **Google OAuth** — `sb.auth.signInWithOAuth({provider:'google', options:{redirectTo}})`
+
+> Email/password-форму прибрано (коміт `f86c106`). `signInWithPassword` на фронтенді не використовується; акаунти створюються вручну в Supabase (Invite User), вхід — лише через Google.
 
 **Email/password sign up вимкнено** у Supabase Dashboard: Authentication → Settings → "Enable sign up" = OFF. Облікові записи створюються вручну (Invite User).
 
@@ -191,7 +192,7 @@ if (screen.orientation && screen.orientation.lock) {
 - Дані: Supabase + захардкоджені defaults
 - 5 вкладок: Огляд, Бюджет, Потік, Кредити (Календар), Цілі
 - Темна тема, glassmorphism, mobile-first
-- Auth: Google OAuth + Email/Password fallback, email whitelist
+- Auth: тільки Google OAuth, email whitelist
 
 ## Структура файлів
 
@@ -223,7 +224,7 @@ if (screen.orientation && screen.orientation.lock) {
 - PostgreSQL
 - Edge Functions (Deno/TS)
 - Storage (private bucket)
-- Auth: Google OAuth + email/password
+- Auth: тільки Google OAuth
 - RLS через `is_family_member()`
 
 **Зовнішні API:**
@@ -266,7 +267,7 @@ if (screen.orientation && screen.orientation.lock) {
 
 ### Auth-логіка — інваріанти
 
-- `LoginScreen` має дві кнопки: "Увійти через Google" та форма email/password.
+- `LoginScreen` має одну кнопку: "Увійти через Google". Форми email/password немає.
 - Після `setSession` обов'язково перевірити `session.user.email` проти `ALLOWED_EMAILS`. Якщо ні → `auth.signOut()` + `authError`.
 - `signInWithOAuth` має параметр `redirectTo: window.location.origin + window.location.pathname` (без query/hash).
 - Не використовувати `signUp()` ніде на фронтенді.
@@ -351,7 +352,6 @@ const checks=[
   ['supabase.createClient','Supabase client'],
   ['ALLOWED_EMAILS','Email whitelist'],
   ['signInWithOAuth','Google OAuth'],
-  ['signInWithPassword','Email/password fallback'],
   ['function App','App component'],
   ['function LoginScreen','LoginScreen component'],
   ['tab-bar','Tab bar'],
