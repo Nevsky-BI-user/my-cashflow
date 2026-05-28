@@ -154,7 +154,7 @@ const gConv=v=>goalCcy==='USD'?Math.round(v/usdR):v;
 const gFmt=v=>goalCcy==='USD'?'$'+fmtI(v):fmtI(v)+' \u20b4';
 var fpIncHalf=0;var fpExpHalf=0;fixedPay.forEach(function(fp){if(fp.type==='income')fpIncHalf+=Number(fp.amount)/2;else fpExpHalf+=Number(fp.amount)/2});
 const pInc=periodTl.filter(t=>t.type==='in').reduce((s,t)=>s+t.amount,0)+fpIncHalf;
-const pExp=periodTl.filter(t=>t.type==='out').reduce((s,t)=>s+t.amount,0)+fpExpHalf+activeTotalCrd/2;
+const pExp=periodTl.filter(t=>t.type==='out'&&t.grp!=='credit').reduce((s,t)=>s+t.amount,0)+fpExpHalf+activeTotalCrd/2;
 const pFree=pInc-pExp;const HALF_VAR=activeTotalVar/2;
 const pVarSpent=periodTl.filter(t=>t.type==='out'&&t.catName).reduce((s,t)=>s+t.amount,0);
 if(splash)return h('div',{className:'splash'},h('div',{className:'splash-title'},'Korinevsky Family'),h('div',{className:'splash-sub'},'Finance App'));
