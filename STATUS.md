@@ -16,9 +16,9 @@
 - [x] CLI залогінений і привʼязаний до проєкту
 - [x] Функції задеплоєно: mono-webhook, mono-register, mono-backfill, telegram-webhook
 - [x] Секрет MONO_WEBHOOK_SECRET
-- [ ] (ти) Міграції 03, 04, 05 (`db push`): код привʼязки Telegram, унікальний source_id, telegram_pending
+- [ ] (ти) Міграції 03-06 (`db push`): код привʼязки Telegram, унікальний source_id, telegram_pending, запис кешу з UI
 - [ ] (ти) Секрети TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET (README-telegram.md)
-- [ ] (ти) Деплой: `functions deploy telegram-webhook telegram-setup categorize mono-webhook mono-backfill`
+- [ ] (ти) Деплой: `functions deploy telegram-webhook telegram-setup categorize categorize-batch mono-webhook mono-backfill`
 - [ ] (ти) Секрет CLAUDE_API_KEY (console.anthropic.com)
 - [ ] (ти) Перевірити в Dashboard, що bucket `receipts` існує і приватний
 - [ ] (ти) Фаза 3 вручну: шестерня -> X-Token -> «Автооновлення» -> «Історія 31 день»
@@ -41,8 +41,15 @@
 ### Фаза 6: Автокатегоризація
 - [x] 6.1 categorize (Haiku 4.5, кеш по hash), deploy categorize
 - [x] 6.2 виклик categorize із mono-webhook, mono-backfill, telegram-webhook (deploy усіх трьох)
-- [ ] 6.3 модалка деталей транзакції, зміна категорії
-- [ ] 6.4 categorize-batch + кнопка в налаштуваннях
+- [x] 6.3 модалка деталей транзакції, зміна категорії, чек (міграція 06)
+- [x] 6.4 categorize-batch + блок «Категоризація» в налаштуваннях (deploy categorize-batch)
+
+## Далі (після того, як прод наздожене код)
+
+- [ ] (ти) наживо: бот (текст, фото, /income, /yes), модалка транзакції, «Категоризувати»
+- [ ] критик: прохід по всій Фазі 4-6 перед закриттям
+- [ ] CLAUDE.md: оновити «Поточний стан» і структуру файлів (нові функції, міграції 04-06)
+- [ ] ФІНАЛ-ЧЕКЛІСТ із PROMPTS.md
 
 ## Рішення, що чекають на власника
 
