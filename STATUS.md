@@ -10,18 +10,18 @@
 - SQL Editor: https://supabase.com/dashboard/project/lisedsqwdzshsxydghag/sql/new
 - Edge Functions і логи: https://supabase.com/dashboard/project/lisedsqwdzshsxydghag/functions
 
-## Бекенд (стан на 07.10.2026)
+## Бекенд (стан на 07.10.2026, пізній вечір)
 
 - [x] Проєкт Supabase відновлено з паузи, `ACTIVE_HEALTHY`
 - [x] CLI залогінений і привʼязаний до проєкту
-- [x] Функції задеплоєно: mono-webhook, mono-register, mono-backfill, telegram-webhook
-- [x] Секрет MONO_WEBHOOK_SECRET
-- [ ] (ти) Міграції 03-06 (`db push`): код привʼязки Telegram, унікальний source_id, telegram_pending, запис кешу з UI
-- [ ] (ти) Секрети TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET (README-telegram.md)
-- [ ] (ти) Деплой: `functions deploy telegram-webhook telegram-setup categorize categorize-batch mono-webhook mono-backfill`
-- [ ] (ти) Секрет CLAUDE_API_KEY (console.anthropic.com)
-- [ ] (ти) Перевірити в Dashboard, що bucket `receipts` існує і приватний
+- [x] Міграції 03-06 застосовані (`migration list`: local = remote)
+- [x] Функції задеплоєно (7): mono-webhook, mono-register, mono-backfill, telegram-webhook, telegram-setup, categorize, categorize-batch
+- [x] Секрети: MONO_WEBHOOK_SECRET, TELEGRAM_WEBHOOK_SECRET
+- [ ] (ти) Секрет TELEGRAM_BOT_TOKEN (BotFather -> /newbot): `npx -y supabase@latest secrets set TELEGRAM_BOT_TOKEN=<TOKEN>`
+- [ ] (ти) Секрет CLAUDE_API_KEY (console.anthropic.com): `npx -y supabase@latest secrets set CLAUDE_API_KEY=<KEY>`
+- [ ] (ти) Dashboard -> Storage: bucket `receipts` існує і приватний
 - [ ] (ти) Фаза 3 вручну: шестерня -> X-Token -> «Автооновлення» -> «Історія 31 день»
+- [ ] (ти) Telegram: шестерня -> «Підключити бота» -> «Код для Telegram» -> у боті /start <код> -> «250 кава»
 
 ## План
 
