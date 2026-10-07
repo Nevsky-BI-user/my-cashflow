@@ -17,6 +17,8 @@ const BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN')!;
 const WEBHOOK_SECRET = Deno.env.get('TELEGRAM_WEBHOOK_SECRET')!;
 const CLAUDE_API_KEY = Deno.env.get('CLAUDE_API_KEY') || '';
 
+const ALLOWED_EMAILS = ['gotnewmess@gmail.com', 'kovtunenko.yulchik@gmail.com'];
+
 const sb = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -44,12 +46,21 @@ const HELP =
   '/last: останні 5 записів';
 
 // Відповідь у чат; помилки Telegram не валять обробку апдейту
-async function reply(chatId: number, text: string) {
+// Постійна клавіатура під полем вводу: кнопки шлють звичайний текст, який роутер розуміє
+const BTN = { balance: '💰 Баланс', last: '📋 Останні', income: '➕ Дохід', help: '❓ Допомога', yes: '✅ Так, додати', no: '✖ Скасувати' };
+const MAIN_KB = {
+  keyboard: [[{ text: BTN.balance }, { text: BTN.last }], [{ text: BTN.income }, { text: BTN.help }]],
+  resize_keyboard: true,
+  is_persistent: true,
+};
+const CONFIRM_KB = { keyboard: [[{ text: BTN.yes }, { text: BTN.no }]], resize_keyboard: true, one_time_keyboard: true };
+
+async function reply(chatId: number, text: string, keyboard: unknown = MAIN_KB) {
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text }),
+      body: JSON.stringify({ chat_id: chatId, text, reply_markup: keyboard }),
     });
   } catch (e) {
     console.error('sendMessage failed:', e);
@@ -76,7 +87,13 @@ async function linkByCode(chatId: number, code: string) {
     .gt('telegram_link_expires', new Date().toISOString())
     .maybeSingle();
   if (!prof) {
-    return reply(chatId, 'Код невірний або прострочений. Згенеруйте новий у застосунку (шестерня, «Код для Telegram»).');
+    return reply(chatId, 'Код невірний або прострочений. Згенеруйте новий у застосунку (шестерня, «Код для Telegram»).', { remove_keyboard: true });
+  }
+  // Той самий whitelist, що в застосунку: бот належить лише сімейним акаунтам
+  const { data: au } = await sb.auth.admin.getUserById(prof.id);
+  if (!ALLOWED_EMAILS.includes((au?.user?.email || '').toLowerCase())) {
+    console.error('link refused: email not in whitelist', prof.id);
+    return reply(chatId, 'Доступ закритий.', { remove_keyboard: true });
   }
   // Один Telegram-чат належить одному профілю: відвʼязуємо від попереднього
   await sb.from('profiles').update({ telegram_chat_id: null }).eq('telegram_chat_id', chatId).neq('id', prof.id);
@@ -324,7 +341,7 @@ async function addTx(chatId: number, userId: string, updateId: number, type: 'in
         return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
       }
       return reply(chatId,
-        `⚠️ Схожий дохід уже є від Monobank (${fmtMoney(mono.amount)}, ${ddmm(mono.date)}). Додати все одно? /yes`);
+        `⚠️ Схожий дохід уже є від Monobank (${fmtMoney(mono.amount)}, ${ddmm(mono.date)}). Додати все одно?`, CONFIRM_KB);
     }
   }
   await insertTx(chatId, userId, p);
@@ -407,7 +424,7 @@ Deno.serve(async (req) => {
   const startMatch = text.match(/^\/start(?:\s+(\d{6}))?$/);
   if (startMatch) {
     if (startMatch[1]) await linkByCode(chatId, startMatch[1]);
-    else await reply(chatId, 'Щоб привʼязати акаунт, згенеруйте код у застосунку і надішліть: /start <код>');
+    else await reply(chatId, 'Щоб привʼязати акаунт, згенеруйте код у застосунку і надішліть: /start <код>', { remove_keyboard: true });
     return new Response('ok');
   }
 
@@ -421,7 +438,7 @@ Deno.serve(async (req) => {
     return new Response('ok');
   }
   if (!prof) {
-    await reply(chatId, 'Доступ закритий. Згенеруйте код у застосунку і надішліть /start <код>.');
+    await reply(chatId, 'Доступ закритий. Згенеруйте код у застосунку і надішліть /start <код>.', { remove_keyboard: true });
     return new Response('ok');
   }
 
@@ -433,10 +450,14 @@ Deno.serve(async (req) => {
 
   const updateId = Number(update.update_id) || 0;
   let m: RegExpMatchArray | null;
-  if (/^\/balance$/i.test(text)) await balance(chatId);
-  else if (/^\/last$/i.test(text)) await last(chatId);
-  else if (/^\/help$/i.test(text)) await reply(chatId, HELP);
-  else if (/^\/yes$/i.test(text)) await confirmPending(chatId, prof.id);
+  if (/^\/balance$/i.test(text) || text === BTN.balance) await balance(chatId);
+  else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId);
+  else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP);
+  else if (/^\/yes$/i.test(text) || text === BTN.yes) await confirmPending(chatId, prof.id);
+  else if (/^\/no$/i.test(text) || text === BTN.no) {
+    await sb.from('profiles').update({ telegram_pending: null }).eq('id', prof.id);
+    await reply(chatId, 'Скасовано.');
+  } else if (text === BTN.income) await reply(chatId, 'Напишіть суму й опис, наприклад:\n+51000 зарплата');
   else if ((m = text.match(/^\/(income|дохід)\s+(\d+(?:[.,]\d{1,2})?)\s+(.+)$/is))) {
     await addTx(chatId, prof.id, updateId, 'income', m[2], m[3]);
   } else {

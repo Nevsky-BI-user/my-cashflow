@@ -70,6 +70,33 @@ Deno.serve(async (req) => {
     return json({ error: 'telegram_rejected', message: tg?.description || '' }, 502);
   }
 
+  // Назва, опис і меню команд: ставляться через Bot API, аватарку ставить власник у BotFather
+  const call = (method: string, body: unknown) =>
+    fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => r.json()).catch((e) => ({ ok: false, description: String(e) }));
+  const results = await Promise.all([
+    call('setMyName', { name: 'Сімейний Кешфлоу' }),
+    call('setMyShortDescription', { short_description: 'Приватний бот сімейного бюджету. Доступ лише для сімʼї.' }),
+    call('setMyDescription', {
+      description:
+        'Записує витрати й доходи в Сімейний Кешфлоу: «250 кава», «+51000 зарплата», фото чека. ' +
+        'Доступ лише для двох сімейних акаунтів: привʼязка кодом із застосунку (/start <код>).',
+    }),
+    call('setMyCommands', {
+      commands: [
+        { command: 'balance', description: 'Баланс за місяць' },
+        { command: 'last', description: 'Останні 5 записів' },
+        { command: 'income', description: 'Дохід: /income 51000 зарплата' },
+        { command: 'help', description: 'Як користуватись' },
+        { command: 'start', description: 'Привʼязати акаунт: /start <код>' },
+      ],
+    }),
+  ]);
+  results.forEach((r, i) => { if (!r?.ok) console.error('bot profile step failed', i, r); });
+
   // Імʼя бота, щоб застосунок міг показати, кому писати
   let username = '';
   try {
