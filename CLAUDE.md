@@ -388,7 +388,7 @@ python spec/run.py
 ```bash
 npx live-server --port=8080 --no-browser &
 # Відкрий http://localhost:8080
-# Має зʼявитись LoginScreen з двома способами входу
+# Має зʼявитись LoginScreen з однією кнопкою "Увійти через Google"
 # DevTools Console — 0 помилок
 ```
 
