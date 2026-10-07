@@ -53,6 +53,7 @@ model: opus
 | `release-engineer` | ворота перед комітом, CACHE, публікація |
 | `exec-haiku`, `exec-sonnet`, `exec-opus` | виконавці за рівнем складності, бриф самодостатній |
 | `task-planner` | декомпозиція великої задачі з дешевої сесії |
+| `skill-curator` | скіл у `.claude/skills/` застарів чи бракує, повторювана задача просить новий (глобальний агент) |
 | `ux-baseline-auditor` | заточений під React зі збіркою: тут лише як джерело ідей |
 
 `ado-worklog` не застосовується (remote GitHub). Агенти плагінів (Fabric, PBIP, Python/R) до проєкту не стосуються.
