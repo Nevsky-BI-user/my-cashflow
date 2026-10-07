@@ -1,12 +1,20 @@
-// Telegram-бот (Фаза 4.1): текстові витрати/доходи, привʼязка кодом, /balance, /last.
+// Telegram-бот (Фази 4.1, 4.2): текстові витрати/доходи, фото чеків, привʼязка кодом, /balance, /last.
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+// Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
+const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
+const RECEIPT_SYSTEM =
+  'Розпізнай чек. Відповідай ТІЛЬКИ JSON без пояснень: ' +
+  '{"amount": число (загальна сума до сплати), "description": назва магазину або 2-3 слова, ' +
+  '"date": "YYYY-MM-DD" або null}. Якщо це не чек: {"error": "коротко чому"}.';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN')!;
 const WEBHOOK_SECRET = Deno.env.get('TELEGRAM_WEBHOOK_SECRET')!;
+const CLAUDE_API_KEY = Deno.env.get('CLAUDE_API_KEY') || '';
 
 const sb = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -67,14 +75,167 @@ async function linkByCode(chatId: number, code: string) {
   return reply(chatId, 'Привʼязано до акаунту. ' + HELP);
 }
 
+// Telegram повторює апдейт, якщо не дочекався 200: дедуп по update_id (текст і фото)
+const tgSourceId = (updateId: number) => 'tg:' + updateId;
+
+async function isDuplicate(sourceId: string): Promise<boolean> {
+  const { data } = await sb.from('transactions').select('id').eq('source_id', sourceId).maybeSingle();
+  return !!data;
+}
+
+// base64 без spread у String.fromCharCode: великі фото валили б стек
+function toBase64(bytes: Uint8Array): string {
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const part = bytes.subarray(i, i + CHUNK);
+    let s = '';
+    for (let j = 0; j < part.length; j++) s += String.fromCharCode(part[j]);
+    bin += s;
+  }
+  return btoa(bin);
+}
+
+// Дата з чека: лише валідна YYYY-MM-DD і не в майбутньому, інакше сьогодні за Києвом
+function receiptDate(raw: unknown): string {
+  const today = todayKyiv();
+  if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return today;
+  const d = new Date(raw + 'T00:00:00Z');
+  if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw) return today;
+  return raw > today ? today : raw;
+}
+
+// Стійкий розбір відповіді моделі: перший {...} з тексту
+function extractJson(text: string): any | null {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+// Завантаження фото з Telegram: getFile -> file_path -> байти
+async function downloadTgFile(fileId: string): Promise<Uint8Array | null> {
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
+    const j = await r.json();
+    const path = j?.result?.file_path;
+    if (!j?.ok || !path) {
+      console.error('getFile failed:', j?.description || r.status);
+      return null;
+    }
+    const f = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${path}`);
+    if (!f.ok) {
+      console.error('file download failed:', f.status);
+      return null;
+    }
+    return new Uint8Array(await f.arrayBuffer());
+  } catch (e) {
+    console.error('telegram file error:', e);
+    return null;
+  }
+}
+
+// Claude vision: повертає розібраний JSON або null при помилці API
+async function recognizeReceipt(b64: string): Promise<any | null> {
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': CLAUDE_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: RECEIPT_MODEL,
+        max_tokens: 300,
+        system: RECEIPT_SYSTEM,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+            { type: 'text', text: 'Розпізнай чек' },
+          ],
+        }],
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) {
+      console.error('claude error:', r.status, j?.error?.message || j);
+      return null;
+    }
+    const text = (j?.content || [])
+      .filter((c: any) => c?.type === 'text')
+      .map((c: any) => c.text)
+      .join('');
+    const parsed = extractJson(text);
+    if (!parsed) console.error('claude non-json reply:', text);
+    return parsed ?? { error: 'відповідь не у форматі JSON' };
+  } catch (e) {
+    console.error('claude fetch error:', e);
+    return null;
+  }
+}
+
+async function addReceipt(chatId: number, userId: string, updateId: number, photos: any[]) {
+  if (!CLAUDE_API_KEY) return reply(chatId, 'Розпізнавання чеків не налаштовано');
+  const sourceId = tgSourceId(updateId);
+  // Перевірка до завантаження і виклику Claude: повтор апдейту не коштує грошей
+  if (await isDuplicate(sourceId)) return;
+
+  // Останній елемент масиву photo: найбільший розмір
+  const fileId: string | undefined = photos[photos.length - 1]?.file_id;
+  if (!fileId) return reply(chatId, '❌ Не вдалося розпізнати: немає файлу');
+  const bytes = await downloadTgFile(fileId);
+  if (!bytes) return reply(chatId, 'Не вдалося отримати фото з Telegram. Спробуйте ще раз.');
+
+  // Шлях у bucket receipts: {user_id}/{timestamp}.jpg; у receipt_url зберігаємо саме його
+  const path = `${userId}/${Date.now()}.jpg`;
+  const { error: upErr } = await sb.storage
+    .from('receipts')
+    .upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
+  if (upErr) {
+    console.error('storage upload error:', upErr);
+    return reply(chatId, 'Не вдалося зберегти фото чека. Спробуйте ще раз.');
+  }
+
+  const res = await recognizeReceipt(toBase64(bytes));
+  if (!res) return reply(chatId, '❌ Не вдалося розпізнати: сервіс недоступний, спробуйте пізніше');
+  if (res.error) return reply(chatId, '❌ Не вдалося розпізнати: ' + String(res.error));
+
+  const amount = Math.round(
+    Number(typeof res.amount === 'string' ? res.amount.replace(/\s/g, '').replace(',', '.') : res.amount) * 100,
+  ) / 100;
+  if (!isFinite(amount) || amount <= 0) return reply(chatId, '❌ Не вдалося розпізнати: немає суми');
+  const description = (typeof res.description === 'string' && res.description.trim()) || 'Чек';
+
+  const { error } = await sb.from('transactions').insert({
+    user_id: userId,
+    amount,
+    type: 'expense',
+    description,
+    source: 'telegram',
+    source_id: sourceId,
+    receipt_url: path,
+    date: receiptDate(res.date),
+  });
+  if (error) {
+    if (error.code === '23505') return; // повтор апдейту встиг пройти isDuplicate: мовчимо
+    console.error('receipt insert error:', error);
+    return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
+  }
+  return reply(chatId, `✅ ${fmtMoney(amount)}, ${description}`);
+}
+
 async function addTx(chatId: number, userId: string, updateId: number, sign: string, rawAmount: string, desc: string) {
   const amount = parseFloat(rawAmount.replace(',', '.'));
   if (!amount || amount <= 0) return reply(chatId, 'Сума має бути більша за нуль.');
   const type = sign === '+' ? 'income' : 'expense';
-  // Telegram повторює апдейт, якщо не дочекався 200: дедуп по update_id
-  const sourceId = 'tg:' + updateId;
-  const { data: dup } = await sb.from('transactions').select('id').eq('source_id', sourceId).maybeSingle();
-  if (dup) return;
+  const sourceId = tgSourceId(updateId);
+  if (await isDuplicate(sourceId)) return;
   const { error } = await sb.from('transactions').insert({
     user_id: userId,
     amount,
@@ -85,6 +246,7 @@ async function addTx(chatId: number, userId: string, updateId: number, sign: str
     date: todayKyiv(),
   });
   if (error) {
+    if (error.code === '23505') return; // повтор апдейту встиг пройти isDuplicate: мовчимо
     console.error('insert error:', error);
     return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
   }
@@ -142,7 +304,8 @@ Deno.serve(async (req) => {
   const msg = update?.message;
   const chatId: number | undefined = msg?.chat?.id;
   const text: string = (msg?.text || '').trim();
-  if (!chatId || !text) return new Response('ignored');
+  const photos: any[] | null = Array.isArray(msg?.photo) && msg.photo.length ? msg.photo : null;
+  if (!chatId || (!text && !photos)) return new Response('ignored');
 
   const startMatch = text.match(/^\/start(?:\s+(\d{6}))?$/);
   if (startMatch) {
@@ -162,6 +325,12 @@ Deno.serve(async (req) => {
   }
   if (!prof) {
     await reply(chatId, 'Доступ закритий. Згенеруйте код у застосунку і надішліть /start <код>.');
+    return new Response('ok');
+  }
+
+  // Фото чека: лише для привʼязаних профілів (whitelist вище)
+  if (photos) {
+    await addReceipt(chatId, prof.id, Number(update.update_id) || 0, photos);
     return new Response('ok');
   }
 

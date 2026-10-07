@@ -16,9 +16,11 @@
 - [x] CLI залогінений і привʼязаний до проєкту
 - [x] Функції задеплоєно: mono-webhook, mono-register, mono-backfill, telegram-webhook
 - [x] Секрет MONO_WEBHOOK_SECRET
-- [ ] (ти) Міграція 03 (`db push`): колонки telegram_link_code / telegram_link_expires
+- [ ] (ти) Міграції 03 і 04 (`db push`): колонки telegram_link_code / telegram_link_expires, унікальний source_id
 - [ ] (ти) Секрети TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET (README-telegram.md)
-- [ ] (ти) Деплой telegram-setup
+- [ ] (ти) Деплой telegram-setup і повторний деплой telegram-webhook (фото чеків)
+- [ ] (ти) Секрет CLAUDE_API_KEY (console.anthropic.com)
+- [ ] (ти) Перевірити в Dashboard, що bucket `receipts` існує і приватний
 - [ ] (ти) Фаза 3 вручну: шестерня -> X-Token -> «Автооновлення» -> «Історія 31 день»
 
 ## План
@@ -31,7 +33,7 @@
 - [x] 4.1 telegram-webhook: текст, /start <код>, /balance, /last (коміт 5b0bfb8)
 - [x] 4.3 telegram-setup + кнопка «Підключити бота» + README-telegram.md
 - [ ] (ти) BotFather, секрети, деплой, «Підключити бота», /start <код>, тест «250 кава»
-- [ ] 4.2 фото чеків: Storage + Claude API vision
+- [x] 4.2 фото чеків: Storage + Claude API vision (бекенд: secrets set CLAUDE_API_KEY, deploy telegram-webhook, bucket receipts приватний)
 
 ### Фаза 5: Telegram-бот (доходи)
 - [ ] 5.1 /income, дедуплікація з Monobank, /yes
