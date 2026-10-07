@@ -14,12 +14,11 @@
 
 - [x] Проєкт Supabase відновлено з паузи, `ACTIVE_HEALTHY`
 - [x] CLI залогінений і привʼязаний до проєкту
-- [x] Міграції 03-07 застосовані (`migration list`: local = remote)
+- [x] Міграції 03-09 застосовані (`migration list`: local = remote)
 - [x] Функції задеплоєно (7): mono-webhook, mono-register, mono-backfill, telegram-webhook, telegram-setup, categorize, categorize-batch
-- [x] Секрети: MONO_WEBHOOK_SECRET, TELEGRAM_WEBHOOK_SECRET
-- [ ] (ти) Секрет TELEGRAM_BOT_TOKEN (BotFather -> /newbot): `npx -y supabase@latest secrets set TELEGRAM_BOT_TOKEN=<TOKEN>`
-- [ ] (ти) Секрет CLAUDE_API_KEY (console.anthropic.com): `npx -y supabase@latest secrets set CLAUDE_API_KEY=<KEY>`
-- [ ] (ти) Dashboard -> Storage: bucket `receipts` існує і приватний
+- [x] Секрети: MONO_WEBHOOK_SECRET, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, CLAUDE_API_KEY
+- [x] Storage: bucket `receipts` існує і приватний
+- [x] Бот привʼязаний, X-Token Monobank підключений (скриншот власника 07.10)
 - [ ] (ти) Фаза 3 вручну: шестерня -> X-Token -> «Автооновлення» -> «Історія 31 день»
 - [ ] (ти) Telegram: шестерня -> «Підключити бота» -> «Код для Telegram» -> у боті /start <код> -> «250 кава»
 
@@ -51,6 +50,10 @@
 - [ ] (ти) BotFather -> /setuserpic -> assets/bot-avatar.png
 - [ ] (ти) «Підключити бота» в застосунку: саме він ставить назву, опис і меню
 - [ ] (ти) перевірити світлу тему і ПК-вигляд після входу (я бачив лише дефолтні дані без входу)
+- [x] «Помилок 5» у категоризації: причина в даних, не в Claude API. У БД не було жодної дохідної категорії (3 доходи Mono -> `no_categories`), ще 2 ручні витрати без опису -> `no_description`. Міграція 09: 6 дохідних категорій + скидання спроб для доходів; categorize-batch тепер рахує такі рядки як «пропущено», а не «помилки»
+- [~] фронтенд: дохідні категорії окремо від бюджетних, пікер за типом транзакції, текст «пропущено N» (у виконавця разом із ПК v2)
+- [~] ПК-вигляд v2: незалежний скрол колонок, гарячі клавіші 1-5 / N / S / T / ? / Esc, навчання лише при першому вході (profiles.onboarded_at), CACHE v118
+- [ ] (ти) після деплою фронтенду: шестерня -> «Категоризувати (до 50)». Очікується: категоризовано 3 (доходи), пропущено 2 (витрати без опису). Якщо замість цього помилки: тоді вже дивимось Claude API
 
 ## Далі (після того, як прод наздожене код)
 

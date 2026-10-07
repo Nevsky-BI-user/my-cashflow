@@ -97,6 +97,8 @@ Deno.serve(async (req) => {
   let categorized = 0;
   let fromCache = 0;
   let errors = 0;
+  // Пропущені з даних (нема опису, нема категорій потрібного типу): не помилки
+  let skipped = 0;
 
   for (const tx of txs || []) {
     if (Date.now() - started > TIME_BUDGET_MS) {
@@ -124,8 +126,13 @@ Deno.serve(async (req) => {
       } else {
         const r = await res.json();
         if (r?.category_id == null) {
-          console.error('categorize-batch: no category', { id: tx.id, reason: r?.reason });
-          errors++;
+          if (r?.reason === 'no_description' || r?.reason === 'no_categories') {
+            console.warn('categorize-batch: skipped', { id: tx.id, reason: r.reason });
+            skipped++;
+          } else {
+            console.error('categorize-batch: no category', { id: tx.id, reason: r?.reason });
+            errors++;
+          }
         } else if (r.skipped) {
           // категорію вже поставили (UI або паралельний виклик): не наш результат
         } else if (r.from_cache) {
@@ -148,6 +155,7 @@ Deno.serve(async (req) => {
     categorized,
     from_cache: fromCache,
     errors,
+    skipped,
     remaining,
   });
 });
