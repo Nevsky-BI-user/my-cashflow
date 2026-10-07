@@ -7,3 +7,6 @@ verify_jwt = false
 # Telegram теж б'є без JWT, захист заголовком X-Telegram-Bot-Api-Secret-Token
 [functions.telegram-webhook]
 verify_jwt = false
+
+[functions.telegram-setup]
+verify_jwt = true
