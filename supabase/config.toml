@@ -10,3 +10,8 @@ verify_jwt = false
 
 [functions.telegram-setup]
 verify_jwt = true
+
+# Внутрішня функція: кличуть інші функції з Bearer <SERVICE_ROLE>.
+# Service role JWT пройшов би й шлюз, але перевірку робить сам код (токен == SUPABASE_SERVICE_ROLE_KEY)
+[functions.categorize]
+verify_jwt = false
