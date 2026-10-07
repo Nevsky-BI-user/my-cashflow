@@ -28,3 +28,7 @@ supabase/.temp/
 .agents/
 skills-lock.json
 index.backup.html
+
+# Перевірки spec/: превʼю і скриншоти, кеш Python
+spec/.out/
+__pycache__/

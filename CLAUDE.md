@@ -215,6 +215,7 @@ if (screen.orientation && screen.orientation.lock) {
 ├── README-telegram.md                       : підключення бота
 ├── 02-family-whitelist.sql                  : email whitelist через is_family_member()
 ├── 03..06-*.sql                             : міграції (копії в supabase/migrations для db push)
+├── spec/                                    : перевірки в браузері (python spec/run.py, Playwright)
 └── supabase/
     ├── config.toml                          : verify_jwt для кожної функції
     ├── migrations/                          : ті самі міграції у форматі CLI
@@ -360,7 +361,7 @@ if(o!==c)process.exit(1);
 node -e "
 const h=require('fs').readFileSync('index.html','utf8');
 const checks=[
-  ['SUPABASE_URL','Supabase URL'],
+  ['supabase.co','Supabase URL'],
   ['supabase.createClient','Supabase client'],
   ['ALLOWED_EMAILS','Email whitelist'],
   ['signInWithOAuth','Google OAuth'],
@@ -378,7 +379,12 @@ if(!ok)process.exit(1);
 "
 ```
 
-**Крок 6 — Візуальна перевірка:**
+**Крок 6: перевірки в браузері** (Playwright, без pytest і npm):
+```bash
+python spec/run.py
+```
+
+**Крок 7 — Візуальна перевірка:**
 ```bash
 npx live-server --port=8080 --no-browser &
 # Відкрий http://localhost:8080
