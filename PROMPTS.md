@@ -241,19 +241,190 @@
 
 ## ФАЗА 4: Telegram-бот (витрати)
 
-(без змін, див. попередню версію)
+Бот приватний: не публікувати в каталозі, не вмикати inline-режим. Привʼязка акаунта
+тільки одноразовим кодом із застосунку, бо email/password-входу в проєкті немає
+(`signInWithPassword` на фронтенді = 0, акаунти лише Google).
+
+### 4.1 - Edge Function: telegram-webhook (текст) + привʼязка кодом
+
+```
+Прочитай CLAUDE.md (БЕЗПЕКА -> Telegram-бот).
+
+1. Міграція 03-telegram-link.sql:
+   alter table profiles add column telegram_link_code text,
+                        add column telegram_link_expires timestamptz;
+   RLS не чіпати: політика "family full" через is_family_member() уже покриває profiles.
+
+2. UI (index.html, модалка «Інтеграції», блок Telegram):
+   - статус: «Telegram привʼязано» / «не привʼязано» (profiles.telegram_chat_id is not null)
+   - кнопка «Код для Telegram»: 6 цифр, update profiles set telegram_link_code, telegram_link_expires = now + 10 хв
+   - показати «Надішліть боту: /start 123456 (діє 10 хв)»
+   Інкрементувати CACHE у sw.js.
+
+3. supabase/functions/telegram-webhook/index.ts (config.toml: verify_jwt = false):
+   БЕЗПЕКА:
+   a) header X-Telegram-Bot-Api-Secret-Token != env TELEGRAM_WEBHOOK_SECRET -> 403
+   b) chat_id = message.chat.id; текст = message.text
+   c) /start <code>: profiles where telegram_link_code = code and telegram_link_expires > now()
+      знайдено -> update telegram_chat_id = chat_id, code/expires = null -> «Привʼязано до акаунту»
+      ні -> «Код невірний або прострочений. Згенеруйте новий у застосунку.»
+   d) решта: profiles where telegram_chat_id = chat_id (service_role)
+      не знайдено -> «Доступ закритий. Згенеруйте код у застосунку і надішліть /start <код>.» -> 200
+
+   ПАРСИНГ:
+   e) текст /^([+-]?)\s*(\d+(?:[.,]\d{1,2})?)\s+(.+)$/
+      «+» -> income, інакше expense; insert transactions (source='telegram', date = сьогодні за Europe/Kyiv)
+      відповідь: «✅ Витрата: 250,00 ₴, кава»
+   f) /balance -> доходи - витрати за поточний місяць (усі сімейні транзакції)
+   g) /last -> останні 5 транзакцій
+   h) /help і невідомий текст -> підказка формату
+   Завжди відповідати 200, щоб Telegram не повторював апдейт; insert дедупити по source_id = 'tg:' + update_id.
+   Сума без пробілів-роздільників: «1 250 кава» прочитається як 1 ₴ з описом «250 кава».
+
+Приймання 4.1 наживо можливе лише після 4.3 (BotFather, секрети, setWebhook): до того код і
+міграція перевіряються читанням і `deno check`.
+
+Env: TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+```
+
+### 4.2 - Telegram-webhook: фото чеків
+
+```
+Прочитай CLAUDE.md.
+
+Додати в telegram-webhook обробку message.photo:
+
+1. file_id останнього елемента (найбільший розмір)
+2. GET /getFile -> file_path -> завантажити байти
+3. Upload у Storage receipts/{user_id}/{timestamp}.jpg (service_role, bucket приватний)
+4. base64 -> Claude API (vision):
+   модель у константі RECEIPT_MODEL. Старт: 'claude-haiku-4-5-20251001' (дешево).
+   Якщо чеки читаються погано: 'claude-sonnet-5-5' (краще бачить дрібний друк, дорожче).
+   system: «Розпізнай чек. Відповідай ТІЛЬКИ JSON: {amount, description, date}. Не чек -> {error}».
+5. Парсити -> insert transactions (source='telegram', receipt_url = шлях у Storage, не signed URL:
+   signed URL генерує фронтенд при перегляді)
+6. Відповідь: «✅ 1 250,00 ₴, АТБ» або «❌ Не вдалося розпізнати»
+
+Env: CLAUDE_API_KEY (додати)
+```
+
+### 4.3 - Реєстрація Telegram webhook
+
+```
+Прочитай CLAUDE.md.
+
+supabase/functions/telegram-setup/index.ts (JWT + whitelist як у mono-register):
+1. POST /setWebhook { url: <SUPABASE_URL>/functions/v1/telegram-webhook,
+   secret_token: env TELEGRAM_WEBHOOK_SECRET, allowed_updates: ["message"] }
+2. Повернути відповідь Telegram як є.
+
+README-telegram.md:
+1. @BotFather -> /newbot -> TOKEN. Не публікувати бота, не вмикати inline.
+2. supabase secrets set TELEGRAM_BOT_TOKEN=... TELEGRAM_WEBHOOK_SECRET=<uuid>
+3. supabase functions deploy telegram-webhook telegram-setup
+4. У застосунку: шестерня -> кнопка «Підключити бота» (invoke telegram-setup)
+5. Шестерня -> «Код для Telegram» -> у боті /start <код>
+```
 
 ---
 
 ## ФАЗА 5: Telegram-бот (доходи)
 
-(без змін)
+### 5.1 - Доходи + дедуплікація
+
+```
+Прочитай CLAUDE.md (Фаза 5).
+
+Оновити telegram-webhook:
+
+1. «+» на початку -> type='income' (є з 4.1, перевірити)
+2. /income і /дохід: /^\/(income|дохід)\s+(\d+(?:[.,]\d{1,2})?)\s+(.+)$/ -> type='income'
+   відповідь: «✅ Дохід: 51 000,00 ₴, зарплата»
+3. Дедуплікація з Monobank при type='income':
+   select id, amount, date from transactions
+   where source='mono' and type='income'
+     and abs(amount - $1) < $1 * 0.01
+     and date between $2 - 1 and $2 + 1
+   є -> «⚠️ Схожий дохід уже є від Monobank (51 000 ₴, 06.04). Додати все одно? /yes»
+   /yes -> вставити відкладений запис (тримати в profiles.telegram_pending jsonb, TTL 10 хв)
+4. /last показує income і expense:
+   «📋 Останні:
+    06.04 +51 000 ₴ зарплата (mono)
+    06.04 -250 ₴ АТБ (mono)
+    05.04 -80 ₴ маршрутка (tg)»
+```
 
 ---
 
 ## ФАЗА 6: Автокатегоризація
 
-(без змін)
+### 6.1 - Edge Function: categorize
+
+```
+Прочитай CLAUDE.md (Фаза 6).
+
+supabase/functions/categorize/index.ts (виклик лише з service_role: перевіряти Bearer == SERVICE_ROLE):
+
+1. POST { transaction_id }
+2. Завантажити транзакцію + категорії (service_role)
+3. hash = sha256(description.toLowerCase().trim()) через Web Crypto
+4. categorization_cache по hash
+   є -> update transactions set category_id, auto_categorized=true -> return { category_id, from_cache: true }
+5. Claude API: модель у константі CATEGORIZE_MODEL = 'claude-haiku-4-5-20251001', max_tokens 20
+   system: «Категоризуй. Категорії: {id:name,...}. Відповідай ТІЛЬКИ числом: id.»
+   user: «'{description}', MCC: {mcc}, {amount} грн»
+6. parseInt; id не з переліку -> не категоризувати, залогувати
+7. insert categorization_cache
+8. update transactions
+9. return { category_id }
+
+Env: CLAUDE_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+```
+
+### 6.2 - Виклик з webhook-ів
+
+```
+Прочитай CLAUDE.md.
+
+У mono-webhook, mono-backfill і telegram-webhook після insert транзакції без category_id:
+
+fetch(`${SUPABASE_URL}/functions/v1/categorize`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+  body: JSON.stringify({ transaction_id })
+}).catch(() => {});   // fire-and-forget
+
+Транзакції з UI (категорія вибрана вручну) не категоризувати.
+```
+
+### 6.3 - Ручне перевизначення в UI
+
+```
+Прочитай CLAUDE.md.
+
+1. Тап на транзакцію -> модалка деталей: дата, сума, опис, джерело, категорія (select),
+   auto_categorized=true -> мітка «🤖 авто», чек -> signed URL із Storage.
+2. Зміна категорії:
+   a) update transactions set category_id, auto_categorized=false
+   b) upsert categorization_cache по hash опису (через Edge Function або RLS-політику insert для сімʼї)
+   c) reloadTx()
+Інкрементувати CACHE у sw.js.
+```
+
+### 6.4 - Масова категоризація
+
+```
+Прочитай CLAUDE.md.
+
+supabase/functions/categorize-batch/index.ts (JWT + whitelist як у mono-register):
+1. POST { limit: 50 }
+2. select transactions where category_id is null limit $1
+3. кожну: кеш -> Claude API -> update; пауза 100 мс між запитами
+4. return { categorized, from_cache, errors }
+
+Фронтенд (шестерня): «Некатегоризованих: X» + кнопка «Категоризувати» + індикатор.
+Інкрементувати CACHE у sw.js.
+```
 
 ---
 
@@ -271,7 +442,7 @@
 ☐ Без session → тільки логін, жодних даних
 ☐ Google OAuth працює (whitelist user)
 ☐ Сторонній Google акаунт → "Доступ закритий"
-☐ Email/password fallback працює
+☐ Telegram: чужий chat_id отримує «Доступ закритий», свій пише витрату
 ☐ Обидва whitelist-user бачать всі дані (сімейний доступ через RLS)
 ☐ DevTools: немає secret keys в Network/LocalStorage
 ☐ Офлайн: додаток відкривається з кешу

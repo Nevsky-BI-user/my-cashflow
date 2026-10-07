@@ -103,7 +103,7 @@ create policy "family full" on transactions for all
 - `categorization_cache` — `for select using (is_family_member())`, write через service_role
 - Storage `receipts` — `is_family_member() AND bucket_id='receipts'`
 
-Зміна whitelist — у файлі `supabase-migrations/02-family-whitelist.sql`, переcтворити функцію.
+Зміна whitelist: у файлі `02-family-whitelist.sql` (корінь репозиторію), переcтворити функцію.
 
 ### Supabase ANON KEY vs SERVICE_ROLE KEY
 
@@ -133,7 +133,7 @@ CLAUDE_API_KEY=sk-ant-...
 ### Telegram-бот
 
 - Whitelist: тільки chat_id, збережені в `profiles.telegram_chat_id`.
-- `/start` потребує email + password або одноразовий код для привʼязки.
+- Привʼязка лише одноразовим кодом: застосунок пише 6 цифр у `profiles.telegram_link_code` (діє 10 хв), бот приймає `/start <код>` і записує `telegram_chat_id`. Email/password у боті не буває.
 - Бот приватний — НЕ публікувати в каталозі.
 
 ### Monobank X-Token
@@ -206,8 +206,11 @@ if (screen.orientation && screen.orientation.lock) {
 ├── CLAUDE.md                                — цей файл
 ├── PROMPTS.md                               — інструкції для Claude Code
 ├── supabase-schema.sql                      — початкова схема + RLS
-└── supabase-migrations/
-    └── 02-family-whitelist.sql              — email whitelist через is_family_member()
+├── 02-family-whitelist.sql                  : email whitelist через is_family_member()
+├── 03-telegram-link.sql                     : код привʼязки Telegram (міграції NN-*.sql лежать у корені)
+└── supabase/
+    ├── config.toml                          : verify_jwt = false для webhook-функцій
+    └── functions/<назва>/index.ts           : Edge Functions (Deno)
 ```
 
 ## Технічний стек

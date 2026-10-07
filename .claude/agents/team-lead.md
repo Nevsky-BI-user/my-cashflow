@@ -44,7 +44,9 @@ model: opus
 |---|---|
 | `business-analyst` | питання «що і як рахується» (періоди, кредити, бюджет, накопичення) |
 | `ux-designer` | вигляд і зручність екранів, модалки, a11y |
-| `data-engineer` | схема, RLS, whitelist, Edge Functions |
+| `data-engineer` | схема, RLS, whitelist, міграції |
+| `integrations-engineer` | Edge Functions: Telegram, Monobank, Claude API (фази 3-6) |
+| `critic` | найсильніша модель, свіже око на план або диф перед комітом; нічого не редагує |
 | `qa-engineer` | сценарії перевірки, регресії, перший автотест |
 | `copy-editor` | тексти інтерфейсу, терміни, апострофи |
 | `reviewer` | безпека зміни, диф проти заборон |

@@ -3,3 +3,7 @@ project_id = "lisedsqwdzshsxydghag"
 # Monobank б'є вебхук без JWT — вимикаємо перевірку
 [functions.mono-webhook]
 verify_jwt = false
+
+# Telegram теж б'є без JWT, захист заголовком X-Telegram-Bot-Api-Secret-Token
+[functions.telegram-webhook]
+verify_jwt = false
