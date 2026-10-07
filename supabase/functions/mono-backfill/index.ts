@@ -16,6 +16,25 @@ const json = (body: unknown, status = 200) =>
     headers: { 'Content-Type': 'application/json' },
   });
 
+// Автокатегоризація у фоні: результат не чекаємо, помилки не валять webhook
+// Backfill дає до сотень транзакцій за раз: категоризуємо послідовно з паузою,
+// щоб не впертись у ліміти Claude API (categorize сам кешує повтори опису)
+function categorizeLater(ids: number[]) {
+  const p = (async () => {
+    for (const id of ids) {
+      await fetch(`${SUPABASE_URL}/functions/v1/categorize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_ROLE}` },
+        body: JSON.stringify({ transaction_id: id }),
+      }).catch((e) => console.error('categorize call failed:', e));
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  })();
+  // Без waitUntil фонове завдання може обірватись після відповіді
+  const wait = (globalThis as any).EdgeRuntime?.waitUntil;
+  if (wait) wait(p);
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
@@ -95,8 +114,10 @@ Deno.serve(async (req) => {
   const fresh = rows.filter((r) => !seen.has(r.source_id));
 
   if (fresh.length) {
-    const { error: insErr } = await sb.from('transactions').insert(fresh);
+    const { data: ins, error: insErr } = await sb.from('transactions').insert(fresh).select('id');
     if (insErr) return json({ error: 'insert failed', detail: insErr.message }, 500);
+    // Один виклик на кожну вставлену транзакцію (categorize сам кешує)
+    categorizeLater((ins || []).map((t: { id: number }) => t.id));
   }
 
   return json({

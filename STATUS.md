@@ -18,7 +18,7 @@
 - [x] Секрет MONO_WEBHOOK_SECRET
 - [ ] (ти) Міграції 03, 04, 05 (`db push`): код привʼязки Telegram, унікальний source_id, telegram_pending
 - [ ] (ти) Секрети TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET (README-telegram.md)
-- [ ] (ти) Деплой: `functions deploy telegram-webhook telegram-setup categorize`
+- [ ] (ти) Деплой: `functions deploy telegram-webhook telegram-setup categorize mono-webhook mono-backfill`
 - [ ] (ти) Секрет CLAUDE_API_KEY (console.anthropic.com)
 - [ ] (ти) Перевірити в Dashboard, що bucket `receipts` існує і приватний
 - [ ] (ти) Фаза 3 вручну: шестерня -> X-Token -> «Автооновлення» -> «Історія 31 день»
@@ -40,7 +40,7 @@
 
 ### Фаза 6: Автокатегоризація
 - [x] 6.1 categorize (Haiku 4.5, кеш по hash), deploy categorize
-- [ ] 6.2 виклик із webhook-ів
+- [x] 6.2 виклик categorize із mono-webhook, mono-backfill, telegram-webhook (deploy усіх трьох)
 - [ ] 6.3 модалка деталей транзакції, зміна категорії
 - [ ] 6.4 categorize-batch + кнопка в налаштуваннях
 

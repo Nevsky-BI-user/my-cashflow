@@ -8,6 +8,18 @@ const sb = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
+// Автокатегоризація у фоні: результат не чекаємо, помилки не валять webhook
+function categorizeLater(id: number) {
+  const p = fetch(`${SUPABASE_URL}/functions/v1/categorize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_ROLE}` },
+    body: JSON.stringify({ transaction_id: id }),
+  }).catch((e) => console.error('categorize call failed:', e));
+  // Без waitUntil фонове завдання може обірватись після відповіді
+  const wait = (globalThis as any).EdgeRuntime?.waitUntil;
+  if (wait) wait(p);
+}
+
 Deno.serve(async (req) => {
   // Monobank робить GET для перевірки доступності webhook
   if (req.method === 'GET') return new Response('ok');
@@ -54,7 +66,7 @@ Deno.serve(async (req) => {
   const type = si.amount < 0 ? 'expense' : 'income';
   const date = new Date(si.time * 1000).toISOString().split('T')[0];
 
-  const { error: insErr } = await sb.from('transactions').insert({
+  const { data: ins, error: insErr } = await sb.from('transactions').insert({
     user_id: prof.id,
     amount,
     type,
@@ -63,12 +75,14 @@ Deno.serve(async (req) => {
     source_id: si.id,
     mcc: si.mcc || null,
     date,
-  });
+  }).select('id').single();
 
   if (insErr) {
     console.error('insert error:', insErr);
     return new Response('insert failed', { status: 500 });
   }
+
+  categorizeLater(ins.id);
 
   return new Response('ok');
 });

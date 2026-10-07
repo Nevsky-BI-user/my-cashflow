@@ -21,6 +21,18 @@ const sb = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
+// Автокатегоризація у фоні: результат не чекаємо, помилки не валять webhook
+function categorizeLater(id: number) {
+  const p = fetch(`${SUPABASE_URL}/functions/v1/categorize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_ROLE}` },
+    body: JSON.stringify({ transaction_id: id }),
+  }).catch((e) => console.error('categorize call failed:', e));
+  // Без waitUntil фонове завдання може обірватись після відповіді
+  const wait = (globalThis as any).EdgeRuntime?.waitUntil;
+  if (wait) wait(p);
+}
+
 const HELP =
   'Формат: сума і опис, наприклад\n' +
   '250 кава\n' +
@@ -214,7 +226,7 @@ async function addReceipt(chatId: number, userId: string, updateId: number, phot
   if (!isFinite(amount) || amount <= 0) return reply(chatId, '❌ Не вдалося розпізнати: немає суми');
   const description = (typeof res.description === 'string' && res.description.trim()) || 'Чек';
 
-  const { error } = await sb.from('transactions').insert({
+  const { data: ins, error } = await sb.from('transactions').insert({
     user_id: userId,
     amount,
     type: 'expense',
@@ -223,12 +235,13 @@ async function addReceipt(chatId: number, userId: string, updateId: number, phot
     source_id: sourceId,
     receipt_url: path,
     date: receiptDate(res.date),
-  });
+  }).select('id').single();
   if (error) {
     if (error.code === '23505') return; // повтор апдейту встиг пройти isDuplicate: мовчимо
     console.error('receipt insert error:', error);
     return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
   }
+  categorizeLater(ins.id);
   return reply(chatId, `✅ ${fmtMoney(amount)}, ${description}`);
 }
 
@@ -269,7 +282,7 @@ async function findMonoIncome(amount: number, date: string): Promise<{ amount: n
 // Вставка запису з Telegram і відповідь у чат.
 // Повертає true, якщо запис у базі (вставлено або вже був по source_id)
 async function insertTx(chatId: number, userId: string, p: Pending): Promise<boolean> {
-  const { error } = await sb.from('transactions').insert({
+  const { data: ins, error } = await sb.from('transactions').insert({
     user_id: userId,
     amount: p.amount,
     type: p.type,
@@ -277,13 +290,14 @@ async function insertTx(chatId: number, userId: string, p: Pending): Promise<boo
     source: 'telegram',
     source_id: p.source_id,
     date: p.date,
-  });
+  }).select('id').single();
   if (error) {
     if (error.code === '23505') return true; // повтор апдейту встиг пройти isDuplicate: мовчимо
     console.error('insert error:', error);
     await reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
     return false;
   }
+  categorizeLater(ins.id);
   await reply(chatId, `✅ ${p.type === 'income' ? 'Дохід' : 'Витрата'}: ${fmtMoney(p.amount)}, ${p.description}`);
   return true;
 }
