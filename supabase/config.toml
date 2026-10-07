@@ -15,3 +15,7 @@ verify_jwt = true
 # Service role JWT пройшов би й шлюз, але перевірку робить сам код (токен == SUPABASE_SERVICE_ROLE_KEY)
 [functions.categorize]
 verify_jwt = false
+
+# Масова категоризація з налаштувань: JWT користувача + whitelist у коді
+[functions.categorize-batch]
+verify_jwt = true
