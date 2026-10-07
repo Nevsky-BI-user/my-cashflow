@@ -1,5 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Те саме значення, що в categorize: рядки з більшою кількістю відмов у вибірку не йдуть
+const MAX_ATTEMPTS = 3;
+
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
@@ -28,7 +31,8 @@ async function countUncategorized(): Promise<number | null> {
   const { count, error } = await sb
     .from('transactions')
     .select('id', { count: 'exact', head: true })
-    .is('category_id', null);
+    .is('category_id', null)
+    .lt('categorize_attempts', MAX_ATTEMPTS);
   if (error) {
     console.error('categorize-batch: count failed', error);
     return null;
@@ -72,6 +76,7 @@ Deno.serve(async (req) => {
     .from('transactions')
     .select('id')
     .is('category_id', null)
+    .lt('categorize_attempts', MAX_ATTEMPTS)
     .order('date', { ascending: false })
     .limit(limit);
   if (txErr) {

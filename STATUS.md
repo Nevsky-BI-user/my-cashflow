@@ -14,7 +14,7 @@
 
 - [x] Проєкт Supabase відновлено з паузи, `ACTIVE_HEALTHY`
 - [x] CLI залогінений і привʼязаний до проєкту
-- [x] Міграції 03-06 застосовані (`migration list`: local = remote)
+- [x] Міграції 03-07 застосовані (`migration list`: local = remote)
 - [x] Функції задеплоєно (7): mono-webhook, mono-register, mono-backfill, telegram-webhook, telegram-setup, categorize, categorize-batch
 - [x] Секрети: MONO_WEBHOOK_SECRET, TELEGRAM_WEBHOOK_SECRET
 - [ ] (ти) Секрет TELEGRAM_BOT_TOKEN (BotFather -> /newbot): `npx -y supabase@latest secrets set TELEGRAM_BOT_TOKEN=<TOKEN>`
@@ -56,5 +56,5 @@
 1. Запасна модель для чеків у 4.2: `claude-sonnet-5-5` дорожча за бюджет ~$0.10/міс; старт на Haiku 4.5.
 2. `/balance` у боті рахує до сьогодні; записи з датою наперед не входять.
 3. `supabase-schema.sql` лишається «початковою» схемою, нові колонки живуть у міграціях `NN-*.sql`.
-4. `categorize-batch` бере 50 найновіших без категорії; рядки, що вже відмовили (немає категорій потрібного типу, погана відповідь моделі), потрапляють у кожен прогін і платять Claude щоразу. Варіанти: колонка `categorize_attempts` або пропуск після N помилок.
-5. Backfill за 31 день категоризує у фоні лише перші десятки записів (ліміт часу функції), решту добирає кнопка «Категоризувати».
+4. Вирішено: `transactions.categorize_attempts` (міграція 07), після 3 відмов рядок випадає з масової категоризації.
+5. Вирішено: backfill категоризує у фоні скільки встигне, решту добирає кнопка «Категоризувати».

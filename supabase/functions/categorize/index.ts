@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 // Модель категоризації: дешева і швидка, відповідь лише id категорії
 const CATEGORIZE_MODEL = 'claude-haiku-4-5-20251001';
+const MAX_ATTEMPTS = 3; // після стількох відмов рядок випадає з масової категоризації
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -37,6 +38,15 @@ async function applyCategory(txId: number, categoryId: number) {
     return false;
   }
   return true;
+}
+
+// Відмова без категорії: інкремент transactions.categorize_attempts, щоб
+// categorize-batch не брав той самий рядок (і не платив Claude) нескінченно
+async function giveUp(txId: number, reason: string) {
+  const { data } = await sb.from('transactions').select('categorize_attempts').eq('id', txId).maybeSingle();
+  const attempts = (data?.categorize_attempts ?? 0) + 1;
+  await sb.from('transactions').update({ categorize_attempts: attempts }).eq('id', txId);
+  return json({ category_id: null, reason, attempts, gave_up: attempts >= MAX_ATTEMPTS });
 }
 
 Deno.serve(async (req) => {
@@ -84,7 +94,7 @@ Deno.serve(async (req) => {
   const wantIncome = tx.type === 'income';
   // is_income null вважаємо витратою
   const pool = (cats || []).filter((c) => (c.is_income === true) === wantIncome);
-  if (pool.length === 0) return json({ category_id: null, reason: 'no_categories' });
+  if (pool.length === 0) return giveUp(txId, 'no_categories');
   const poolIds = new Set(pool.map((c) => c.id));
 
   // Ключ кешу: опис, а без опису MCC
@@ -93,7 +103,7 @@ Deno.serve(async (req) => {
   let key: string;
   if (desc) key = desc.toLowerCase();
   else if (mcc != null) key = 'mcc:' + mcc;
-  else return json({ category_id: null, reason: 'no_description' });
+  else return giveUp(txId, 'no_description');
   const hash = await sha256Hex(key);
 
   // Кеш
@@ -150,7 +160,7 @@ Deno.serve(async (req) => {
   const categoryId = m ? parseInt(m[0], 10) : NaN;
   if (!poolIds.has(categoryId)) {
     console.error('categorize: bad model answer', { txId, answer: answer.slice(0, 100) });
-    return json({ category_id: null, reason: 'bad_model_answer' });
+    return giveUp(txId, 'bad_model_answer');
   }
 
   // Кеш: конфлікт по description_hash не перезаписує наявний запис
