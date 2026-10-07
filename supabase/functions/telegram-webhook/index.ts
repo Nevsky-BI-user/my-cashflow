@@ -1,4 +1,5 @@
-// Telegram-бот (Фази 4.1, 4.2): текстові витрати/доходи, фото чеків, привʼязка кодом, /balance, /last.
+// Telegram-бот (Фази 4.1, 4.2, 5.1): текстові витрати/доходи, /income з дедупом Monobank і /yes,
+// фото чеків, привʼязка кодом, /balance, /last.
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -23,7 +24,8 @@ const sb = createClient(SUPABASE_URL, SERVICE_ROLE, {
 const HELP =
   'Формат: сума і опис, наприклад\n' +
   '250 кава\n' +
-  '+51000 зарплата (плюс = дохід)\n\n' +
+  '+51000 зарплата (плюс = дохід)\n' +
+  '/income 51000 зарплата (або /дохід): теж дохід\n\n' +
   '/balance: баланс за місяць\n' +
   '/last: останні 5 записів';
 
@@ -230,27 +232,106 @@ async function addReceipt(chatId: number, userId: string, updateId: number, phot
   return reply(chatId, `✅ ${fmtMoney(amount)}, ${description}`);
 }
 
-async function addTx(chatId: number, userId: string, updateId: number, sign: string, rawAmount: string, desc: string) {
-  const amount = parseFloat(rawAmount.replace(',', '.'));
-  if (!amount || amount <= 0) return reply(chatId, 'Сума має бути більша за нуль.');
-  const type = sign === '+' ? 'income' : 'expense';
-  const sourceId = tgSourceId(updateId);
-  if (await isDuplicate(sourceId)) return;
+// Відкладений запис для /yes: profiles.telegram_pending, TTL 10 хв
+const PENDING_TTL_MS = 10 * 60 * 1000;
+type Pending = { amount: number; type: string; description: string; date: string; source_id: string; expires?: string };
+
+const ddmm = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)}`;
+
+// Зсув дати YYYY-MM-DD на n днів (арифметика в UTC, без часових поясів)
+function shiftDate(d: string, n: number): string {
+  const t = new Date(d + 'T00:00:00Z');
+  t.setUTCDate(t.getUTCDate() + n);
+  return t.toISOString().slice(0, 10);
+}
+
+// Схожий дохід від Monobank: сума в межах 1% і дата в межах ±1 день.
+// Помилка запиту не блокує запис: логуємо і вважаємо, що дубля немає
+async function findMonoIncome(amount: number, date: string): Promise<{ amount: number; date: string } | null> {
+  const { data, error } = await sb
+    .from('transactions')
+    .select('id,amount,date')
+    .eq('source', 'mono')
+    .eq('type', 'income')
+    .gte('amount', amount * 0.99)
+    .lte('amount', amount * 1.01)
+    .gte('date', shiftDate(date, -1))
+    .lte('date', shiftDate(date, 1))
+    .order('date', { ascending: false })
+    .limit(1);
+  if (error) {
+    console.error('mono dedup lookup error:', error);
+    return null;
+  }
+  return data && data.length ? { amount: Number(data[0].amount), date: data[0].date } : null;
+}
+
+// Вставка запису з Telegram і відповідь у чат.
+// Повертає true, якщо запис у базі (вставлено або вже був по source_id)
+async function insertTx(chatId: number, userId: string, p: Pending): Promise<boolean> {
   const { error } = await sb.from('transactions').insert({
     user_id: userId,
-    amount,
-    type,
-    description: desc.trim(),
+    amount: p.amount,
+    type: p.type,
+    description: p.description,
     source: 'telegram',
-    source_id: sourceId,
-    date: todayKyiv(),
+    source_id: p.source_id,
+    date: p.date,
   });
   if (error) {
-    if (error.code === '23505') return; // повтор апдейту встиг пройти isDuplicate: мовчимо
+    if (error.code === '23505') return true; // повтор апдейту встиг пройти isDuplicate: мовчимо
     console.error('insert error:', error);
-    return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
+    await reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
+    return false;
   }
-  return reply(chatId, `✅ ${type === 'income' ? 'Дохід' : 'Витрата'}: ${fmtMoney(amount)}, ${desc.trim()}`);
+  await reply(chatId, `✅ ${p.type === 'income' ? 'Дохід' : 'Витрата'}: ${fmtMoney(p.amount)}, ${p.description}`);
+  return true;
+}
+
+async function addTx(chatId: number, userId: string, updateId: number, type: 'income' | 'expense', rawAmount: string, desc: string) {
+  const amount = parseFloat(rawAmount.replace(',', '.'));
+  if (!amount || amount <= 0) return reply(chatId, 'Сума має бути більша за нуль.');
+  const sourceId = tgSourceId(updateId);
+  if (await isDuplicate(sourceId)) return;
+  const p: Pending = { amount, type, description: desc.trim(), date: todayKyiv(), source_id: sourceId };
+
+  // Дохід міг уже прийти з Monobank: не вставляємо, просимо підтвердження /yes
+  if (type === 'income') {
+    const mono = await findMonoIncome(amount, p.date);
+    if (mono) {
+      const { error } = await sb
+        .from('profiles')
+        .update({ telegram_pending: { ...p, expires: new Date(Date.now() + PENDING_TTL_MS).toISOString() } })
+        .eq('id', userId);
+      if (error) {
+        console.error('pending save error:', error);
+        return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
+      }
+      return reply(chatId,
+        `⚠️ Схожий дохід уже є від Monobank (${fmtMoney(mono.amount)}, ${ddmm(mono.date)}). Додати все одно? /yes`);
+    }
+  }
+  await insertTx(chatId, userId, p);
+}
+
+// /yes: вставити відкладений запис, якщо він є і не прострочений
+async function confirmPending(chatId: number, userId: string) {
+  const { data, error } = await sb.from('profiles').select('telegram_pending').eq('id', userId).maybeSingle();
+  if (error) {
+    console.error('pending lookup error:', error);
+    return reply(chatId, 'Не вдалося прочитати. Спробуйте ще раз.');
+  }
+  const p = data?.telegram_pending as Pending | null;
+  if (!p || !p.expires || Date.parse(p.expires) < Date.now()) {
+    if (p) await sb.from('profiles').update({ telegram_pending: null }).eq('id', userId);
+    return reply(chatId, 'Немає що підтверджувати.');
+  }
+  // source_id з відкладеного запису: дедуп по update_id лишається в силі
+  const ok = await insertTx(chatId, userId, p);
+  if (ok) {
+    const { error: clrErr } = await sb.from('profiles').update({ telegram_pending: null }).eq('id', userId);
+    if (clrErr) console.error('pending clear error:', clrErr);
+  }
 }
 
 async function balance(chatId: number) {
@@ -334,12 +415,17 @@ Deno.serve(async (req) => {
     return new Response('ok');
   }
 
+  const updateId = Number(update.update_id) || 0;
+  let m: RegExpMatchArray | null;
   if (/^\/balance$/i.test(text)) await balance(chatId);
   else if (/^\/last$/i.test(text)) await last(chatId);
   else if (/^\/help$/i.test(text)) await reply(chatId, HELP);
-  else {
-    const m = text.match(/^([+-]?)\s*(\d+(?:[.,]\d{1,2})?)\s+(.+)$/s);
-    if (m) await addTx(chatId, prof.id, Number(update.update_id) || 0, m[1], m[2], m[3]);
+  else if (/^\/yes$/i.test(text)) await confirmPending(chatId, prof.id);
+  else if ((m = text.match(/^\/(income|дохід)\s+(\d+(?:[.,]\d{1,2})?)\s+(.+)$/is))) {
+    await addTx(chatId, prof.id, updateId, 'income', m[2], m[3]);
+  } else {
+    m = text.match(/^([+-]?)\s*(\d+(?:[.,]\d{1,2})?)\s+(.+)$/s);
+    if (m) await addTx(chatId, prof.id, updateId, m[1] === '+' ? 'income' : 'expense', m[2], m[3]);
     else await reply(chatId, 'Не зрозумів. ' + HELP);
   }
 
