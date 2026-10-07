@@ -113,6 +113,8 @@ Deno.serve(async (req) => {
         if (r?.category_id == null) {
           console.error('categorize-batch: no category', { id: tx.id, reason: r?.reason });
           errors++;
+        } else if (r.skipped) {
+          // категорію вже поставили (UI або паралельний виклик): не наш результат
         } else if (r.from_cache) {
           fromCache++;
         } else {

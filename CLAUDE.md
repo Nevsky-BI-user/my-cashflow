@@ -100,7 +100,7 @@ create policy "family full" on transactions for all
 
 Всі таблиці з даними мають RLS з політикою через `is_family_member()`:
 - `profiles`, `categories`, `transactions`, `credits`, `goals` — `for all using (is_family_member()) with check (is_family_member())`
-- `categorization_cache` — `for select using (is_family_member())`, write через service_role
+- `categorization_cache`: `for select / insert / update using (is_family_member())` (insert/update з міграції 06: ручна зміна категорії в UI пише кеш), delete немає
 - Storage `receipts` — `is_family_member() AND bucket_id='receipts'`
 
 Зміна whitelist: у файлі `02-family-whitelist.sql` (корінь репозиторію), переcтворити функцію.
@@ -188,11 +188,16 @@ if (screen.orientation && screen.orientation.lock) {
 
 ## Поточний стан
 
-- Весь код — в `index.html` (React 18 CDN, ~780 рядків)
+- Весь код: `index.html` (React 18 CDN, одна сторінка, рядки до ~7000 символів: шукати grep-ом)
 - Дані: Supabase + захардкоджені defaults
 - 5 вкладок: Огляд, Бюджет, Потік, Кредити (Календар), Цілі
 - Темна тема, glassmorphism, mobile-first
 - Auth: тільки Google OAuth, email whitelist
+- Фази 1-6 закриті кодом (07.10.2026): Monobank (webhook, backfill, register), Telegram-бот
+  (текст, фото чеків, доходи, привʼязка кодом), автокатегоризація (categorize, categorize-batch,
+  модалка транзакції). Поточний стан бекенду й кроки власника: `STATUS.md`
+- Telegram: `/start <код>` обробляється до перевірки chat_id, ліміту спроб немає (6 цифр, 10 хв,
+  бот не в каталозі); свідоме рішення
 
 ## Структура файлів
 
@@ -206,11 +211,15 @@ if (screen.orientation && screen.orientation.lock) {
 ├── CLAUDE.md                                — цей файл
 ├── PROMPTS.md                               — інструкції для Claude Code
 ├── supabase-schema.sql                      — початкова схема + RLS
+├── STATUS.md                                : план із галочками, посилання, кроки власника
+├── README-telegram.md                       : підключення бота
 ├── 02-family-whitelist.sql                  : email whitelist через is_family_member()
-├── 03-telegram-link.sql                     : код привʼязки Telegram (міграції NN-*.sql лежать у корені)
+├── 03..06-*.sql                             : міграції (копії в supabase/migrations для db push)
 └── supabase/
-    ├── config.toml                          : verify_jwt = false для webhook-функцій
-    └── functions/<назва>/index.ts           : Edge Functions (Deno)
+    ├── config.toml                          : verify_jwt для кожної функції
+    ├── migrations/                          : ті самі міграції у форматі CLI
+    └── functions/<назва>/index.ts           : mono-webhook, mono-register, mono-backfill,
+                                               telegram-webhook, telegram-setup, categorize, categorize-batch
 ```
 
 ## Технічний стек

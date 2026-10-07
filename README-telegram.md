@@ -21,6 +21,12 @@ npx -y supabase@latest secrets set TELEGRAM_BOT_TOKEN=<TOKEN>
 npx -y supabase@latest secrets set TELEGRAM_WEBHOOK_SECRET=$([guid]::NewGuid().ToString())
 ```
 
+Для чеків і автокатегоризації ще ключ Claude API (console.anthropic.com):
+
+```
+npx -y supabase@latest secrets set CLAUDE_API_KEY=<KEY>
+```
+
 ## 3. Міграція й деплой
 
 ```
@@ -28,8 +34,10 @@ npx -y supabase@latest db push
 ```
 
 ```
-npx -y supabase@latest functions deploy telegram-webhook telegram-setup
+npx -y supabase@latest functions deploy telegram-webhook telegram-setup categorize categorize-batch
 ```
+
+У Dashboard -> Storage має бути приватний bucket `receipts` (для фото чеків).
 
 ## 4. Реєстрація webhook і привʼязка
 
@@ -43,6 +51,9 @@ npx -y supabase@latest functions deploy telegram-webhook telegram-setup
 |---|---|
 | `250 кава` | витрата 250 ₴ з описом «кава» |
 | `+51000 зарплата` | дохід |
+| `/income 51000 зарплата` або `/дохід ...` | дохід |
+| `/yes` | підтвердити дохід, схожий на запис Monobank (бот сам запитає) |
+| фото чека | сума й магазин розпізнаються, запис із чеком |
 | `/balance` | доходи, витрати, баланс за поточний місяць |
 | `/last` | останні 5 записів |
 | `/help` | підказка |

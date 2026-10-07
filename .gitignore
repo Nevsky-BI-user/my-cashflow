@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Локальне: кеш Supabase CLI, встановлені скіли
+supabase/.temp/
+.agents/
+skills-lock.json
+index.backup.html
