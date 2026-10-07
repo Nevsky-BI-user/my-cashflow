@@ -84,3 +84,15 @@ for d, n, a in obl:
     print(f"  {d}  {n:<32} {a:>10.2f}")
 print(f"обовʼязкові за період: {obl_sum:.2f}")
 print(f"змінний бюджет періоду: {max(0.0, pool):.2f}" + (f"  (дефіцит {-pool:.2f} переноситься далі)" if pool < 0 else ""))
+
+# накопичення лише з додатного залишку: savings = pool0 * savings_pct / 100, змінні = pool0 - savings
+pct = float(snap.get('savings_pct', cfg.get('savings_pct', 0)) or 0)
+savings = round(max(0.0, pool) * pct / 100, 2)
+var_pool = max(0.0, pool - savings)
+print(f"накопичення {pct:g}%: {savings:.2f}; змінні після накопичень: {var_pool:.2f}")
+# машинний рядок для spec/checks/budget.py
+print('JSON ' + json.dumps({
+    'payout': {'date': str(p_next[0]), 'kind': 'advance' if p_next[1] == 'аванс' else 'salary', 'amount': p_next[2]},
+    'end': str(p_after[0]), 'obligations': [{'date': str(d), 'name': n, 'amount': a} for d, n, a in obl],
+    'oblSum': obl_sum, 'own': own, 'debt': debt, 'deficit': deficit, 'pool0': pool,
+    'savings': savings, 'varPool': var_pool}, ensure_ascii=False))

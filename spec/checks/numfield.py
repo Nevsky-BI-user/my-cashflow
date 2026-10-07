@@ -7,7 +7,7 @@ SETR = """(el,v)=>{const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prot
 
 
 def _salary_root(page):
-    page.click('.o-chip')
+    page.click('.dv-pay-btn' if page.viewport_size['width'] >= 1024 else '.o-chip')
     page.wait_for_timeout(500)
     root = '[role=dialog]:has(input.nf-range)'
     check(page.locator(root).count() >= 1, 'чип зарплати не відкрив вікно з повзунком')

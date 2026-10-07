@@ -1,7 +1,7 @@
 # Меню налаштувань: ПК (розділи праворуч) і телефон (список, другий рівень)
 from helpers import check, dialog
 
-SECTIONS = ['Зарплата', 'Розподіл бюджету', 'Накопичення', 'Платежі', 'Категорії', 'Тема', 'Інтеграції', 'Підказки']
+SECTIONS = ['Зарплата', 'Розподіл бюджету', 'Накопичення', 'Платежі', 'Рахунки', 'Категорії', 'Тема', 'Інтеграції', 'Підказки']
 PANEL_TITLE = r"""()=>{const dl=document.querySelector('[role=dialog][aria-label="Налаштування"]');const pn=dl.children[1];
 return {title:pn.children[0].innerText.split('\n')[0].trim(),active:((dl.querySelector('nav [aria-current=page]')||{}).innerText||'').trim()}}"""
 
@@ -28,7 +28,7 @@ def mobile(page):
     d = dialog(page, 'Налаштування')
     check(d.count() == 1, 'шестерня не відкрила меню')
     rows = page.evaluate("document.querySelector('[role=dialog][aria-label=\"Налаштування\"]').children.length") - 1
-    check(rows == 8, f'у списку {rows} рядків, а не 8')
+    check(rows == 9, f'у списку {rows} рядків, а не 9')
     txt = d.inner_text()
     # «Підказки» на телефоні: кнопка туру і версія замість заголовка рядка
     miss = [s for s in SECTIONS[:-1] if s not in txt]

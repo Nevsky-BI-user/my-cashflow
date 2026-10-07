@@ -19,7 +19,7 @@ def settings_menu(page):
     d = dialog(page, 'Налаштування')
     check(d.count() == 1, 'S не відкрила меню налаштувань')
     n = d.locator('nav button').count()
-    check(n == 8, f'у меню {n} пунктів, а не 8')
+    check(n == 9, f'у меню {n} пунктів, а не 9')
     page.keyboard.press('Escape')
     page.wait_for_timeout(300)
     check(d.count() == 0, 'Esc не закрив меню')
@@ -81,7 +81,7 @@ def field_keeps_keys(page):
 
 CHECKS = [
     ('N відкриває, Esc закриває транзакцію', 'desktop', add_and_esc),
-    ('S відкриває меню з 8 пунктів', 'desktop', settings_menu),
+    ('S відкриває меню з 9 пунктів', 'desktop', settings_menu),
     ('T перемикає тему по колу', 'desktop', theme_cycle),
     # тур без tour_done у localStorage: автозапуск туру потребує сесії Supabase, тут лише ?
     ('? відкриває тур із 5 кроків', 'desktop', tour, {'tour': True}),

@@ -1,0 +1,19 @@
+{
+  "accounts": [
+    {"name": "Ощадбанк", "bank": "oschad", "kind": "debit", "balance": 5000, "debt": 0, "debt_month": null, "is_salary": true, "active": true},
+    {"name": "ПриватБанк кредитна", "bank": "privat", "kind": "credit", "balance": 0, "debt": 10000, "debt_month": "2026-09-01", "is_salary": false, "active": true},
+    {"name": "monobank", "bank": "mono", "kind": "debit", "balance": 12500, "debt": 0, "debt_month": null, "is_salary": false, "active": true}
+  ],
+  "fixed": [
+    {"name": "Оренда", "amount": 16500, "day_of_month": 25, "type": "payment", "active": true},
+    {"name": "Комуналка", "amount": 3200, "day_of_month": 6, "type": "payment", "active": true},
+    {"name": "Інтернет", "amount": 350, "day_of_month": 28, "type": "payment", "active": true},
+    {"name": "Мобільний звʼязок", "amount": 280, "day_of_month": 2, "type": "payment", "active": true},
+    {"name": "Підробіток", "amount": 4000, "day_of_month": 30, "type": "income", "active": true}
+  ],
+  "credits": [
+    {"name": "Навушники", "monthly_amount": 111.07, "payment_day": 21, "start_year": 2026, "start_month": 2, "total_payments": 11},
+    {"name": "Lenovo Legion 5 Pro", "monthly_amount": 6133.27, "payment_day": 24, "start_year": 2026, "start_month": 1, "total_payments": 15}
+  ],
+  "salary": {"rate": 130000, "split_day": 15, "advance_day": 21, "salary_day": 6, "savings_pct": 20}
+}
