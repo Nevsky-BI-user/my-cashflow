@@ -7,7 +7,7 @@ from helpers import ADV_DAY, SAL_DAY, _adj, check, freeze, go_tab, shot
 TODAY = '2026-10-08'
 MON_GEN = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня']
 # групи по днях у ПК-Потоці: підпис «1 жовтня, четвер» і кількість фактичних операцій
-GROUPS = r"""[...document.querySelectorAll('.p-flow.desk .flow-group')].map(g=>({d:g.querySelector('.flow-day span').innerText,n:g.querySelectorAll('.flow-row.tx').length}))"""
+GROUPS = r"""[...document.querySelectorAll('.p-flow.desk .flow-group')].map(g=>({d:g.querySelector('.flow-day span').innerText.toLowerCase(),n:g.querySelectorAll('.flow-row.tx').length}))"""
 
 
 def demo_rows(page):

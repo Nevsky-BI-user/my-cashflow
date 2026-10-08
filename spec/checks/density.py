@@ -1,4 +1,4 @@
-# Щільність ПК на 1920x900: Огляд, Календар, Цілі і Бюджет без прокрутки сторінки, числа KPI до 30px, основний текст 14px, бейджі А/З/борг читаються;
+# Щільність ПК на 1920x900: Огляд, Календар, Цілі і Бюджет без прокрутки сторінки, числа KPI до 24px, основний текст 13px, бейджі А/З/борг читаються;
 # Потік: панель фільтрів до 150px (усі категорії видно) і щонайменше 14 рядків у вʼюпорті (дата заморожена: демо-операції txDemo розкладаються за сьогоднішнім днем);
 # жодної внутрішньої прокрутки в .content на пʼяти екранах; Календар із реальними обсягами (5 постійних, 4 розстрочки, 2 рахунки з боргом) вміщається в 1920x900 цілком
 from helpers import check, dialog, freeze, go_tab, shot
@@ -9,6 +9,10 @@ KPI_FS = """[...document.querySelectorAll('.dv-kpi-v, .ck-kpi > div:nth-child(2)
 KPI_H = """[...document.querySelectorAll('.dv-kpi, .ck-kpi, .goals-kpi')].filter(e=>e.offsetParent).map(e=>Math.round(e.getBoundingClientRect().height))"""
 FLOW = """({bar:Math.round(document.querySelector('.p-flow.desk .flow-bar').getBoundingClientRect().height),
 rows:[...document.querySelectorAll('.p-flow.desk .flow-row')].filter(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight}).length})"""
+# висота рядка Потоку і кількість текстових рядків в описі (getClientRects текстового вузла)
+ROW1 = r"""(()=>{const rows=[...document.querySelectorAll('.p-flow.desk .flow-row')];const bad=[];rows.forEach(e=>{const h=e.getBoundingClientRect().height;const d=e.querySelector('.flow-desc');
+const rg=document.createRange();rg.selectNodeContents(d);const lines=new Set([...rg.getClientRects()].map(r=>Math.round(r.top))).size;if(Math.abs(h-32)>0.5||lines!==1)bad.push([d.innerText,h,lines])});
+return {n:rows.length,bad:bad,sub:document.querySelectorAll('.p-flow.desk .flow-sub').length}})()"""
 # елементи в .content із власною вертикальною прокруткою, яка справді прокручується
 INNER = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getComputedStyle(e).overflowY;return (o==='auto'||o==='scroll')&&e.scrollHeight>e.clientHeight+2}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30)+' '+e.scrollHeight+'>'+e.clientHeight)"""
 # фікстура: другий рахунок із боргом (monobank), дедлайн той самий, що в ПриватБанку
@@ -39,23 +43,23 @@ def fit(page):
         check(m['sh'] <= m['ih'] + 8, f'{name} на 1920x900 прокручується: {m["sh"]} > {m["ih"]}')
         no_inner(page, name)
         fs = page.evaluate(KPI_FS)
-        check(fs and max(fs) <= 30, f'{name}: число KPI {max(fs) if fs else None}px, а не до 30')
+        check(fs and max(fs) <= 24, f'{name}: число KPI {max(fs) if fs else None}px, а не до 24')
         hs = page.evaluate(KPI_H)
         check(hs and max(hs) <= kmax + 0.5, f'{name}: KPI заввишки {hs}, а не до {kmax}px')
     page.mouse.move(2, 2)
     shot(page, 'goals-1920.jpg', full=False)
-    # основний текст ПК 14px на рядку операції (Огляд, «Останні операції»)
+    # основний текст ПК 13px на рядку операції (Огляд, «Останні операції»)
     go_tab(page, 0)
     page.wait_for_timeout(200)
     row = page.evaluate("getComputedStyle(document.querySelector('.dv-recent div[style*=\"cursor\"] span:nth-child(2)')).fontSize")
-    check(row == '14px', f'рядок операції {row}, а не 14px')
-    # бейджі виплат і боргу в сітці Календаря: щонайменше 12px і не обрізані
+    check(row == '13px', f'рядок операції {row}, а не 13px')
+    # бейджі виплат і боргу в сітці Календаря: щонайменше 11.5px (дрібний кегль дизайну ПК v135) і не обрізані
     go_tab(page, 3)
     page.wait_for_timeout(200)
     b = page.evaluate("""[...document.querySelectorAll('.ck-cal .cal-badge, .ck-cal .cal-debt')].map(e=>{const r=e.getBoundingClientRect();return{t:e.innerText.trim(),fs:parseFloat(getComputedStyle(e).fontSize),w:r.width,sw:e.scrollWidth,cw:e.clientWidth}})""")
     check(len(b) >= 2, f'у сітці лише {len(b)} бейджів виплат і боргу')
     for x in b:
-        check(x['fs'] >= 12 and x['w'] > 0 and x['sw'] <= x['cw'] + 1, f'бейдж нечитабельний: {x}')
+        check(x['fs'] >= 11.5 and x['w'] > 0 and x['sw'] <= x['cw'] + 1, f'бейдж нечитабельний: {x}')
     # Бюджет: без прокрутки
     go_tab(page, 1)
     page.wait_for_timeout(300)
@@ -71,6 +75,10 @@ def fit(page):
     check(f['bar'] <= 150, f'панель фільтрів Потоку {f["bar"]}px, а не до 150')
     no_inner(page, 'Потік')
     check(f['rows'] >= 14, f'у вʼюпорті лише {f["rows"]} рядків Потоку, а не 14+')
+    # кожен рядок Потоку рівно 32px, опис в один текстовий рядок, без підрядка (MCC лише в дровері)
+    rr = page.evaluate(ROW1)
+    check(rr['n'] >= 14 and not rr['bad'], f'рядки Потоку не 32px або опис не в один рядок: {rr["bad"][:3]} (з {rr["n"]})')
+    check(rr['sub'] == 0, f'у рядках Потоку лишився підрядок: {rr["sub"]}')
     page.mouse.move(2, 2)
     shot(page, 'flow-1920.jpg', full=False)
 
@@ -141,7 +149,7 @@ def laptop(page):
 
 
 CHECKS = [
-    ('ПК 1920x900: Огляд, Календар, Цілі, Бюджет без прокрутки, жодної внутрішньої прокрутки, Потік 14+ рядків, KPI, 14px, бейджі', 'desktop', fit),
+    ('ПК 1920x900: Огляд, Календар, Цілі, Бюджет без прокрутки, жодної внутрішньої прокрутки, Потік 14+ рядків по 32px в один рядок, KPI, 13px, бейджі', 'desktop', fit),
     ('ПК 1920x900: Календар із реальними обсягами на одному екрані', 'desktop', calendar_real),
     ('ПК 1280x800: KPI і перша картка видно (Огляд, Календар, Цілі), рядок Потоку', 'desktop', laptop),
 ]

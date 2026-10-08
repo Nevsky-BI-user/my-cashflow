@@ -97,7 +97,7 @@ def savings_log(page):
     want = sum(1000 * (i + 1) for i in range(7))
     check(tot == want, f'«Всього» {tot}, а сума записів {want}')
     fs = page.evaluate("getComputedStyle(document.querySelector('.goals-log-a')).fontSize")
-    check(fs == '15px', f'сума запису {fs}, а не 15px')
+    check(fs == '13.5px', f'сума запису {fs}, а не 13.5px (--d-amt дизайну ПК v135)')
     check(log.locator('.goals-log-empty').count() == 0, 'порожній стан при наявних записах')
     log.locator('button', has_text='Усі 7').click()
     page.wait_for_timeout(250)

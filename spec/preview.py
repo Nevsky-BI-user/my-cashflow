@@ -15,7 +15,7 @@ OUT = ROOT / 'spec' / '.out' / 'preview'
 SWAPS = [
     ('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>', ''),
     ("sb&&h('button',{onClick:openSettings", "h('button',{onClick:openSettings"),
-    ("sb&&h('button',{className:'side-item',onClick:openSettings}", "h('button',{className:'side-item',onClick:openSettings}"),
+    ("sb&&h('button',{className:'side-item',onClick:openSettings,", "h('button',{className:'side-item',onClick:openSettings,"),
     ("tab!=='overview'&&sb&&h('button',{onClick:fabAct", "tab!=='overview'&&h('button',{onClick:fabAct"),
     ("sb&&h('button',{className:'dact'", "h('button',{className:'dact'"),
     ("if('serviceWorker' in navigator){", "if(false){"),

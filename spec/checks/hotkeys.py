@@ -14,15 +14,16 @@ def add_and_esc(page):
 
 
 def settings_menu(page):
+    # на ПК налаштування окремою сторінкою (не діалог); Esc повертає на вкладку
     page.keyboard.press('s')
     page.wait_for_timeout(400)
-    d = dialog(page, 'Налаштування')
-    check(d.count() == 1, 'S не відкрила меню налаштувань')
+    d = page.locator('.set-page')
+    check(d.count() == 1 and dialog(page, 'Налаштування').count() == 0, 'S не відкрила сторінку налаштувань')
     n = d.locator('nav button').count()
     check(n == 9, f'у меню {n} пунктів, а не 9')
     page.keyboard.press('Escape')
     page.wait_for_timeout(300)
-    check(d.count() == 0, 'Esc не закрив меню')
+    check(d.count() == 0, 'Esc не закрив сторінку налаштувань')
 
 
 def theme_cycle(page):
@@ -74,7 +75,7 @@ def field_keeps_keys(page):
         page.keyboard.press(k)
     page.wait_for_timeout(300)
     check(page.inner_text('.dtitle h1').strip() == 'Цілі', 'клавіша 1 у полі перемкнула екран')
-    check(page.locator(ADD).count() == 0 and dialog(page, 'Налаштування').count() == 0,
+    check(page.locator(ADD).count() == 0 and dialog(page, 'Налаштування').count() == 0 and page.locator('.set-page').count() == 0,
           'N або S у полі відкрили вікно')
     check(page.evaluate("localStorage.getItem('theme')") == theme0, 'T у полі змінила тему')
     check(inp.input_value() != before and '1' in inp.input_value(), f'цифра не потрапила в поле: {inp.input_value()!r}')

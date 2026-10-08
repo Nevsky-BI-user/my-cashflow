@@ -30,8 +30,9 @@ def desktop(page):
     check(page.inner_text('.ck-month') == f'{MO[t.month - 1]} {t.year}', f'заголовок місяця: {page.inner_text(".ck-month")!r}')
     today = cal.locator('.cal-cell.today')
     check(today.count() == 1, 'немає клітинки «сьогодні»')
-    bw = today.evaluate("e=>getComputedStyle(e).borderTopWidth")
-    check(bw == '2px', f'сьогодні не обведене: {bw}')
+    # дизайн ПК v135: сьогодні тим самим маркером, що в Потоці (тло акценту і ліва смуга 2px)
+    sh = today.evaluate("e=>getComputedStyle(e).boxShadow")
+    check('inset' in sh and '2px 0px 0px' in sh, f'сьогодні без лівої смуги акценту: {sh}')
     check(today.locator('.cal-dn').inner_text() == str(t.day), 'обведене не сьогоднішнє число')
     # бейджі виплат і боргу
     check(cal.locator('.cal-badge', has_text='А').count() == 1 and cal.locator('.cal-badge', has_text='З').count() == 1, 'немає бейджів А і З')

@@ -17,8 +17,8 @@ const l1=L(fg),l2=L(bg);return{r:Math.round(((Math.max(l1,l2)+0.05)/(Math.min(l1
 
 
 def dialogs_desktop(page):
-    # нова операція (N), налаштування (S), період, тур (?)
-    for key, lbl in (('KeyN', 'Нова операція'), ('KeyS', 'Налаштування')):
+    # нова операція (N), період, тур (?); налаштування на ПК сторінкою, не діалогом (перевіряє hotkeys/theme)
+    for key, lbl in (('KeyN', 'Нова операція'),):
         page.keyboard.press(key)
         page.wait_for_timeout(300)
         d = page.evaluate(OPEN_DLG)
@@ -84,18 +84,28 @@ def _pairs(page, items):
     check(not bad, 'контраст нижче 4.5: ' + ' | '.join(bad))
 
 
-def contrast_desktop(page):
-    # світла тема (за замовчуванням), ПК: підпис KPI, «через N дн.», баланс після операції
-    page.evaluate("document.documentElement.setAttribute('data-theme','light')")
+def _contrast_desktop(page, theme):
+    # ПК, 6 пар: підпис KPI (muted), «через N дн.» (muted2), борг у KPI, баланс після операції, сума витрати, сума зелена «Відкладаємо»
+    page.evaluate(f"document.documentElement.setAttribute('data-theme','{theme}')")
     page.wait_for_timeout(150)
+    print(f'      тема {theme}')
     lbl = page.evaluate_handle("[...document.querySelectorAll('.dv-kpi div')].find(e=>/вільно до виплати/i.test(e.innerText)&&!e.children.length)")
     fut = page.evaluate_handle("[...document.querySelectorAll('.dv-near .dv-ev span span')].find(e=>/^через /.test(e.innerText))")
-    _pairs(page, [('підпис KPI', lbl), ('«через N дн.»', fut)])
+    _pairs(page, [('підпис KPI', lbl), ('«через N дн.»', fut), ('борг у KPI', '.dv-debt .dv-kpi-v')])
     go_tab(page, 2)
-    _pairs(page, [('баланс після операції', '.flow-bal')])
+    _pairs(page, [('баланс після операції', '.flow-bal'), ('сума витрати', ".flow-row.tx[data-type=out] .flow-amt")])
     go_tab(page, 4)
     sav = page.evaluate_handle("[...document.querySelectorAll('.p-goals.desk *')].find(e=>/₴\\/міс$/.test(e.innerText.trim())&&!e.children.length&&e.style.color==='var(--green-t)')")
     _pairs(page, [('сума зелена в KPI «Відкладаємо»', sav)])
+    go_tab(page, 0)
+
+
+def contrast_desktop(page):
+    _contrast_desktop(page, 'light')
+
+
+def contrast_desktop_dark(page):
+    _contrast_desktop(page, 'dark')
 
 
 def contrast_mobile(page):
@@ -111,6 +121,7 @@ CHECKS = [
     ('Фокус повертається на ініціатор після Esc', 'desktop', focus_return),
     ('Tab не виходить із відкритого шита', 'mobile', tab_trap_mobile),
     ('Видимий контур фокуса на кнопці панелі', 'desktop', focus_visible),
-    ('Контраст підписів на ПК (світла тема) ≥ 4.5', 'desktop', contrast_desktop),
+    ('Контраст 6 пар на ПК (світла тема) ≥ 4.5', 'desktop', contrast_desktop),
+    ('Контраст 6 пар на ПК (темна тема) ≥ 4.5', 'desktop', contrast_desktop_dark),
     ('Контраст табки і сум на телефоні (світла тема) ≥ 4.5', 'mobile', contrast_mobile),
 ]

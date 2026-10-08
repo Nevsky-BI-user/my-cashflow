@@ -2,15 +2,15 @@
 from helpers import check, dialog
 
 SECTIONS = ['Зарплата', 'Розподіл бюджету', 'Накопичення', 'Платежі', 'Рахунки', 'Категорії', 'Тема', 'Інтеграції', 'Підказки']
-PANEL_TITLE = r"""()=>{const dl=document.querySelector('[role=dialog][aria-label="Налаштування"]');const pn=dl.children[1];
+PANEL_TITLE = r"""()=>{const dl=document.querySelector('.set-page[aria-label="Налаштування"]');const pn=dl.children[1];
 return {title:pn.children[0].innerText.split('\n')[0].trim(),active:((dl.querySelector('nav [aria-current=page]')||{}).innerText||'').trim()}}"""
 
 
 def desktop(page):
     page.keyboard.press('s')
     page.wait_for_timeout(400)
-    d = dialog(page, 'Налаштування')
-    check(d.count() == 1, 'меню не відкрилось')
+    d = page.locator('.set-page')
+    check(d.count() == 1, 'сторінка налаштувань не відкрилась')
     for sec in SECTIONS:
         d.locator('nav button', has_text=sec).first.click()
         page.wait_for_timeout(300)
@@ -19,7 +19,7 @@ def desktop(page):
         check(sec in r['active'], f'розділ «{sec}»: активний пункт «{r["active"]}»')
     page.keyboard.press('Escape')
     page.wait_for_timeout(300)
-    check(d.count() == 0, 'Esc не закрив меню')
+    check(d.count() == 0, 'Esc не закрив сторінку налаштувань')
 
 
 def mobile(page):

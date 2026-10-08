@@ -88,7 +88,7 @@ def _keys(page):
     """Дати груп по днях у порядку показу: (місяць, день)."""
     out = []
     for d in page.evaluate(DAYS):
-        day, mon = d.split(',')[0].split(' ')
+        day, mon = d.lower().split(',')[0].split(' ')
         out.append((MON_GEN.index(mon), int(day)))
     return out
 

@@ -7,9 +7,9 @@ from helpers import check, dialog, shot
 SETR = """(el,v)=>{const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;s.call(el,String(v));el.dispatchEvent(new Event('input',{bubbles:true}))}"""
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
 KPI_H = "[...document.querySelectorAll('.dv-kpis .dv-kpi')].map(e=>Math.round(e.getBoundingClientRect().height))"
-# текстові вузли ПК-Огляду поза банківськими картками, дрібніші за 12px (підписи 12, основний 14)
+# текстові вузли ПК-Огляду поза банківськими картками, дрібніші за 11.5px (підписи 11.5, основний 13; дизайн ПК v135)
 SMALL = """[...document.querySelectorAll('.p-overview.desk *')].filter(e=>!e.closest('.bcard')&&[...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim()))
-.map(e=>[e.textContent.trim().slice(0,20),parseFloat(getComputedStyle(e).fontSize)]).filter(x=>x[1]<12)"""
+.map(e=>[e.textContent.trim().slice(0,20),parseFloat(getComputedStyle(e).fontSize)]).filter(x=>x[1]<11.5)"""
 
 
 def num(t):
@@ -24,14 +24,15 @@ def desktop(page):
     check(page.locator('.dv-acc-head .dv-acc-add').count() == 1, 'немає кнопки «+ Рахунок» у заголовку рахунків')
     for i in range(3):
         w = cards.nth(i).bounding_box()
-        check(240 <= w['width'] <= 300.5 and abs(w['height'] - 110) <= 1, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, а не 240-300 x 110')
+        check(240 <= w['width'] <= 300.5 and abs(w['height'] - 96) <= 1, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, а не 240-300 x 96')
     # monobank: чорна картка, «дебетова», кнопка ↻ «Оновити» без БД не падає й оновлює час
     mono = page.locator('.dv-cards .bcard-mono')
     check(mono.count() == 1, 'немає картки monobank')
     mt = mono.inner_text().lower()
     check('monobank' in mt and 'дебетова' in mt and 'оновлено' in mt, f'картка monobank: {mt!r}')
-    bg = mono.evaluate("e=>getComputedStyle(e).backgroundImage")
-    check('15, 17, 21' in bg and '42, 45, 53' in bg, f'картка monobank не чорна: {bg[:90]}')
+    # дизайн ПК v135: плоска картка, mono #1a1c22 без градієнта
+    bg = mono.evaluate("e=>{const s=getComputedStyle(e);return s.backgroundImage+' | '+s.backgroundColor}")
+    check(bg == 'none | rgb(26, 28, 34)', f'картка monobank не плоска чорна #1a1c22: {bg[:90]}')
     upd = page.locator('.dv-acc-head .dv-mono-upd')
     check(upd.count() == 1 and 'Оновити' in upd.inner_text(), 'немає кнопки «Оновити» для monobank')
     upd.click()
@@ -83,7 +84,7 @@ def wide(page):
     check(cw <= 1600.5, f'ширина контенту {cw:.0f}px більша за 1600')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол на 1920')
     fs = page.evaluate("getComputedStyle(document.querySelector('.content')).fontSize")
-    check(fs == '14px', f'базовий шрифт .content {fs}, а не 14px')
+    check(fs == '13px', f'базовий шрифт .content {fs}, а не 13px')
     small = page.evaluate(SMALL)
     check(not small, f'на ПК-Огляді є текст дрібніший за 12px: {small[:5]}')
     page.mouse.move(2, 2)
