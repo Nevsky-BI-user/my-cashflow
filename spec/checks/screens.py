@@ -2,15 +2,15 @@
 from helpers import TABS, check, go_tab
 
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
-# елементи всередині .content з власним вертикальним скролом
-INNER_SCROLL = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getComputedStyle(e).overflowY;return o==='auto'||o==='scroll'}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30))"""
+# елементи всередині .content з власним вертикальним скролом (права колонка Календаря прокручується свідомо)
+INNER_SCROLL = r"""[...document.querySelectorAll('.content *')].filter(e=>{if(e.closest('.ck-side'))return false;const o=getComputedStyle(e).overflowY;return o==='auto'||o==='scroll'}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30))"""
 
 
 def desktop(page):
     check(page.evaluate("getComputedStyle(document.querySelector('header')||document.createElement('header')).display") == 'none'
           or page.locator('header').count() == 0, 'шапка на ПК не схована')
     w = page.evaluate("document.querySelector('.side').getBoundingClientRect().width")
-    check(abs(w - 240) < 1, f'бічна панель {w}px, а не 240')
+    check(abs(w - 220) < 1, f'бічна панель {w}px, а не 220')
     for i, (tid, title) in enumerate(TABS):
         go_tab(page, i)
         h1 = page.inner_text('.dtitle h1').strip()

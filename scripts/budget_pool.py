@@ -1,13 +1,19 @@
 # Змінний бюджет наступного періоду за правилом власника (08.10.2026):
 #   бюджет = наступна виплата - обовʼязкові платежі до наступної виплати - поточний мінус
 #   (мінус = борги мінус власні кошти, якщо більше нуля); результат <= 0 означає нуль і перенесення дефіциту.
-# Вхід: JSON {accounts, fixed, credits, salary} (знімок БД). Запуск:
-#   PYTHONUTF8=1 python scripts/budget_pool.py <snapshot.json> [YYYY-MM-DD сьогодні]
+# Правило «білої» картки (08.10.2026): білі обовʼязкові (credit_ok = false) йдуть лише з власних коштів
+#   не кредитних рахунків; cashNow = ці кошти - білі з датою в [зараз; кінець періоду);
+#   freeNow = max(0, min(varPool - spent, cashNow)). credit_ok за замовчуванням: fixed false,
+#   credits true, якщо source містить 'privat'.
+# Вхід: JSON {accounts, fixed, credits, salary, spent?} (знімок БД; spent: витрати періоду, за замовчуванням 0).
+# Запуск: PYTHONUTF8=1 python scripts/budget_pool.py <snapshot.json> [YYYY-MM-DD сьогодні] [YYYY-MM-DD зараз]
+#   «сьогодні» визначає період (виплата строго після нього), «зараз» початок вікна whiteDue (без нього весь період).
 import calendar, json, sys
 from datetime import date, timedelta
 
 snap = json.load(open(sys.argv[1], encoding='utf-8-sig'))
 today = date.fromisoformat(sys.argv[2]) if len(sys.argv) > 2 else date.today()
+now = date.fromisoformat(sys.argv[3]) if len(sys.argv) > 3 else None
 cfg = snap['salary']
 RATE, SPLIT = float(cfg['rate']), int(cfg['split_day'])
 ADV, SAL = int(cfg['advance_day']), int(cfg['salary_day'])
@@ -65,23 +71,25 @@ for f in snap['fixed'] or []:
     d = in_period(int(f['day_of_month']))
     if d:
         amt = float(f['amount'])
-        obl.append((d, f['name'], amt if f['type'] != 'income' else -amt))
+        obl.append((d, f['name'], amt if f['type'] != 'income' else -amt, f.get('credit_ok') is True))
 for c in snap['credits'] or []:
     d = in_period(int(c['payment_day']))
     if d:
         first = c['start_year'] * 12 + c['start_month']
         cur = d.year * 12 + (d.month - 1)
         if first <= cur <= first + int(c['total_payments']) - 1:
-            obl.append((d, c['name'] + ' (розстрочка)', float(c['monthly_amount'])))
-obl.sort()
+            ok = c.get('credit_ok')
+            ok = bool(ok) if ok is not None else 'privat' in str(c.get('source') or '').lower()
+            obl.append((d, c['name'] + ' (розстрочка)', float(c['monthly_amount']), ok))
+obl.sort(key=lambda o: (o[0], o[1]))
 
-obl_sum = sum(a for _, _, a in obl)
+obl_sum = sum(o[2] for o in obl)
 pool = p_next[2] - obl_sum - deficit
 
 print(f"сьогодні {today}; власні кошти {own:.2f}, борги {debt:.2f}, нетто {net:.2f}, мінус до перекриття {deficit:.2f}")
 print(f"наступна виплата: {p_next[1]} {p_next[0]} = {p_next[2]:.2f}; період до {p_after[0]} ({p_after[1]})")
-for d, n, a in obl:
-    print(f"  {d}  {n:<32} {a:>10.2f}")
+for d, n, a, ok in obl:
+    print(f"  {d}  {n:<32} {a:>10.2f}  {'кредитна' if ok else 'біла'}")
 print(f"обовʼязкові за період: {obl_sum:.2f}")
 print(f"змінний бюджет періоду: {max(0.0, pool):.2f}" + (f"  (дефіцит {-pool:.2f} переноситься далі)" if pool < 0 else ""))
 
@@ -90,9 +98,21 @@ pct = float(snap.get('savings_pct', cfg.get('savings_pct', 0)) or 0)
 savings = round(max(0.0, pool) * pct / 100, 2)
 var_pool = max(0.0, pool - savings)
 print(f"накопичення {pct:g}%: {savings:.2f}; змінні після накопичень: {var_pool:.2f}")
+# біла картка: обовʼязкові без credit_ok (лише витрати), вікно whiteDue [max(now, start); end)
+white = [o for o in obl if not o[3] and o[2] > 0]
+obl_white = sum(o[2] for o in white)
+w_from = max(now, period[0]) if now else period[0]
+white_due = sum(o[2] for o in white if w_from <= o[0] < period[1])
+cash_own = sum(float(a['balance']) for a in snap['accounts'] or [] if a.get('kind') != 'credit')
+cash_now = cash_own - white_due
+spent = float(snap.get('spent') or 0)
+free_now = max(0.0, min(var_pool - spent, cash_now))
+print(f"білі за період: {obl_white:.2f}; білі з {w_from} до {period[1]}: {white_due:.2f}; "
+      f"власні не кредитних {cash_own:.2f}; cashNow {cash_now:.2f}; витрати {spent:.2f}; freeNow {free_now:.2f}")
 # машинний рядок для spec/checks/budget.py
 print('JSON ' + json.dumps({
     'payout': {'date': str(p_next[0]), 'kind': 'advance' if p_next[1] == 'аванс' else 'salary', 'amount': p_next[2]},
-    'end': str(p_after[0]), 'obligations': [{'date': str(d), 'name': n, 'amount': a} for d, n, a in obl],
+    'end': str(p_after[0]), 'obligations': [{'date': str(d), 'name': n, 'amount': a, 'creditOk': ok} for d, n, a, ok in obl],
     'oblSum': obl_sum, 'own': own, 'debt': debt, 'deficit': deficit, 'pool0': pool,
-    'savings': savings, 'varPool': var_pool}, ensure_ascii=False))
+    'savings': savings, 'varPool': var_pool, 'oblWhite': obl_white, 'whiteDue': white_due, 'cashNow': cash_now,
+    'spent': spent, 'freeNow': free_now}, ensure_ascii=False))

@@ -15,7 +15,13 @@
 - [x] Проєкт Supabase відновлено з паузи, `ACTIVE_HEALTHY`
 - [x] CLI залогінений і привʼязаний до проєкту
 - [x] Міграції 03-13 застосовані (`migration list`: local = remote)
-- [x] Функції задеплоєно (7): mono-webhook, mono-register, mono-backfill, telegram-webhook, telegram-setup, categorize, categorize-batch
+- [x] Функції задеплоєно (8): mono-webhook, mono-register, mono-backfill, mono-balance, telegram-webhook, telegram-setup, categorize, categorize-batch
+- [x] Міграція 17 (08.10): рахунок «Monobank» (id 3) на власника X-Token, колонки `accounts.mono_account_id` і `currency`; 28 mono-операцій привʼязано до рахунку (`account_id is null` для mono: 0)
+- [x] Міграція 18 (08.10): `credit_ok` у `fixed_payments` і `credits` (розстрочки з source `privat`: true, решта «білі»)
+- [x] Функція `mono-balance` (verify_jwt): живий баланс Monobank з client-info, кеш 60 с (`{force:true}` обходить), 429 → `rate_limited`; без токена в того, хто кличе, бере токен іншого профілю сімʼї. Перший виклик від застосунку заповнить `mono_account_id` (black, 980)
+- [x] mono-webhook і mono-backfill ставлять `account_id` рахунку Monobank; webhook звіряє `data.account` з `mono_account_id`, backfill запитує саме цей рахунок замість `0`
+- [x] Telegram `/balance`: блок «Вільно до виплати» за правилом білої і кредитної картки (DESIGN.md), логіка в `supabase/functions/_shared/budget.ts`, звірена з `scripts/budget_pool.py` (varPool, 144 дати на 2 знімках, 0 розбіжностей)
+- [ ] (ти) Відкрити застосунок після оновлення фронтенду: перший виклик `mono-balance` підтягне баланс Monobank; потім `/balance` у боті
 - [x] Секрети: MONO_WEBHOOK_SECRET, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_TOKEN, CLAUDE_API_KEY
 - [x] Storage: bucket `receipts` існує і приватний
 - [x] Бот привʼязаний, X-Token Monobank підключений (скриншот власника 07.10)

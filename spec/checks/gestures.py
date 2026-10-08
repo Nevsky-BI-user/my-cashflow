@@ -49,6 +49,9 @@ def row_swipe(page):
     rows = page.locator('.p-flow .swipe-row')
     n0 = rows.count()
     check(n0 >= 5, f'у мобільному Потоці лише {n0} рядків зі свайпом')
+    # демо постійних платежів стоїть вище за операції: рядок спершу в кадр
+    rows.first.scroll_into_view_if_needed()
+    page.wait_for_timeout(150)
     b = rows.first.bounding_box()
     y = b['y'] + b['height'] / 2
     touch_drag(page, b['x'] + b['width'] - 30, y, b['x'] + 60, y)

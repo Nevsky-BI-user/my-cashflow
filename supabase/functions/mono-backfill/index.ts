@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
     return json({ error: 'forbidden' }, 403);
   }
 
-  // Параметри: days (≤31, ліміт вікна Mono), account (дефолт '0' — основний рахунок)
+  // Параметри: days (≤31, ліміт вікна Mono), account (за замовчуванням mono_account_id рахунку, інакше '0')
   let bodyIn: any = {};
   try {
     bodyIn = await req.json();
@@ -66,7 +66,6 @@ Deno.serve(async (req) => {
     // порожнє тіло — ок, беремо дефолти
   }
   const days = Math.min(Math.max(Number(bodyIn.days) || 31, 1), 31);
-  const account = String(bodyIn.account || '0');
 
   const { data: prof, error: profErr } = await sb
     .from('profiles')
@@ -75,6 +74,21 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (profErr) return json({ error: 'profile lookup failed' }, 500);
   if (!prof?.mono_token) return json({ error: 'no_token' }, 400);
+
+  // Рахунок Monobank власника токена (один запит на виклик)
+  const { data: acc, error: accErr } = await sb
+    .from('accounts')
+    .select('id, mono_account_id')
+    .eq('user_id', prof.id)
+    .eq('bank', 'mono')
+    .order('id')
+    .limit(1)
+    .maybeSingle();
+  if (accErr) console.error('mono-backfill: account lookup failed', accErr.message);
+  const account = String(bodyIn.account || acc?.mono_account_id || '0');
+  // Привʼязка: mono_account_id ще не відомий або запитано саме його
+  const accountId: number | null =
+    acc && (!acc.mono_account_id || acc.mono_account_id === account) ? acc.id : null;
 
   // Один запит до Monobank (rate limit: 1 запит / 60с на токен)
   const to = Math.floor(Date.now() / 1000);
@@ -106,6 +120,7 @@ Deno.serve(async (req) => {
       source_id: si.id as string,
       mcc: si.mcc || null,
       date: new Date(si.time * 1000).toISOString().split('T')[0],
+      account_id: accountId,
     }));
 
   if (!rows.length) return json({ ok: true, fetched: 0, inserted: 0, skipped: 0 });

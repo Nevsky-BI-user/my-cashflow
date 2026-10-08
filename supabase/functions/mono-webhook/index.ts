@@ -62,6 +62,22 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (dup) return new Response('duplicate');
 
+  // Рахунок Monobank власника токена: привʼязуємо, якщо mono_account_id ще не відомий
+  // або збігається з рахунком події; операції інших рахунків клієнта лишаються без account_id
+  let accountId: number | null = null;
+  const { data: acc, error: accErr } = await sb
+    .from('accounts')
+    .select('id, mono_account_id')
+    .eq('user_id', prof.id)
+    .eq('bank', 'mono')
+    .order('id')
+    .limit(1)
+    .maybeSingle();
+  if (accErr) console.error('account lookup error:', accErr.message);
+  if (acc && (!acc.mono_account_id || acc.mono_account_id === body.data?.account)) {
+    accountId = acc.id;
+  }
+
   const amount = Math.abs(si.amount) / 100;
   const type = si.amount < 0 ? 'expense' : 'income';
   const date = new Date(si.time * 1000).toISOString().split('T')[0];
@@ -75,6 +91,7 @@ Deno.serve(async (req) => {
     source_id: si.id,
     mcc: si.mcc || null,
     date,
+    account_id: accountId,
   }).select('id').single();
 
   if (insErr) {

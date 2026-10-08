@@ -55,10 +55,11 @@ def center(page, selector, nth=0):
     return b['x'] + b['width'] / 2, b['y'] + b['height'] / 2
 
 
-def shot(page, name):
+def shot(page, name, full=True):
+    """full=False: лише видима область (екран як його бачить людина)"""
     SHOTS.mkdir(parents=True, exist_ok=True)
     path = SHOTS / name
-    page.screenshot(path=str(path), quality=80, type='jpeg', full_page=True)
+    page.screenshot(path=str(path), quality=80, type='jpeg', full_page=full)
     return path
 
 
@@ -107,28 +108,28 @@ def open_payout(today):
 
 
 def demo_snapshot(page):
-    """Знімок у форматі scripts/budget_pool.py з демо-констант сторінки (рахунки, розстрочки, зарплата, 20%)."""
-    return page.evaluate("""()=>({accounts:ACCOUNTS_DEMO,fixed:[],credits:CREDITS.map(c=>({name:c.name,monthly_amount:c.amount,
-payment_day:c.day,start_year:c.sy,start_month:c.sm,total_payments:c.total})),salary:{rate:SAL_RATE,split_day:SAL_SPLIT,
+    """Знімок у форматі scripts/budget_pool.py з демо-констант сторінки (рахунки, постійні, розстрочки з source, зарплата, 20%)."""
+    return page.evaluate("""()=>({accounts:ACCOUNTS_DEMO,fixed:FIXED_DEMO,credits:CREDITS.map(c=>({name:c.name,monthly_amount:c.amount,
+payment_day:c.day,start_year:c.sy,start_month:c.sm,total_payments:c.total,source:c.src})),salary:{rate:SAL_RATE,split_day:SAL_SPLIT,
 advance_day:SAL_ADV_DAY,salary_day:SAL_MAIN_DAY,savings_pct:20}})""")
 
 
-def pool_ref(snap, today):
+def pool_ref(snap, today, now=None):
     """JSON-рядок еталона scripts/budget_pool.py для знімка snap і дати today (YYYY-MM-DD)."""
     tmp = SPEC / '.out' / 'demo_snapshot.json'
     tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_text(_json.dumps(snap, ensure_ascii=False), encoding='utf-8')
-    out = _sp.run([_sys.executable, str(ROOT / 'scripts' / 'budget_pool.py'), str(tmp), today], capture_output=True,
+    out = _sp.run([_sys.executable, str(ROOT / 'scripts' / 'budget_pool.py'), str(tmp), today] + ([str(now)] if now else []), capture_output=True,
                   text=True, encoding='utf-8', check=True, env={**_os.environ, 'PYTHONUTF8': '1'}).stdout
     line = [x for x in out.splitlines() if x.startswith('JSON ')]
     check(line, f'еталон не надрукував JSON для {today}')
     return _json.loads(line[-1][5:])
 
 
-def current_ref(snap, today):
+def current_ref(snap, today, now=None):
     """Еталон поточного періоду (відкритого останньою виплатою не пізніше today): budget_pool на день перед виплатою."""
     d, _ = open_payout(_date.fromisoformat(today) if isinstance(today, str) else today)
-    return pool_ref(snap, str(d - _td(days=1)))
+    return pool_ref(snap, str(d - _td(days=1)), now)
 
 
 def num(text):

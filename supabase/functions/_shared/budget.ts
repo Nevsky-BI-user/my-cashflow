@@ -1,0 +1,146 @@
+// Бюджет періоду і «вільно до виплати» за правилом власника (DESIGN.md, 08.10.2026).
+// Перенесено з scripts/budget_pool.py і scripts/salary_check.py; те саме рахує застосунок (periodBudget).
+// Чисті функції без залежностей: модуль запускається і в Edge Function, і в Node для звірки з Python.
+// Дати: рядки YYYY-MM-DD, обчислення в UTC, щоб часовий пояс не зсував день.
+
+export type Account = { kind?: string; balance: number | string; debt: number | string; active?: boolean };
+export type Fixed = { name: string; amount: number | string; day_of_month: number; type: string; active?: boolean; credit_ok?: boolean | null };
+export type Credit = {
+  name: string; monthly_amount: number | string; payment_day: number;
+  start_year: number; start_month: number; total_payments: number; credit_ok?: boolean | null; source?: string | null;
+};
+export type SalaryCfg = { rate: number | string; split_day: number; advance_day: number; salary_day: number; savings_pct?: number | null };
+export type Snapshot = { accounts: Account[]; fixed: Fixed[]; credits: Credit[]; salary: SalaryCfg; savings_pct?: number | null };
+
+export type Payout = { date: string; kind: 'advance' | 'salary'; amount: number };
+export type Obligation = { date: string; name: string; amount: number; credit_ok: boolean };
+
+const DAY = 86_400_000;
+const mk = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d)); // m: 1..12
+const iso = (d: Date) => d.toISOString().slice(0, 10);
+const parse = (s: string) => new Date(s + 'T00:00:00Z');
+export const addDays = (s: string, n: number) => iso(new Date(parse(s).getTime() + n * DAY));
+export const diffDays = (a: string, b: string) => Math.round((parse(b).getTime() - parse(a).getTime()) / DAY);
+const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+const round2 = (x: number) => Math.round(x * 100) / 100;
+const num = (x: unknown) => Number(x) || 0;
+
+// Робочі дні Пн-Пт у місяці (y, m) з d1 по d2 включно
+function wd(y: number, m: number, d1: number, d2: number): number {
+  let n = 0;
+  for (let d = d1; d <= d2; d++) {
+    const w = mk(y, m, d).getUTCDay();
+    if (w !== 0 && w !== 6) n++;
+  }
+  return n;
+}
+
+// День виплати: субота переноситься на пʼятницю, неділя на понеділок
+function adj(y: number, m: number, d: number): Date {
+  const w = mk(y, m, d).getUTCDay();
+  return mk(y, m, w === 6 ? d - 1 : w === 0 ? d + 1 : d);
+}
+
+// Виплати місяця: аванс за 1..split поточного, зарплата за split+1..кінець попереднього
+function monthPayouts(cfg: SalaryCfg, y: number, m: number): Payout[] {
+  const rate = num(cfg.rate), split = Number(cfg.split_day);
+  const [py, pm] = m > 1 ? [y, m - 1] : [y - 1, 12];
+  const last = lastDay(y, m), plast = lastDay(py, pm);
+  return [
+    { date: iso(adj(y, m, Number(cfg.advance_day))), kind: 'advance', amount: round2(rate / wd(y, m, 1, last) * wd(y, m, 1, split)) },
+    { date: iso(adj(y, m, Number(cfg.salary_day))), kind: 'salary', amount: round2(rate / wd(py, pm, 1, plast) * wd(py, pm, split + 1, plast)) },
+  ];
+}
+
+// Виплати за months місяців, починаючи з місяця дати from (зсув shift місяців)
+function payouts(cfg: SalaryCfg, from: string, shift: number, months: number): Payout[] {
+  const f = parse(from);
+  const out: Payout[] = [];
+  for (let i = 0; i < months; i++) {
+    const k = f.getUTCFullYear() * 12 + f.getUTCMonth() + shift + i;
+    out.push(...monthPayouts(cfg, Math.floor(k / 12), (k % 12) + 1));
+  }
+  return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+// Остання виплата не пізніше today (як pbOpen у застосунку)
+export function lastPayout(cfg: SalaryCfg, today: string): Payout {
+  const l = payouts(cfg, today, -2, 3).filter((p) => p.date <= today);
+  return l[l.length - 1];
+}
+
+// Дата платежу з днем місяця day у вікні [start; end) або null (як in_period у budget_pool.py)
+function inWindow(day: number, start: string, end: string): string | null {
+  const s = parse(start), e = parse(end);
+  for (const [y, m] of [[s.getUTCFullYear(), s.getUTCMonth() + 1], [e.getUTCFullYear(), e.getUTCMonth() + 1]]) {
+    const d = iso(mk(y, m, Math.min(day, lastDay(y, m))));
+    if (start <= d && d < end) return d;
+  }
+  return null;
+}
+
+// Обовʼязкові у вікні [start; end): постійні (дохід зі знаком мінус) і активні розстрочки
+function obligations(snap: Snapshot, start: string, end: string): Obligation[] {
+  const out: Obligation[] = [];
+  for (const f of snap.fixed || []) {
+    if (f.active === false) continue;
+    const d = inWindow(Number(f.day_of_month), start, end);
+    if (!d) continue;
+    const a = num(f.amount);
+    out.push({ date: d, name: f.name, amount: f.type !== 'income' ? a : -a, credit_ok: f.credit_ok === true });
+  }
+  for (const c of snap.credits || []) {
+    const d = inWindow(Number(c.payment_day), start, end);
+    if (!d) continue;
+    // Та сама арифметика місяців, що в budget_pool.py і застосунку
+    const first = Number(c.start_year) * 12 + Number(c.start_month);
+    const cur = Number(d.slice(0, 4)) * 12 + (Number(d.slice(5, 7)) - 1);
+    if (first <= cur && cur <= first + Number(c.total_payments) - 1) {
+      // credit_ok не заданий: кредитна, якщо розстрочка ПриватБанку (як у budget_pool.py)
+      const ok = c.credit_ok ?? String(c.source || '').toLowerCase().includes('privat');
+      out.push({ date: d, name: c.name + ' (розстрочка)', amount: num(c.monthly_amount), credit_ok: ok === true });
+    }
+  }
+  return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+// Бюджет періоду, що починається з першої виплати після today (точний аналог budget_pool.py)
+export function periodBudget(snap: Snapshot, today: string) {
+  const cfg = snap.salary;
+  const future = payouts(cfg, today, 0, 3).filter((p) => p.date > today);
+  const pn = future[0], pa = future[1];
+  const accs = (snap.accounts || []).filter((a) => a.active !== false);
+  const own = accs.reduce((s, a) => s + num(a.balance), 0);
+  const debt = accs.reduce((s, a) => s + num(a.debt), 0);
+  const deficit = Math.max(0, debt - own);
+  const obl = obligations(snap, pn.date, pa.date);
+  const oblSum = obl.reduce((s, o) => s + o.amount, 0);
+  const pool0 = pn.amount - oblSum - deficit;
+  const pct = num(snap.savings_pct ?? cfg.savings_pct ?? 0);
+  const savings = round2(Math.max(0, pool0) * pct / 100);
+  const varPool = Math.max(0, pool0 - savings);
+  return { payout: pn, end: pa.date, obligations: obl, oblSum, own, debt, deficit, pool0, savings, varPool };
+}
+
+// «Вільно до виплати» на today: поточний період [остання виплата; наступна), spent: витрати з останньої виплати
+export function freeToPayout(snap: Snapshot, today: string, spent: number) {
+  const last = lastPayout(snap.salary, today);
+  const pb = periodBudget(snap, addDays(last.date, -1)); // як periodBudget(pbOpen − 1) у застосунку
+  const next = payouts(snap.salary, today, 0, 3).find((p) => p.date > today)!;
+  // Власні кошти дебетових рахунків (кредитна картка не дає плюсових грошей)
+  const ownDebit = (snap.accounts || [])
+    .filter((a) => a.active !== false && a.kind !== 'credit')
+    .reduce((s, a) => s + num(a.balance), 0);
+  // «Білі» платежі: не можна оплатити кредиткою; лише витрати, доходи cashNow не збільшують
+  const white = obligations(snap, today, next.date).filter((o) => !o.credit_ok && o.amount > 0);
+  const whiteSum = white.reduce((s, o) => s + o.amount, 0);
+  const cashNow = ownDebit - whiteSum;
+  const freeRaw = Math.min(pb.varPool - spent, cashNow);
+  const freeNow = Math.max(0, freeRaw);
+  const daysLeft = Math.max(0, diffDays(today, next.date));
+  const perDay = daysLeft > 0 ? freeNow / daysLeft : 0;
+  return {
+    lastPayout: last, nextPayout: next, periodStart: last.date, varPool: pb.varPool, pool0: pb.pool0,
+    spent, ownDebit, white, whiteSum, cashNow, freeRaw, freeNow, daysLeft, perDay,
+  };
+}

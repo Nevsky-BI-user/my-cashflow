@@ -19,11 +19,14 @@ def desktop(page):
     kt = cal.locator('.ck-kpis').inner_text().lower()
     for s in ('Обовʼязкові до наступної виплати', 'Розстрочки', 'Борги', '/міс', 'залишок'):
         check(s.lower() in kt, f'у рядку KPI немає «{s}»')
-    # сітка: 7 колонок, клітинки від 92px, сьогодні обведене
+    # сітка: 7 колонок, клітинки від 64px, сьогодні обведене
     cols = page.evaluate("getComputedStyle(document.querySelector('.ck-cal .cal-days')).gridTemplateColumns.split(' ').length")
     check(cols == 7, f'у сітці {cols} колонок')
     hs = page.evaluate("[...document.querySelectorAll('.ck-cal .cal-cell')].map(e=>e.getBoundingClientRect().height)")
-    check(len(hs) >= 28 and min(hs) >= 92, f'клітинки нижчі за 92px: {min(hs) if hs else None}')
+    check(len(hs) >= 28 and min(hs) >= 64, f'клітинки нижчі за 64px: {min(hs) if hs else None}')
+    # у клітинці не більше 2 рядків подій, решта «+N»
+    many = page.evaluate("Math.max(0,...[...document.querySelectorAll('.ck-cal .cal-cell')].map(e=>e.querySelectorAll('.cal-ln').length))")
+    check(many <= 2, f'у клітинці {many} рядків подій, а не до 2')
     check(page.inner_text('.ck-month') == f'{MO[t.month - 1]} {t.year}', f'заголовок місяця: {page.inner_text(".ck-month")!r}')
     today = cal.locator('.cal-cell.today')
     check(today.count() == 1, 'немає клітинки «сьогодні»')
@@ -50,7 +53,7 @@ def desktop(page):
     check(f'ПОДІЇ {dn} ' in side.upper(), f'праворуч не події вибраного дня: {side[:60]!r}')
     check(cal.locator('.ck-day .cal-ev').count() >= 1, 'у подіях дня порожньо')
     page.mouse.move(2, 2)
-    shot(page, 'cal-1280.jpg')
+    shot(page, 'cal-1280.jpg', full=False)
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол на 1280')
     # ← → міняють місяць календаря
     page.click('.ck-arr[aria-label="Наступний місяць"]')
@@ -61,13 +64,14 @@ def desktop(page):
     page.click('.ck-arr[aria-label="Попередній місяць"]')
     page.wait_for_timeout(200)
     check(page.inner_text('.ck-month') == f'{MO[t.month - 1]} {t.year}', '← не повернув місяць')
-    # 1920: контент до 1400, без скролу
-    page.set_viewport_size({'width': 1920, 'height': 1080})
+    # 1920x900: контент до 1600, без скролу
+    page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(300)
     w = page.evaluate("document.querySelector('.panel.p-credits').getBoundingClientRect().width")
-    check(w <= 1400, f'на 1920 Календар ширший за 1400: {w}')
+    check(w <= 1600, f'на 1920 Календар ширший за 1600: {w}')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол на 1920')
-    shot(page, 'cal-1920.jpg')
+    page.mouse.move(2, 2)
+    shot(page, 'cal-1920.jpg', full=False)
 
 
 def mobile(page):

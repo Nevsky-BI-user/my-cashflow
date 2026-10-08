@@ -3,6 +3,7 @@
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { freeToPayout, lastPayout, type Snapshot } from '../_shared/budget.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -378,9 +379,49 @@ async function balance(chatId: number) {
   if (error || !data) return reply(chatId, 'Не вдалося порахувати.');
   let inc = 0, exp = 0;
   for (const t of data) (t.type === 'income' ? (inc += Number(t.amount)) : (exp += Number(t.amount)));
-  return reply(chatId,
+  const month =
     `Місяць з ${start.slice(8, 10)}.${start.slice(5, 7)}\n` +
-    `Доходи: ${fmtMoney(inc)}\nВитрати: ${fmtMoney(exp)}\nБаланс: ${fmtMoney(inc - exp)}`);
+    `Доходи: ${fmtMoney(inc)}\nВитрати: ${fmtMoney(exp)}\nБаланс: ${fmtMoney(inc - exp)}`;
+  // Блок «Вільно до виплати»: помилка в ньому не ховає підсумок місяця
+  let free = '';
+  try {
+    free = await freeBlock(today);
+  } catch (e) {
+    console.error('balance: free block failed', (e as Error)?.message);
+  }
+  return reply(chatId, free ? month + '\n\n' + free : month);
+}
+
+const fmtInt = (n: number) => new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 0 }).format(Math.round(n)) + ' ₴';
+
+// «Вільно до виплати» за правилом білої і кредитної картки (DESIGN.md), спільна логіка в _shared/budget.ts
+async function freeBlock(today: string): Promise<string> {
+  const [acc, fix, cred, sal] = await Promise.all([
+    sb.from('accounts').select('kind,balance,debt,active').eq('active', true),
+    sb.from('fixed_payments').select('name,amount,day_of_month,type,active,credit_ok').eq('active', true),
+    sb.from('credits').select('name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
+    sb.from('salary_config').select('rate,split_day,advance_day,salary_day,savings_pct').order('id').limit(1).maybeSingle(),
+  ]);
+  if (acc.error || fix.error || cred.error || sal.error || !sal.data) throw new Error('budget data lookup failed');
+  const snap: Snapshot = { accounts: acc.data || [], fixed: fix.data || [], credits: cred.data || [], salary: sal.data };
+
+  // Витрати поточного періоду: від останньої виплати до сьогодні (як у застосунку)
+  const from = lastPayout(snap.salary, today).date;
+  const { data: tx, error: txErr } = await sb
+    .from('transactions')
+    .select('amount')
+    .neq('type', 'income')
+    .gte('date', from)
+    .lte('date', today);
+  if (txErr) throw new Error('spent lookup failed');
+  const spent = (tx || []).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+  const r = freeToPayout(snap, today, spent);
+  const kind = r.nextPayout.kind === 'advance' ? 'аванс' : 'зарплата';
+  const due = ddmm(r.nextPayout.date);
+  let out = `Вільно до виплати: ${fmtInt(r.freeNow)} (${kind} ${due}) · на день ${fmtInt(r.perDay)}`;
+  if (r.cashNow < 0) out += `\nПотрібно ${fmtInt(-r.cashNow)} плюсових на білі платежі до ${due}`;
+  return out;
 }
 
 async function last(chatId: number) {

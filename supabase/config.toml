@@ -19,3 +19,7 @@ verify_jwt = false
 # Масова категоризація з налаштувань: JWT користувача + whitelist у коді
 [functions.categorize-batch]
 verify_jwt = true
+
+# Живий баланс Monobank для застосунку: JWT користувача + whitelist у коді
+[functions.mono-balance]
+verify_jwt = true

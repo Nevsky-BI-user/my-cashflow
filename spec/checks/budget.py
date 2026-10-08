@@ -9,15 +9,17 @@ from helpers import ROOT, SHOTS, SPEC, check, current_ref, demo_snapshot, freeze
 
 FIX = SPEC / 'fixtures' / 'snapshot.json'
 # (дата сьогодні, зміна боргу кредитки або None): звичайний день, день самої виплати, дефіцит, бюджет у мінусі
-CASES = [('2026-10-08', None), ('2026-10-21', None), ('2026-11-05', None), ('2026-10-08', 40000), ('2026-10-08', 100000)]
-NUMS = ['oblSum', 'own', 'debt', 'deficit', 'pool0', 'savings', 'varPool']
+# третій елемент: «зараз» для вікна білих платежів whiteDue (None: увесь період)
+CASES = [('2026-10-08', None, None), ('2026-10-21', None, None), ('2026-11-05', None, None), ('2026-10-08', 40000, None),
+         ('2026-10-08', 100000, None), ('2026-10-08', None, '2026-10-26'), ('2026-10-20', None, '2026-10-08')]
+NUMS = ['oblSum', 'own', 'debt', 'deficit', 'pool0', 'savings', 'varPool', 'oblWhite', 'whiteDue', 'cashNow']
 
 
-def reference(snap, today):
+def reference(snap, today, now=None):
     tmp = SPEC / '.out' / 'budget_snapshot.json'
     tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_text(json.dumps(snap, ensure_ascii=False), encoding='utf-8')
-    out = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'budget_pool.py'), str(tmp), today],
+    out = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'budget_pool.py'), str(tmp), today] + ([now] if now else []),
                          capture_output=True, text=True, encoding='utf-8', check=True, env={'PYTHONUTF8': '1', **__import__('os').environ}).stdout
     line = [x for x in out.splitlines() if x.startswith('JSON ')]
     check(line, f'еталон не надрукував JSON для {today}')
@@ -27,19 +29,19 @@ def reference(snap, today):
 def math(page):
     base = json.loads(FIX.read_text(encoding='utf-8'))
     check(page.evaluate("typeof window.periodBudget==='function'"), 'window.periodBudget не функція')
-    for today, debt in CASES:
+    for today, debt, now in CASES:
         snap = json.loads(json.dumps(base))
         if debt is not None:
             snap['accounts'][1]['debt'] = debt
-        ref = reference(snap, today)
-        js = page.evaluate("([t,s])=>periodBudget(t,s.salary,s.accounts,s.fixed,s.credits,s.salary.savings_pct)", [today, snap])
-        tag = f'{today}' + (f', борг {debt}' if debt is not None else '')
+        ref = reference(snap, today, now)
+        js = page.evaluate("([t,s,n])=>periodBudget(t,s.salary,s.accounts,s.fixed,s.credits,s.salary.savings_pct,n||undefined)", [today, snap, now])
+        tag = f'{today}' + (f', борг {debt}' if debt is not None else '') + (f', зараз {now}' if now else '')
         check(js['payout']['date'] == ref['payout']['date'] and js['payout']['kind'] == ref['payout']['kind'],
               f'{tag}: виплата JS {js["payout"]}, еталон {ref["payout"]}')
         check(abs(js['payout']['amount'] - ref['payout']['amount']) <= 0.01, f'{tag}: сума виплати JS {js["payout"]["amount"]}, еталон {ref["payout"]["amount"]}')
         check(js['end'] == ref['end'], f'{tag}: кінець періоду JS {js["end"]}, еталон {ref["end"]}')
-        jo = [(o['date'], o['name'], round(o['amount'], 2)) for o in js['obligations']]
-        ro = [(o['date'], o['name'], round(o['amount'], 2)) for o in ref['obligations']]
+        jo = [(o['date'], o['name'], round(o['amount'], 2), o['creditOk']) for o in js['obligations']]
+        ro = [(o['date'], o['name'], round(o['amount'], 2), o['creditOk']) for o in ref['obligations']]
         check(jo == ro, f'{tag}: обовʼязкові JS {jo}, еталон {ro}')
         for k in NUMS:
             check(abs(js[k] - ref[k]) <= 0.01, f'{tag}: {k} JS {js[k]}, еталон {ref[k]}')
@@ -188,7 +190,7 @@ def mobile(page):
 
 
 CHECKS = [
-    ('Бюджет періоду як в еталоні (5 випадків)', 'desktop', math),
+    ('Бюджет періоду як в еталоні (7 випадків)', 'desktop', math),
     ('ПК-Бюджет: KPI, категорії, «горить», операції, У Потік', 'desktop', desktop),
     ('Період за замовчуванням містить сьогодні', 'desktop', default_period),
     ('ПК-Бюджет: період, що ще не почався', 'desktop', future_period),

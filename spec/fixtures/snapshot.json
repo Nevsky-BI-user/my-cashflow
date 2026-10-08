@@ -5,15 +5,15 @@
     {"name": "monobank", "bank": "mono", "kind": "debit", "balance": 12500, "debt": 0, "debt_month": null, "is_salary": false, "active": true}
   ],
   "fixed": [
-    {"name": "Оренда", "amount": 16500, "day_of_month": 25, "type": "payment", "active": true},
-    {"name": "Комуналка", "amount": 3200, "day_of_month": 6, "type": "payment", "active": true},
-    {"name": "Інтернет", "amount": 350, "day_of_month": 28, "type": "payment", "active": true},
-    {"name": "Мобільний звʼязок", "amount": 280, "day_of_month": 2, "type": "payment", "active": true},
-    {"name": "Підробіток", "amount": 4000, "day_of_month": 30, "type": "income", "active": true}
+    {"name": "Оренда", "amount": 16500, "day_of_month": 25, "type": "payment", "active": true, "credit_ok": false},
+    {"name": "Комуналка", "amount": 3200, "day_of_month": 6, "type": "payment", "active": true, "credit_ok": false},
+    {"name": "Інтернет", "amount": 350, "day_of_month": 28, "type": "payment", "active": true, "credit_ok": false},
+    {"name": "Мобільний звʼязок", "amount": 280, "day_of_month": 2, "type": "payment", "active": true, "credit_ok": true},
+    {"name": "Підробіток", "amount": 4000, "day_of_month": 30, "type": "income", "active": true, "credit_ok": false}
   ],
   "credits": [
-    {"name": "Навушники", "monthly_amount": 111.07, "payment_day": 21, "start_year": 2026, "start_month": 2, "total_payments": 11},
-    {"name": "Lenovo Legion 5 Pro", "monthly_amount": 6133.27, "payment_day": 24, "start_year": 2026, "start_month": 1, "total_payments": 15}
+    {"name": "Навушники", "monthly_amount": 111.07, "payment_day": 21, "start_year": 2026, "start_month": 2, "total_payments": 11, "source": "mono", "credit_ok": false},
+    {"name": "Lenovo Legion 5 Pro", "monthly_amount": 6133.27, "payment_day": 24, "start_year": 2026, "start_month": 1, "total_payments": 15, "source": "privat", "credit_ok": true}
   ],
   "salary": {"rate": 130000, "split_day": 15, "advance_day": 21, "salary_day": 6, "savings_pct": 20}
 }
