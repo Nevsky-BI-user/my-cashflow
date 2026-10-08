@@ -63,8 +63,9 @@ def tour(page):
 
 def field_keeps_keys(page):
     go_tab(page, 4)
-    inp = page.locator('input[aria-label="% накопичень з доходу"]')
-    check(inp.count() == 1, 'на екрані Цілі немає поля «% накопичень з доходу»')
+    # поле «Що як» на ПК-Цілях (налаштування % накопичень тепер у вікні «Налаштувати накопичення»)
+    inp = page.locator('input[type=text][aria-label="Відкладати більше на місяць"]')
+    check(inp.count() == 1, 'на екрані Цілі немає поля «Відкладати більше на місяць»')
     inp.click()
     inp.press('End')
     before = inp.input_value()

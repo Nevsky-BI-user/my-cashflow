@@ -73,15 +73,14 @@ def delete_one(page):
 
 
 def columns(page):
-    # аналітика під картою: ліворуч план, відсоток, фактичні; праворуч історія, горизонт
-    cols = page.evaluate("[...document.querySelectorAll('.p-goals > .g-col')].map(c=>c.textContent)")
-    check(len(cols) == 2, f'під картою {len(cols)} колонок')
-    for t in ('Стратегічний план', 'Фактичні накопичення'):
-        check(t in cols[0] and t not in cols[1], f'«{t}» не в лівій колонці')
-    check('накопичень з доходу' in cols[0], '«% накопичень з доходу» не в лівій колонці')
-    for t in ('Історія накопичень', 'Горизонт подій'):
-        check(t in cols[1] and t not in cols[0], f'«{t}» не в правій колонці')
-    gap = page.evaluate("getComputedStyle(document.querySelector('.p-goals')).columnGap")
+    # ПК-Цілі: ліворуч карта і горизонт, праворуч «Що як», історія, фактичні накопичення; між колонками 24px
+    main = page.locator('.goals-main').inner_text().lower()
+    side = page.locator('.goals-side').inner_text().lower()
+    check(page.locator('.goals-main .board-d').count() == 1, 'карта цілей не в лівій колонці')
+    check('горизонт подій' in main and 'горизонт подій' not in side, '«Горизонт подій» не в лівій колонці')
+    for t in ('Що як', 'Історія накопичень', 'Фактичні накопичення'):
+        check(t.lower() in side and t.lower() not in main, f'«{t}» не в правій колонці')
+    gap = page.evaluate("getComputedStyle(document.querySelector('.goals-cols')).columnGap")
     check(gap == '24px', f'проміжок між колонками {gap}')
 
 

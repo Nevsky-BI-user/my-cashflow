@@ -1,7 +1,7 @@
 # План проти фактів: новий постійний платіж із вікна «Платежі» одразу видно в «Найближчих операціях» Огляду і в Потоці
-from datetime import date
+from datetime import date, timedelta
 
-from helpers import check, dialog, go_tab
+from helpers import check, dialog, go_tab, open_payout
 
 FAB = "()=>{const b=[...document.querySelectorAll('button')].filter(x=>getComputedStyle(x).position==='fixed'&&!x.closest('.tab-bar'));b[b.length-1].click()}"
 NAME = 'Спортзал тест'
@@ -9,8 +9,12 @@ NAME = 'Спортзал тест'
 
 def fixed_appears(page):
     t = date.today()
-    # день у переглядуваному періоді і не раніше сьогодні (до 6-го період із зарплати, далі з авансу 20-22-го)
-    day = 10 if t.day < 6 else max(t.day, 22)
+    # день у переглядуваному періоді (за замовчуванням поточний, відкритий останньою виплатою) і не раніше сьогодні:
+    # завтра, якщо воно ще в періоді й у цьому місяці, інакше сьогодні
+    start, kind = open_payout(t)
+    end = min(d for d, _ in (open_payout(t + timedelta(days=k)) for k in range(1, 40)) if d > start)
+    nxt = t + timedelta(days=1)
+    day = nxt.day if nxt < end and nxt.month == t.month else t.day
     hero0 = page.inner_text('.o-hero')
     go_tab(page, 3)
     page.evaluate(FAB)
