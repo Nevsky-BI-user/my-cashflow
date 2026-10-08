@@ -81,7 +81,7 @@ CHIPS = """(()=>{const bar=document.querySelector('.p-flow.desk .flow-bar').getB
 return {sw:box.scrollWidth,cw:box.clientWidth,bar:{l:bar.left,r:bar.right,t:bar.top,b:bar.bottom},
 chips:[...box.querySelectorAll('.flow-chip')].map(e=>{const r=e.getBoundingClientRect();return {t:e.innerText.trim(),l:r.left,r:r.right,t0:r.top,b:r.bottom,sw:e.scrollWidth,cw:e.clientWidth,h:r.height}}),
 names:BCAT.map(b=>b.name)}})()"""
-CHIPS_N = "document.querySelectorAll('.flow-cats .flow-chip:not(.flow-more)').length - 1"
+CHIPS_N = "document.querySelectorAll('.flow-cats .flow-chip').length - 1"
 
 
 def _keys(page):
@@ -136,27 +136,27 @@ def sort_chips(page):
     check(page.locator('.flow-cats .flow-chip.on').all_inner_texts() == ['Усі'], '«Усі» не зняло фільтр категорій')
 
 
-def more_chips(page):
-    """Понад 14 категорій (фікстура: 4 додаткові в BCAT): видно 14, «ще N» розгортає решту, «згорнути» повертає 14."""
+def all_chips(page):
+    """17 категорій (фікстура: 4 додаткові в BCAT): усі 17 чипів видно одразу, кнопки «ще N» / «згорнути» немає."""
     extra = ''.join("{id:'x%d',name:'Тест %d',limit:100,color:'#999999',icon:'*'}," % (i, i) for i in range(4))
     freeze(page, '2026-10-08', patch=[('const BCAT=[', 'const BCAT=[' + extra)])
+    page.set_viewport_size({'width': 1920, 'height': 900})
+    page.wait_for_timeout(300)
     go_tab(page, 2)
     names = page.evaluate('BCAT.map(b=>b.name)')
-    more = page.locator('.flow-cats .flow-more')
-    check(more.count() == 1, f'категорій {len(names)}, а кнопки «ще N» немає')
+    check(len(names) == 17, f'у фікстурі {len(names)} категорій, а не 17')
+    check(page.locator('.flow-cats .flow-more').count() == 0, 'є кнопка «ще N» / «згорнути»')
     shown = page.evaluate(CHIPS_N)
-    check(shown == 14, f'у згорнутому ряду {shown} категорій, а не 14')
-    t = more.inner_text()
-    hidden = int(t.split()[-1])
-    more.click()
-    page.wait_for_timeout(250)
-    full = page.evaluate(CHIPS_N)
-    check(full == shown + hidden, f'«{t}» розгорнуло {full} замість {shown + hidden}')
+    check(shown == 17, f'видно {shown} чипів категорій, а не 17')
+    vis = page.evaluate("[...document.querySelectorAll('.flow-cats .flow-chip')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom<=innerHeight}).length")
+    check(vis == 18, f'у вʼюпорті {vis} чипів разом з «Усі», а не 18')
     txt = page.locator('.flow-cats .flow-chip').all_inner_texts()
-    check(all(any(n in x for x in txt) for n in names), 'після розгортання не всі категорії')
-    more.click()
-    page.wait_for_timeout(250)
-    check(page.evaluate(CHIPS_N) == 14, '«згорнути» не повернуло 14 чипів')
+    check(all(any(n in x for x in txt) for n in names), 'не всі категорії мають чип')
+    bar = page.evaluate("Math.round(document.querySelector('.p-flow.desk .flow-bar').getBoundingClientRect().height)")
+    print(f'      Потік 1920x900, 17 категорій: панель фільтрів {bar}px')
+    check(bar <= 150, f'панель фільтрів {bar}px, а не до 150')
+    page.mouse.move(2, 2)
+    shot(page, 'flow-17-1920.jpg', full=False)
 
 
 def subscription(page):
@@ -187,6 +187,6 @@ CHECKS = [
     ('Потік: фільтри, підсумок, дровер, стрілки', 'desktop', desktop),
     ('Потік: підказка про підписку', 'desktop', subscription),
     ('Потік 1920: усі категорії видно, від старіших до новіших, перемикач порядку', 'desktop', sort_chips),
-    ('Потік: понад 14 категорій згорнуто з «ще N»', 'desktop', more_chips),
+    ('Потік: 17 категорій, усі видно без «ще N»', 'desktop', all_chips),
     ('Потік на телефоні: список і модалка', 'mobile', mobile),
 ]

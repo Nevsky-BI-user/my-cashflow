@@ -2,8 +2,8 @@
 from helpers import TABS, check, go_tab
 
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
-# елементи всередині .content з власним вертикальним скролом (права колонка Календаря прокручується свідомо)
-INNER_SCROLL = r"""[...document.querySelectorAll('.content *')].filter(e=>{if(e.closest('.ck-side'))return false;const o=getComputedStyle(e).overflowY;return o==='auto'||o==='scroll'}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30))"""
+# елементи всередині .content з власним вертикальним скролом (на ПК таких немає жодного)
+INNER_SCROLL = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getComputedStyle(e).overflowY;return o==='auto'||o==='scroll'}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30))"""
 
 
 def desktop(page):

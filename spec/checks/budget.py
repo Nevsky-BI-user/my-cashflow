@@ -119,7 +119,7 @@ f:e.querySelector('.bud-nums b').textContent,hot:e.classList.contains('hot'),idl
     got_hot = {r['n'] for r in rows if r['hot']}
     check(hot and got_hot == hot, f'«горить» {got_hot}, очікували {hot}')
     check(page.locator('.bud-cat.hot .bud-hot').count() == len(hot), 'немає бейджа «горить»')
-    check(page.locator('.bud-pace polyline.bud-fact').count() == 1 and page.locator('.bud-pace .bud-plan').count() == 1,
+    check(page.locator('.bud-pace path.bud-fact').count() == 1 and page.locator('.bud-pace .bud-plan').count() == 1,
           'графік темпу без ліній')
     check(page.locator('.bud-top .bud-row').count() >= 1, 'топ-5 місць порожній')
     shot(page, 'budget-1280.jpg')
@@ -170,7 +170,7 @@ def future_period(page):
     check(num(kpi(page, 'bud-spent')) == 0, '«Витрачено» не 0 для майбутнього періоду')
     check('період почнеться 21.10' in page.locator('.bud-spent').inner_text(), 'немає «період почнеться 21.10»')
     check('почнеться через 13 дн.' in page.locator('.bud-day').inner_text(), 'немає «почнеться через 13 дн.»')
-    check(page.locator('.bud-pace polyline.bud-fact').count() == 0, 'у майбутньому періоді є лінія факту')
+    check(page.locator('.bud-pace path.bud-fact').count() == 0, 'у майбутньому періоді є лінія факту')
     check(page.locator('.bud-cat.hot').count() == 0, 'у майбутньому періоді щось «горить»')
 
 
