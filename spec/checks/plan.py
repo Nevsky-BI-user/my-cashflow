@@ -27,7 +27,7 @@ def fixed_appears(page):
     for lbl, v in (('Сума', '1234'), ('День місяця', str(day))):
         f = d.locator(f'input[type=text][aria-label="{lbl}"]')
         f.fill(v)
-        f.press('Enter')
+        f.press('Tab')  # Enter у полі форми тепер зберігає її (hotkeys.py), тут лише комітимо значення
     d.locator('button', has_text='Зберегти').first.click()
     page.wait_for_timeout(300)
     if d.count():

@@ -27,7 +27,8 @@ def mobile(page):
     page.wait_for_timeout(400)
     d = dialog(page, 'Налаштування')
     check(d.count() == 1, 'шестерня не відкрила меню')
-    rows = page.evaluate("document.querySelector('[role=dialog][aria-label=\"Налаштування\"]').children.length") - 1
+    # ручку шита (.sheet-grip) не рахуємо: це не рядок меню
+    rows = page.evaluate("[...document.querySelector('[role=dialog][aria-label=\"Налаштування\"]').children].filter(e=>!e.classList.contains('sheet-grip')).length") - 1
     check(rows == 9, f'у списку {rows} рядків, а не 9')
     txt = d.inner_text()
     # «Підказки» на телефоні: кнопка туру і версія замість заголовка рядка

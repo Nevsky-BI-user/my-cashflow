@@ -22,6 +22,8 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 VIEWPORTS = {'desktop': (1280, 860), 'mobile': (375, 812)}
 # перевірки без tour_done у localStorage (сам тур)
 NO_TOUR_FLAG = 'tour'
+# перевірки без gestures_seen (сам банер жестів на телефоні)
+NO_GEST_FLAG = 'gestures'
 # відповіді CDN (React, шрифти) в памʼяті між контекстами, щоб не тягнути їх щоразу
 _CDN = {}
 
@@ -68,6 +70,8 @@ def run_one(browser, url, vp, fn, opts):
     ctx.route('**/*', _cdn_cache)
     if not opts.get(NO_TOUR_FLAG):
         ctx.add_init_script("try{localStorage.setItem('tour_done','1')}catch(e){}")
+    if not opts.get(NO_GEST_FLAG):
+        ctx.add_init_script("try{localStorage.setItem('gestures_seen','1')}catch(e){}")
     page = ctx.new_page()
     errs = []
     page.on('pageerror', lambda e: errs.append('pageerror: ' + str(e)))

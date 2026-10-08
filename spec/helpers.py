@@ -26,6 +26,35 @@ def dialog(page, label):
     return page.locator(f'[role=dialog][aria-label="{label}"]')
 
 
+def touch_drag(page, x0, y0, x1, y1, steps=8, hold=0, step_ms=16, before_end=None, after=250):
+    """Справжній дотик через CDP (Input.dispatchTouchEvent): touchStart, hold мс без руху, steps кроків touchMove, touchEnd.
+    before_end(page): виклик перед відпусканням (наприклад, скриншот посеред перетягування)."""
+    cdp = page.context.new_cdp_session(page)
+
+    def ev(kind, pts):
+        cdp.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': pts})
+    try:
+        ev('touchStart', [{'x': x0, 'y': y0}])
+        if hold:
+            page.wait_for_timeout(hold)
+        for i in range(1, steps + 1):
+            ev('touchMove', [{'x': x0 + (x1 - x0) * i / steps, 'y': y0 + (y1 - y0) * i / steps}])
+            page.wait_for_timeout(step_ms)
+        if before_end:
+            before_end(page)
+        ev('touchEnd', [])
+    finally:
+        cdp.detach()
+    page.wait_for_timeout(after)
+
+
+def center(page, selector, nth=0):
+    """Центр елемента (x, y) у координатах вʼюпорта."""
+    b = page.locator(selector).nth(nth).bounding_box()
+    check(b, f'немає елемента {selector}')
+    return b['x'] + b['width'] / 2, b['y'] + b['height'] / 2
+
+
 def shot(page, name):
     SHOTS.mkdir(parents=True, exist_ok=True)
     path = SHOTS / name
