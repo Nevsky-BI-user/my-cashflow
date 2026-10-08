@@ -12,7 +12,7 @@ def chart(page):
     check(rng.count() == 1, 'немає повзунка дат прогнозу')
     check(rng.get_attribute('max') == '59', f'повзунок до {rng.get_attribute("max")}, а не 59')
     r0 = page.inner_text('.fc-readout')
-    check('баланс' in r0, f'readout без балансу: {r0!r}')
+    check('власні ≈' in r0 and 'мінус борг ≈' in r0, f'readout без двох ліній (власні, мінус борг): {r0!r}')
     rng.evaluate(SETR, 10)
     page.wait_for_timeout(150)
     r1 = page.inner_text('.fc-readout')
@@ -44,11 +44,13 @@ def calendar(page):
     t = date.today()
     if t.day <= 25:
         check(cal.locator('.cal-debt').count() == 1, 'у сітці немає бейджа «борг» на 25-те')
-        check(cal.locator('.cal-ev-debt').count() == 1, 'у списку подій немає дедлайну боргу')
-    evs = page.evaluate("[...document.querySelectorAll('.cal-list .cal-ev')].map(e=>({t:e.innerText,f:e.classList.contains('future')}))")
-    check(evs, 'у календарі немає списку подій')
+        check(cal.locator('.cal-ev-debt').count() == 1, 'у таблиці подій немає дедлайну боргу')
+    evs = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(e=>({d:e.dataset.date,p:e.classList.contains('past'),td:e.classList.contains('today'),b:e.dataset.bal}))")
+    check(evs, 'у календарі немає таблиці подій')
+    iso = t.isoformat()
     for e in evs:
-        check(('через' in e['t']) == e['f'], f'подія календаря: .future не відповідає даті: {e}')
+        check(e['p'] == (e['d'] < iso) and e['td'] == (e['d'] == iso), f'подія календаря: минуле/сьогодні не відповідає даті: {e}')
+        check(e['b'] is None or e['d'] >= iso, f'баланс після в минулому рядку: {e}')
     if t.day < 28:
         check(cal.locator('.cal-cell.future').count() > 0, 'майбутні дні в сітці не приглушені')
     page.mouse.move(2, 2)
@@ -60,7 +62,7 @@ def hover(page):
     клік фіксує день (readout і повзунок на ньому), ←/→ на фокусі графіка міняють день, повторний клік знімає фіксацію"""
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(300)
-    svg = page.locator('.dv-fc svg')
+    svg = page.locator('.dv-fc svg[role=img]')
     b = svg.bounding_box()
     n = 60
     x_of = lambda i: b['x'] + 12 + i / (n - 1) * (b['width'] - 24)

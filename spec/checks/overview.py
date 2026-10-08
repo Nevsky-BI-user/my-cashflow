@@ -1,11 +1,11 @@
-# Мобільний Огляд за DESIGN.md «Сьогодні»: порядок блоків, гаманець, герой «Вільно до виплати» проти еталона
+# Мобільний Огляд за DESIGN.md «Огляд, телефон» (третя редакція): порядок блоків, рахунки чипами, герой «Вільно до виплати» проти еталона
 # «Вільно» = змінний бюджет періоду (scripts/budget_pool.py на демо-знімку) мінус витрати періоду від виплати до сьогодні.
 from datetime import date
 
 from helpers import check, current_ref, demo_snapshot, freeze, num, open_payout, shot
 
 TODAY = '2026-10-08'
-ORDER = ['o-wallet', 'o-hero', 'o-strip', 'o-next', 'o-budget', 'o-weeks', 'o-recent', 'o-ccy']
+ORDER = ['o-hero', 'o-accs', 'o-next', 'o-budget', 'o-recent', 'o-weeks', 'o-strip', 'o-ccy']
 
 
 def _spent(page, start, today):
@@ -23,11 +23,18 @@ def mobile_today(page):
     blocks = page.evaluate("[...document.querySelector('.panel.p-overview').children].map(e=>e.className)")
     got = [next((c for c in ORDER if c in b.split()), b) for b in blocks]
     check(got == ORDER, f'порядок блоків Огляду: {got}')
-    # гаманець: сума балансів мінус борги (дані рахунків з демо-констант, сума в Python)
-    accs = page.evaluate('ACCOUNTS_DEMO')
-    wal = round(sum(float(a['balance']) for a in accs) - sum(float(a.get('debt') or 0) for a in accs))
-    shown = num(page.inner_text('.o-wallet-v'))
-    check(shown == wal, f'гаманець {shown}, а сума балансів мінус борги {wal}')
+    # рахунки чипами: на кожен активний рахунок чип із залишком (кредитка: «борг» і сума боргу), «+» додає рахунок
+    accs = page.evaluate("window.__cashCore.accounts.filter(a=>a.active!==false).map(a=>({k:a.kind,b:Number(a.balance)||0,d:Number(a.debt)||0}))")
+    chips = page.evaluate("[...document.querySelectorAll('.o-accs .o-acc-chip:not(.o-unas):not(.o-acc-add)')].map(e=>e.innerText)")
+    check(len(chips) == len(accs), f'чипів рахунків {len(chips)}, а рахунків {len(accs)}')
+    for a, c in zip(accs, chips):
+        v = a['d'] if a['k'] == 'credit' else a['b']
+        b = c.split('\n')
+        got = [x for x in c.replace('\n', ' ').split(' ') if x]
+        check(('борг' in c) == (a['k'] == 'credit'), f'чип {c!r}: позначка боргу не відповідає рахунку')
+        check(f'{round(v):,}'.replace(',', ' ') in c.replace('\u00a0', ' ').replace('\u202f', ' '), f'чип {c!r} без суми {v}')
+    check(page.locator('.o-accs .o-acc-add').count() == 1, 'у ряді рахунків немає «+»')
+    shown = len(chips)
     # герой: еталон freeNow = max(0, min(varPool - витрати періоду, cashNow)); витрати рахує Python і кладе в знімок
     t = date.fromisoformat(TODAY)
     start, _ = open_payout(t)
@@ -36,11 +43,12 @@ def mobile_today(page):
     ref = current_ref(snap, TODAY, TODAY)
     free = round(ref['freeNow'])
     hero = num(page.inner_text('.o-free-v'))
-    print(f'      Огляд {TODAY}: гаманець {shown}; budget_pool.py: varPool {ref["varPool"]:.2f}, витрати {ref["spent"]:.0f}, '
+    print(f'      Огляд {TODAY}: чипів рахунків {shown}; budget_pool.py: varPool {ref["varPool"]:.2f}, витрати {ref["spent"]:.0f}, '
           f'whiteDue {ref["whiteDue"]:.2f}, cashNow {ref["cashNow"]:.2f}, freeNow {ref["freeNow"]:.2f}; у героя {hero}')
     check(abs(hero - free) <= 1, f'герой {hero}, а еталон freeNow = {free}')
     sub = page.inner_text('.o-chip')
-    check(sub.startswith('на день ') and ' ще ' in sub and 'дн.' in sub, f'підрядок героя: {sub!r}')
+    check(sub.startswith('на день ') and (' до авансу ' in sub or ' до зарплати ' in sub) and sub.endswith('дн.'), f'підрядок героя: {sub!r}')
+    check(page.locator('.o-hero .fx-line, .o-hero [data-k=cash]').count() >= 1, 'під героєм немає рядка-пояснення')
     fs = page.evaluate("getComputedStyle(document.querySelector('.o-free-v')).fontSize")
     check(fs == '36px', f'кегль героя {fs}')
     lbl = page.evaluate("[...document.querySelectorAll('.o-strip div')].filter(e=>/^(Дохід|Витрати|Залишок)$/i.test(e.innerText.trim())).map(e=>getComputedStyle(e).fontSize)")

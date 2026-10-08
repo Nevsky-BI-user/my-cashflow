@@ -106,6 +106,12 @@ def form_keys(page):
     check(desc.input_value() == 'a+b-c' and page.locator('.amt-zone.out.on').count() == 1, '+/- в описі перехоплені')
     # категорія і Enter у полі суми: зберегти (превʼю без БД пише в локальний стан), операція в Потоці
     page.locator(ADD + ' button', has_text='Продукти').click()
+    # рахунок витрати обовʼязковий (DESIGN.md п. 1): без нього Enter не зберігає
+    amt.fill('321')
+    amt.press('Enter')
+    page.wait_for_timeout(300)
+    check(page.locator(ADD).count() == 1, 'Enter зберіг витрату без рахунку')
+    page.locator(ADD + ' .acc-seg button').first.click()
     amt.fill('321')
     amt.press('Enter')
     page.wait_for_timeout(400)

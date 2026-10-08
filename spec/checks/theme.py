@@ -142,43 +142,54 @@ def phone_shot(page):
     shot(page, 'ov-375.jpg')
 
 
-def _tomorrow_cell(page, sel):
-    # клітинка 9-го (завтра від DAY) у сітці Календаря: текст рядка прогнозу
-    return page.evaluate("""(sel)=>{const c=[...document.querySelectorAll(sel)].find(e=>{const n=e.closest('.cal-cell');return n&&n.firstChild&&n.firstChild.textContent.trim()==='9'});return c?c.textContent:null}""", sel)
+def _tomorrow_cell(page, sel, day='9'):
+    # клітинка дня (за замовчуванням 9-го, завтра від DAY) у сітці Календаря: текст рядка прогнозу
+    return page.evaluate("""([sel,d])=>{const c=[...document.querySelectorAll(sel)].find(e=>{const n=e.closest('.cal-cell');return n&&n.firstChild&&n.firstChild.textContent.trim()===d});return c?c.textContent:null}""", [sel, day])
 
 
 def calendar_forecast_desktop(page):
-    """ПК: у клітинках Календаря прогноз балансу на кінець дня (сьогодні і далі), минулі дні без нього; горизонт покриває видимий місяць"""
+    """ПК: прогноз балансу на кінець дня в клітинках лише сьогодні і в дні виплат (відгук власника 08.10), баланс на кожну дату в таблиці; горизонт покриває видимий місяць"""
     freeze(page, DAY)
     page.set_viewport_size({'width': 1920, 'height': 900})
     go_tab(page, 3)
     page.wait_for_timeout(300)
-    t = _tomorrow_cell(page, '.ck-cal .cal-bal')
-    print(f'      завтра (ПК): {t!r}')
-    check(t and '₴' in t and any(ch.isdigit() for ch in t), f'у клітинці завтрашнього дня немає суми прогнозу з ₴: {t!r}')
+    t = _tomorrow_cell(page, '.ck-cal .cal-bal', '8')
+    print(f'      сьогодні (ПК): {t!r}')
+    check(t and '₴' in t and any(ch.isdigit() for ch in t), f'у клітинці сьогоднішнього дня немає суми прогнозу з ₴: {t!r}')
+    check(_tomorrow_cell(page, '.ck-cal .cal-bal') is None, 'у клітинці звичайного дня (9-го) лишилась сума прогнозу')
+    t = _tomorrow_cell(page, '.ck-cal .cal-bal', '21')
+    check(t and '₴' in t, f'у клітинці авансу 21-го немає суми прогнозу: {t!r}')
     # прогноз у майбутній клітинці без загального приглушення (контраст тексту як у muted)
     op = page.evaluate("""(()=>{const e=[...document.querySelectorAll('.ck-cal .cal-cell.future .cal-bal')][0];let o=1;for(let x=e;x;x=x.parentElement)o*=+getComputedStyle(x).opacity;return o})()""")
     check(op == 1, f'прогноз у майбутній клітинці приглушений opacity {op}')
     n = page.locator('.ck-cal .cal-bal').count()
-    check(n == 31 - 8 + 1, f'рядків прогнозу в жовтні {n}, а не 24 (8-31)')
+    check(n == 2, f'сум прогнозу в жовтні {n}, а не 2 (сьогодні 8-го й аванс 21-го)')
+    nb = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev[data-bal]')].map(e=>e.dataset.date)")
+    check(len(nb) >= 8 and min(nb) == '2026-10-08', f'у таблиці баланс не на кожну дату від сьогодні: {nb}')
     # грудень: далі за 60 днів від 08.10, прогноз має покрити весь місяць
     for _ in range(2):
         page.locator('.ck-arr[aria-label="Наступний місяць"]').click()
         page.wait_for_timeout(250)
     check('Грудень' in page.inner_text('.ck-month'), 'не перейшли на грудень')
     n = page.locator('.ck-cal .cal-bal').count()
-    check(n == 31, f'у грудні рядків прогнозу {n}, а не 31')
+    check(n == 2, f'у грудні сум прогнозу в клітинках {n}, а не 2 (аванс і зарплата)')
+    rows = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(e=>[e.dataset.date,e.dataset.bal])")
+    last = {}
+    for d, b in rows:
+        last[d] = b
+    check(rows and all(b is not None for b in last.values()), f'у грудні таблиця без балансу на деякі дати: {last}')
 
 
 def calendar_forecast_mobile(page):
-    """Телефон 390: прогноз у тисячах («к») у клітинці завтрашнього дня, клітинки не ширші за сітку"""
+    """Телефон 390: прогноз у тисячах («к») лише сьогодні і в дні виплат, клітинки не ширші за сітку"""
     page.set_viewport_size({'width': 390, 'height': 844})
     freeze(page, DAY)
     go_tab(page, 3)
     page.wait_for_timeout(300)
-    t = _tomorrow_cell(page, '.cal-bal-m')
-    print(f'      завтра (телефон): {t!r}')
-    check(t and t.endswith('к') and any(ch.isdigit() for ch in t), f'у клітинці завтрашнього дня немає суми «к»: {t!r}')
+    t = _tomorrow_cell(page, '.cal-bal-m', '8')
+    print(f'      сьогодні (телефон): {t!r}')
+    check(t and t.endswith('к') and any(ch.isdigit() for ch in t), f'у клітинці сьогоднішнього дня немає суми «к»: {t!r}')
+    check(_tomorrow_cell(page, '.cal-bal-m') is None, 'у клітинці звичайного дня (9-го) лишилась сума прогнозу')
     w = page.evaluate("""(()=>{const c=[...document.querySelectorAll('.cal-bal-m')].map(e=>e.closest('.cal-cell'));const g=c[0].parentElement.getBoundingClientRect();
 return {gl:g.left,gr:g.right,l:Math.min(...c.map(x=>x.getBoundingClientRect().left)),r:Math.max(...c.map(x=>x.getBoundingClientRect().right)),clip:[...document.querySelectorAll('.cal-bal-m')].filter(e=>e.scrollWidth>e.clientWidth+0.5).length,sw:document.documentElement.scrollWidth}})()""")
     print(f'      сітка: {w}')

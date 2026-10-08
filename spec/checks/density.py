@@ -16,15 +16,15 @@ return {n:rows.length,bad:bad,sub:document.querySelectorAll('.p-flow.desk .flow-
 # елементи в .content із власною вертикальною прокруткою, яка справді прокручується
 INNER = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getComputedStyle(e).overflowY;return (o==='auto'||o==='scroll')&&e.scrollHeight>e.clientHeight+2}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30)+' '+e.scrollHeight+'>'+e.clientHeight)"""
 # фікстура: другий рахунок із боргом (monobank), дедлайн той самий, що в ПриватБанку
-DEBT2 = ("{id:'l3',name:'monobank',bank:'mono',kind:'debit',balance:12500,debt:0,debt_month:null",
-         "{id:'l3',name:'monobank',bank:'mono',kind:'debit',balance:12500,debt:4200,debt_month:pbIso(dm)")
+DEBT2 = ("{id:'l3',name:'monobank',bank:'mono',kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:0,debt_month:null",
+         "{id:'l3',name:'monobank',bank:'mono',kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:4200,debt_month:pbIso(dm)")
 CAL = """({sh:document.documentElement.scrollHeight,ih:innerHeight,
 fx:[...document.querySelectorAll('.ck-fixed .ck-fx')].map(e=>Math.round(e.getBoundingClientRect().height)),
 cr:[...document.querySelectorAll('.ck-crs .ck-cr')].map(e=>Math.round(e.getBoundingClientRect().height)),
 ev:[...document.querySelectorAll('.ck-day .cal-ev')].map(e=>Math.round(e.getBoundingClientRect().height)),
 debt:document.querySelectorAll('.ck-day .cal-ev-debt').length,more:(document.querySelector('.ck-day .ck-more')||{}).innerText||'',
 cards:document.querySelectorAll('.ck-side .ck-debts').length,
-side:[...document.querySelectorAll('.ck-side > *')].map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ').pop(),Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.bottom)]})})"""
+side:[...document.querySelectorAll('.ck-cal, .ck-under > *, .ck-side > *')].map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ').pop(),Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.bottom),Math.round(r.right)]})})"""
 
 
 def no_inner(page, name):
@@ -84,7 +84,8 @@ def fit(page):
 
 
 def calendar_real(page):
-    """Календар 1920x900 з реальними обсягами: без прокрутки сторінки і внутрішніх прокруток, компактні рядки, борги лише в KPI"""
+    """Календар 1920x900 з реальними обсягами: без прокрутки сторінки і внутрішніх прокруток, компактні рядки, борги лише в KPI;
+    праворуч таблиця «Події і баланс» на весь місяць без «+N», Розстрочки й Постійні під сіткою (відгук власника 08.10)"""
     freeze(page, DAY, patch=[DEBT2])
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(400)
@@ -98,13 +99,15 @@ def calendar_real(page):
     check(c['cards'] == 0, 'у правій колонці лишилась картка «Борги»')
     check(all(x == 28 for x in c['fx']), f'рядки постійних платежів не 28px: {c["fx"]}')
     check(all(x <= 44 for x in c['cr']), f'рядок розстрочки вищий за 44px: {c["cr"]}')
-    check(c['ev'] and len(c['ev']) <= 6 and all(x == 24 for x in c['ev']), f'події: {len(c["ev"])} рядків {c["ev"]}, а не до 6 по 24px')
+    nd = page.evaluate("new Set([...document.querySelectorAll('.ck-cal .cal-cell')].filter(c=>c.querySelector('.cal-ln,.cal-more')).map(c=>c.querySelector('.cal-dn').textContent)).size")
+    check(c['ev'] and len(c['ev']) >= nd and all(x == 28 for x in c['ev']), f'події: {len(c["ev"])} рядків {c["ev"]}, а не всі дати з подіями ({nd}) по 28px')
     check(c['debt'] == 2, f'у подіях {c["debt"]} дедлайнів боргу, а не 2')
-    check(c['more'].startswith('+'), f'немає «+N» під подіями: {c["more"]!r}')
-    # на 1920 розстрочки і постійні поруч, події на всю ширину під ними
+    check(c['more'] == '', f'у таблиці лишилось «+N»: {c["more"]!r}')
+    # на 1920: розстрочки і постійні поруч під сіткою, таблиця подій праворуч від сітки
     s = {x[0]: x for x in c['side']}
     check(s['ck-crs'][2] == s['ck-fixed'][2] and s['ck-crs'][1] < s['ck-fixed'][1], f'розстрочки і постійні не поруч: {c["side"]}')
-    check(s['ck-day'][2] >= max(s['ck-crs'][4], s['ck-fixed'][4]) and s['ck-day'][3] > s['ck-crs'][3] * 1.8, f'події не під картками на всю ширину: {c["side"]}')
+    check(s['ck-crs'][2] >= s['ck-cal'][4] and s['ck-fixed'][5] <= s['ck-cal'][5] + 1, f'розстрочки і постійні не під сіткою: {c["side"]}')
+    check(s['ck-day'][1] >= s['ck-cal'][5] and s['ck-day'][2] == s['ck-cal'][2], f'таблиця подій не праворуч від сітки: {c["side"]}')
     # «Погасити» в KPI «Борги» відкриває рахунок
     g = page.locator('.ck-kpi.ck-debt .ck-ghost')
     check(g.count() == 1 and g.inner_text() == 'Погасити', 'у KPI «Борги» немає кнопки «Погасити»')
@@ -115,15 +118,13 @@ def calendar_real(page):
     check(dialog(page, 'Рахунок').count() == 1, '«Погасити» не відкрило рахунок')
     page.keyboard.press('Escape')
     page.wait_for_timeout(300)
-    # «+N» розгортає всі події, «згорнути» повертає 6
-    more = page.locator('.ck-day .ck-more')
-    n = int(more.inner_text().lstrip('+'))
-    more.click()
+    # клік по дню в сітці підсвічує його рядки, повторний знімає виділення; кількість рядків не змінюється
+    page.locator('.ck-cal .cal-cell:has(.cal-ln)').first.click()
     page.wait_for_timeout(250)
-    check(page.locator('.ck-day .cal-ev').count() == len(c['ev']) + n, f'«+{n}» не розгорнуло всі події')
-    more.click()
+    check(page.locator('.ck-day .cal-ev.sel').count() >= 1 and page.locator('.ck-day .cal-ev').count() == len(c['ev']), 'вибір дня не підсвітив рядки таблиці')
+    page.locator('.ck-cal .cal-cell.sel').click()
     page.wait_for_timeout(250)
-    check(page.locator('.ck-day .cal-ev').count() == len(c['ev']), '«згорнути» не повернуло 6 подій')
+    check(page.locator('.ck-day .cal-ev.sel').count() == 0, 'повторний клік не зняв виділення')
 
 
 def laptop(page):

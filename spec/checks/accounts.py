@@ -1,4 +1,4 @@
-# Рахунки: банківські картки на ПК-Огляді (1280, 1920), форма рахунку, зарплатний рахунок лише один; ряд карток на телефоні
+# Рахунки: банківські картки на ПК-Огляді (1280, 1920), форма рахунку, зарплатний рахунок лише один; рахунки чипами на телефоні
 import re as _re
 from datetime import datetime as _dt
 
@@ -7,8 +7,9 @@ from helpers import check, dialog, shot
 SETR = """(el,v)=>{const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;s.call(el,String(v));el.dispatchEvent(new Event('input',{bubbles:true}))}"""
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
 KPI_H = "[...document.querySelectorAll('.dv-kpis .dv-kpi')].map(e=>Math.round(e.getBoundingClientRect().height))"
-# текстові вузли ПК-Огляду поза банківськими картками, дрібніші за 11.5px (підписи 11.5, основний 13; дизайн ПК v135)
-SMALL = """[...document.querySelectorAll('.p-overview.desk *')].filter(e=>!e.closest('.bcard')&&[...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim()))
+# текстові вузли ПК-Огляду поза банківськими картками, дрібніші за 11.5px (підписи 11.5, основний 13; дизайн ПК v135);
+# підписи мін./макс. і осі всередині графіка прогнозу 11px за рішенням власника (svg text), їх не рахуємо
+SMALL = """[...document.querySelectorAll('.p-overview.desk *')].filter(e=>!e.closest('.bcard')&&!e.closest('svg')&&[...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim()))
 .map(e=>[e.textContent.trim().slice(0,20),parseFloat(getComputedStyle(e).fontSize)]).filter(x=>x[1]<11.5)"""
 
 
@@ -30,9 +31,11 @@ def desktop(page):
     check(mono.count() == 1, 'немає картки monobank')
     mt = mono.inner_text().lower()
     check('monobank' in mt and 'дебетова' in mt and 'оновлено' in mt, f'картка monobank: {mt!r}')
-    # дизайн ПК v135: плоска картка, mono #1a1c22 без градієнта
+    # DESIGN.md (третя редакція): картки рахунків однакові, біле тло у світлій темі і графітове в темній, без градієнта
     bg = mono.evaluate("e=>{const s=getComputedStyle(e);return s.backgroundImage+' | '+s.backgroundColor}")
-    check(bg == 'none | rgb(26, 28, 34)', f'картка monobank не плоска чорна #1a1c22: {bg[:90]}')
+    bg0 = cards.nth(0).evaluate("e=>{const s=getComputedStyle(e);return s.backgroundImage+' | '+s.backgroundColor}")
+    card = page.evaluate("getComputedStyle(document.querySelector('.dv-kpi')).backgroundColor")
+    check(bg == bg0 and bg == 'none | ' + card, f'картка monobank не така, як інші картки й KPI: {bg[:60]} / {bg0[:60]} / {card}')
     upd = page.locator('.dv-acc-head .dv-mono-upd')
     check(upd.count() == 1 and 'Оновити' in upd.inner_text(), 'немає кнопки «Оновити» для monobank')
     upd.click()
@@ -43,7 +46,7 @@ def desktop(page):
           f'↻ без БД не оновив час: {hm.group(1) if hm else None}, зараз {now:%H:%M}')
     check(page.locator('.dv-mono-msg').count() == 0, 'без БД зʼявилось повідомлення про помилку monobank')
     hs = page.evaluate(KPI_H)
-    check(len(hs) == 3 and max(hs) - min(hs) <= 1, f'KPI не однакової висоти: {hs}')
+    check(len(hs) == 4 and max(hs) - min(hs) <= 1, f'KPI не 4 однакової висоти: {hs}')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол на 1280')
     page.mouse.move(2, 2)
     shot(page, 'ov-1280.jpg', full=False)
@@ -92,16 +95,19 @@ def wide(page):
 
 
 def mobile(page):
-    row = page.locator('.o-cards')
-    check(row.count() == 1, 'на телефоні немає ряду карток')
-    check(row.locator('.bcard').count() == 3, 'у ряду не 3 картки')
+    # DESIGN.md «Огляд, телефон» п. 3: рахунки рядом чипів, ряд прокручується вбік і не перемикає вкладки
+    row = page.locator('.o-accs')
+    check(row.count() == 1, 'на телефоні немає ряду рахунків')
+    check(row.locator('.o-acc-chip:not(.o-unas):not(.o-acc-add)').count() == 3, 'у ряду не 3 рахунки')
+    check(row.get_attribute('data-noswipe') == '1', 'ряд рахунків без data-noswipe')
     st = row.evaluate("e=>({sw:e.scrollWidth,cw:e.clientWidth,ox:getComputedStyle(e).overflowX,snap:getComputedStyle(e).scrollSnapType})")
-    check(st['ox'] == 'auto' and st['sw'] > st['cw'], f'ряд карток не прокручується горизонтально: {st}')
+    check(st['ox'] == 'auto', f'ряд рахунків не прокручується горизонтально: {st}')
     check('x' in st['snap'], f'немає scroll-snap: {st["snap"]}')
-    row.evaluate('e=>e.scrollLeft=e.scrollWidth')
-    page.wait_for_timeout(200)
-    check(row.evaluate('e=>e.scrollLeft') > 0, 'ряд карток не прокрутився')
-    row.evaluate('e=>e.scrollLeft=0')
+    if st['sw'] > st['cw']:
+        row.evaluate('e=>e.scrollLeft=e.scrollWidth')
+        page.wait_for_timeout(200)
+        check(row.evaluate('e=>e.scrollLeft') > 0, 'ряд рахунків не прокрутився')
+        row.evaluate('e=>e.scrollLeft=0')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол сторінки на 375')
     free = page.locator('.o-free').inner_text().lower()  # підпис героя у верхньому регістрі (text-transform)
     check('вільно до виплати' in free, f'герой «Вільно до виплати» не знайдено: {free!r}')

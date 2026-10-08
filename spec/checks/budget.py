@@ -34,7 +34,10 @@ def math(page):
         if debt is not None:
             snap['accounts'][1]['debt'] = debt
         ref = reference(snap, today, now)
-        js = page.evaluate("([t,s,n])=>periodBudget(t,s.salary,s.accounts,s.fixed,s.credits,s.salary.savings_pct,n||undefined)", [today, snap, now])
+        # погашення кредитки 25-го в [зараз; кінець періоду) біле (DESIGN.md п. 10): входить у whiteDue і зменшує cashNow
+        js = page.evaluate("""([t,s,n])=>{const pb=periodBudget(t,s.salary,s.accounts,s.fixed,s.credits,s.salary.savings_pct,n||undefined);
+const tn=pbDate(n||pb.start),wf=tn>pbDate(pb.start)?tn:pbDate(pb.start);const r=cardRepay(wf,pb.end,tn,s.accounts,s.fixed,s.credits).total;
+return Object.assign(pb,{whiteDue:pb.whiteDue+r,cashNow:pb.cashNow-r})}""", [today, snap, now])
         tag = f'{today}' + (f', борг {debt}' if debt is not None else '') + (f', зараз {now}' if now else '')
         check(js['payout']['date'] == ref['payout']['date'] and js['payout']['kind'] == ref['payout']['kind'],
               f'{tag}: виплата JS {js["payout"]}, еталон {ref["payout"]}')
@@ -57,7 +60,8 @@ PATCH = [('TX_DEMO_ROWS=[', 'TX_DEMO_ROWS=[' + HOT_ROW)]
 def expected(page, today):
     """Очікуване з демо-операцій і еталона budget_pool.py: період, бюджет, витрати за категоріями, «горить»."""
     t = date.fromisoformat(today)
-    ref = current_ref(demo_snapshot(page), today)
+    # знімок застосунку (рахунки, операції з мітками, витрати періоду): еталон дає і плановий varPool, і обмежений varPoolCur
+    ref = current_ref(page.evaluate('window.__cashSnap()'), today, today)
     start, end = date.fromisoformat(ref['payout']['date']), date.fromisoformat(ref['end'])
     cats = page.evaluate("BCAT.map(c=>({id:c.id,name:c.name,limit:c.limit}))")
     total = sum(c['limit'] for c in cats)
@@ -72,7 +76,8 @@ def expected(page, today):
         ops[x['category_id']] = ops.get(x['category_id'], 0) + 1
     days = (end - start).days
     frac = 0 if t < start else min(days, (t - start).days + 1) / days
-    pool = ref['varPool']
+    # категорії ділять обмежений готівкою бюджет поточного періоду (DESIGN.md п. 5)
+    pool = ref['varPoolCur']
     hot = set()
     for c in cats:
         plan = pool * c['limit'] / total
@@ -97,7 +102,10 @@ def desktop(page):
     lbl = page.locator('.side-pname').inner_text()
     check(lbl.startswith(str(start.day)), f'період у бічній панелі «{lbl}», очікували від {start}')
     v = num(kpi(page, 'bud-pool'))
-    check(v == round(ref['varPool']), f'«Бюджет періоду» {v}, еталон budget_pool.py {ref["varPool"]:.2f}')
+    check(abs(v - ref['varPoolCur']) <= 1, f'«Бюджет періоду» {v}, еталон budget_pool.py varPoolCur {ref["varPoolCur"]:.2f}')
+    if ref['varPoolCur'] < ref['planCur'] - 0.5:
+        check('обмежено готівкою' in page.inner_text('.bud-pool .bud-cap'), 'немає підпису «обмежено готівкою»')
+        check(abs(num(page.inner_text('.bud-pool .bud-plan')) - ref['planCur']) <= 1, 'плановий бюджет у підписі не той')
     sv = num(kpi(page, 'bud-sav'))
     check(sv == round(ref['savings']), f'«Накопичення періоду» {sv}, еталон {ref["savings"]:.2f}')
     total = sum(spend.values())
@@ -105,10 +113,10 @@ def desktop(page):
     check(got == round(total), f'«Витрачено» {got}, сума демо-операцій періоду {total}')
     left = (end - date.fromisoformat(DAY)).days
     pd = num(kpi(page, 'bud-day'))
-    want = round(max(0, ref['varPool'] - total) / left)
-    check(pd == want, f'«На день лишилось» {pd}, очікували {want}')
+    want = ref['perDay']
+    check(abs(pd - want) <= 1, f'«На день лишилось» {pd}, еталон perDay {want:.2f}')
     print(f'      ПК-Бюджет {DAY}: бюджет {v}, витрачено {got}, на день {pd}, накопичення {sv}; '
-          f'еталон varPool {ref["varPool"]:.2f}, savings {ref["savings"]:.2f}, витрати {total}, «горить» {sorted(hot)}')
+          f'еталон varPool {ref["varPool"]:.2f}, varPoolCur {ref["varPoolCur"]:.2f}, savings {ref["savings"]:.2f}, витрати {total}, «горить» {sorted(hot)}')
     rows = page.evaluate("""[...document.querySelectorAll('.bud-cat')].map(e=>({n:e.querySelector('.bud-name').textContent,
 f:e.querySelector('.bud-nums b').textContent,hot:e.classList.contains('hot'),idle:e.classList.contains('idle')}))""")
     check(len(rows) == page.evaluate('BCAT.length'), f'{len(rows)} категорій замість усіх')

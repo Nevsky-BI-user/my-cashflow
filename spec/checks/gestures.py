@@ -37,9 +37,9 @@ def swipe_tabs(page):
     check(tab_idx(page) == 0, 'рух на 50px перемкнув вкладку')
     touch_drag(page, x + 40, y - 100, x - 40, y + 100)
     check(tab_idx(page) == 0, 'вертикальний рух перемкнув вкладку')
-    # горизонтальна стрічка карток рахунків прокручується сама, вкладки не перемикає
-    b = page.locator('.bcard-row').first.bounding_box()
-    check(b, 'немає ряду карток рахунків')
+    # горизонтальний ряд рахунків (чипи) прокручується сам, вкладки не перемикає
+    b = page.locator('.o-accs').first.bounding_box()
+    check(b, 'немає ряду рахунків')
     touch_drag(page, b['x'] + b['width'] - 40, b['y'] + b['height'] / 2, b['x'] + 40, b['y'] + b['height'] / 2)
     check(tab_idx(page) == 0, 'свайп по ряду карток перемкнув вкладку')
 
