@@ -39,6 +39,7 @@
 - [x] 4.3 telegram-setup + кнопка «Підключити бота» + README-telegram.md
 - [ ] (ти) BotFather, секрети, деплой, «Підключити бота», /start <код>, тест «250 кава»
 - [x] 4.2 фото чеків: Storage + Claude API vision (бекенд: secrets set CLAUDE_API_KEY, deploy telegram-webhook, bucket receipts приватний)
+- [x] 4.2a довгі чеки з кількох фото: фото без рядка «СУМА» чекає наступне (10 хв, /yes за сумою позицій, /no), підсумок закриває чек однією транзакцією, усі фото в `receipt_parts` (міграція 19, README-telegram.md «Довгі чеки»)
 
 ### Фаза 5: Telegram-бот (доходи)
 - [x] 5.1 /income, дедуплікація з Monobank, /yes (міграція 05, deploy telegram-webhook)

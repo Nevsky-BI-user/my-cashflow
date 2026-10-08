@@ -9,8 +9,14 @@ import { freeToPayout, lastPayout, type Snapshot } from '../_shared/budget.ts';
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
 const RECEIPT_SYSTEM =
   'Розпізнай чек. Відповідай ТІЛЬКИ JSON без пояснень: ' +
-  '{"amount": число (загальна сума до сплати), "description": назва магазину або 2-3 слова, ' +
-  '"date": "YYYY-MM-DD" або null}. Якщо це не чек: {"error": "коротко чому"}.';
+  '{"has_total": true або false, "amount": число або null, "items_sum": число або null, ' +
+  '"description": назва магазину або 2-3 слова, "date": "YYYY-MM-DD" або null}. ' +
+  'has_total = true ЛИШЕ коли на фото є рядок підсумку чека (СУМА, До сплати, Разом, Всього, TOTAL), ' +
+  'і тоді amount = саме це число з рядка підсумку. ' +
+  'НІКОЛИ не сумуй позиції в amount: якщо рядка підсумку немає, повертай has_total: false, amount: null, ' +
+  'а в items_sum клади суму видимих позицій (орієнтовно). ' +
+  'Якщо фото кілька, це частини одного чека по порядку, підсумок зазвичай на останньому. ' +
+  'Якщо це не чек: {"error": "коротко чому"}.';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -174,7 +180,7 @@ async function downloadTgFile(fileId: string): Promise<Uint8Array | null> {
 }
 
 // Claude vision: повертає розібраний JSON або null при помилці API
-async function recognizeReceipt(b64: string): Promise<any | null> {
+async function recognizeReceipt(b64s: string[]): Promise<any | null> {
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -185,13 +191,18 @@ async function recognizeReceipt(b64: string): Promise<any | null> {
       },
       body: JSON.stringify({
         model: RECEIPT_MODEL,
-        max_tokens: 300,
+        max_tokens: 400,
         system: RECEIPT_SYSTEM,
         messages: [{
           role: 'user',
           content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
-            { type: 'text', text: 'Розпізнай чек' },
+            ...b64s.map((data) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } })),
+            {
+              type: 'text',
+              text: b64s.length > 1
+                ? `Розпізнай чек; це ${b64s.length} фото одного чека, підсумок на останньому`
+                : 'Розпізнай чек',
+            },
           ],
         }],
       }),
@@ -214,11 +225,42 @@ async function recognizeReceipt(b64: string): Promise<any | null> {
   }
 }
 
-async function addReceipt(chatId: number, userId: string, updateId: number, photos: any[]) {
+// Стан збирання частин довгого чека (profiles.telegram_pending з kind: 'receipt')
+type ReceiptPart = { path: string; update_id: number };
+type ReceiptPending = {
+  kind: 'receipt';
+  parts: ReceiptPart[];
+  media_group_id?: string;
+  description: string;
+  date: string | null;
+  items_sum: number | null;
+  expires: string;
+};
+
+const isLiveReceipt = (p: any): p is ReceiptPending =>
+  !!p && p.kind === 'receipt' && Array.isArray(p.parts) && !!p.expires && Date.parse(p.expires) >= Date.now();
+
+async function readPending(userId: string): Promise<any | null> {
+  const { data, error } = await sb.from('profiles').select('telegram_pending').eq('id', userId).maybeSingle();
+  if (error) console.error('pending lookup error:', error);
+  return data?.telegram_pending ?? null;
+}
+
+const posNum = (v: unknown): number | null => {
+  const n = Math.round(Number(typeof v === 'string' ? v.replace(/\s/g, '').replace(',', '.') : v) * 100) / 100;
+  return isFinite(n) && n > 0 ? n : null;
+};
+
+async function addReceipt(
+  chatId: number, userId: string, updateId: number, photos: any[], mediaGroupId?: string,
+) {
   if (!CLAUDE_API_KEY) return reply(chatId, 'Розпізнавання чеків не налаштовано');
   const sourceId = tgSourceId(updateId);
   // Перевірка до завантаження і виклику Claude: повтор апдейту не коштує грошей
   if (await isDuplicate(sourceId)) return;
+  // Частина без підсумку транзакції не створює: повтор апдейту ловимо по parts
+  const pending0 = await readPending(userId);
+  if (isLiveReceipt(pending0) && pending0.parts.some((x) => x.update_id === updateId)) return;
 
   // Останній елемент масиву photo: найбільший розмір
   const fileId: string | undefined = photos[photos.length - 1]?.file_id;
@@ -236,24 +278,77 @@ async function addReceipt(chatId: number, userId: string, updateId: number, phot
     return reply(chatId, 'Не вдалося зберегти фото чека. Спробуйте ще раз.');
   }
 
-  const res = await recognizeReceipt(toBase64(bytes));
+  // Продовження, якщо є живий receipt-pending, інакше нова перша частина
+  const wasReceipt = isLiveReceipt(pending0);
+  const parts: ReceiptPart[] = [...(wasReceipt ? pending0.parts : []), { path, update_id: updateId }];
+
+  const b64s: string[] = [];
+  for (const part of parts) {
+    if (part.path === path) { b64s.push(toBase64(bytes)); continue; }
+    const { data: blob, error: dlErr } = await sb.storage.from('receipts').download(part.path);
+    if (dlErr || !blob) {
+      console.error('storage download error:', dlErr);
+      return reply(chatId, 'Не вдалося прочитати попередню частину чека. Спробуйте /no і надішліть усі фото знову.');
+    }
+    b64s.push(toBase64(new Uint8Array(await blob.arrayBuffer())));
+  }
+
+  const res = await recognizeReceipt(b64s);
   if (!res) return reply(chatId, '❌ Не вдалося розпізнати: сервіс недоступний, спробуйте пізніше');
   if (res.error) return reply(chatId, '❌ Не вдалося розпізнати: ' + String(res.error));
 
-  const amount = Math.round(
-    Number(typeof res.amount === 'string' ? res.amount.replace(/\s/g, '').replace(',', '.') : res.amount) * 100,
-  ) / 100;
-  if (!isFinite(amount) || amount <= 0) return reply(chatId, '❌ Не вдалося розпізнати: немає суми');
   const description = (typeof res.description === 'string' && res.description.trim()) || 'Чек';
+  const total = res.has_total === true ? posNum(res.amount) : null;
+
+  if (total === null) {
+    // Підсумку на фото немає: чекаємо наступну частину, транзакцію не створюємо
+    const itemsSum = posNum(res.items_sum);
+    const state: ReceiptPending = {
+      kind: 'receipt',
+      parts,
+      ...(mediaGroupId ? { media_group_id: mediaGroupId } : {}),
+      description,
+      date: typeof res.date === 'string' ? res.date : null,
+      items_sum: itemsSum,
+      expires: new Date(Date.now() + PENDING_TTL_MS).toISOString(),
+    };
+    let saved = false;
+    if (!wasReceipt) {
+      // Умовний запис: закриває гонку двох майже одночасних апдейтів альбому
+      const { data: upd, error: e1 } = await sb.from('profiles')
+        .update({ telegram_pending: state }).eq('id', userId).is('telegram_pending', null).select('id');
+      if (e1) console.error('receipt pending save error:', e1);
+      saved = !!(upd && upd.length);
+      if (!saved) {
+        // Хтось уже записав pending: якщо це живий receipt, дописуємо свою частину до нього
+        const cur = await readPending(userId);
+        if (isLiveReceipt(cur) && !cur.parts.some((x) => x.update_id === updateId)) {
+          state.parts = [...cur.parts, { path, update_id: updateId }];
+        }
+      }
+    }
+    if (!saved) {
+      const { error: e2 } = await sb.from('profiles').update({ telegram_pending: state }).eq('id', userId);
+      if (e2) {
+        console.error('receipt pending save error:', e2);
+        return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
+      }
+    }
+    const sumPart = itemsSum ? ` (позицій на ≈ ${fmtMoney(itemsSum)})` : '';
+    return reply(chatId,
+      `📄 Частина чека без підсумку${sumPart}. Нічого не записано. ` +
+      'Надішліть наступне фото з рядком «СУМА», або /yes щоб записати як є, або /no щоб скасувати. Чекаю 10 хв.');
+  }
 
   const { data: ins, error } = await sb.from('transactions').insert({
     user_id: userId,
-    amount,
+    amount: total,
     type: 'expense',
     description,
     source: 'telegram',
     source_id: sourceId,
-    receipt_url: path,
+    receipt_url: parts[0].path,
+    receipt_parts: parts.length > 1 ? parts.map((x) => x.path) : null,
     date: receiptDate(res.date),
   }).select('id').single();
   if (error) {
@@ -261,8 +356,12 @@ async function addReceipt(chatId: number, userId: string, updateId: number, phot
     console.error('receipt insert error:', error);
     return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
   }
+  if (wasReceipt) {
+    const { error: clrErr } = await sb.from('profiles').update({ telegram_pending: null }).eq('id', userId);
+    if (clrErr) console.error('pending clear error:', clrErr);
+  }
   categorizeLater(ins.id);
-  return reply(chatId, `✅ ${fmtMoney(amount)}, ${description}`);
+  return reply(chatId, `✅ ${fmtMoney(total)}, ${description}` + (parts.length > 1 ? ` (чек із ${parts.length} фото)` : ''));
 }
 
 // Відкладений запис для /yes: profiles.telegram_pending, TTL 10 хв
@@ -355,13 +454,40 @@ async function confirmPending(chatId: number, userId: string) {
     console.error('pending lookup error:', error);
     return reply(chatId, 'Не вдалося прочитати. Спробуйте ще раз.');
   }
-  const p = data?.telegram_pending as Pending | null;
+  const p = data?.telegram_pending as Pending | ReceiptPending | null;
   if (!p || !p.expires || Date.parse(p.expires) < Date.now()) {
     if (p) await sb.from('profiles').update({ telegram_pending: null }).eq('id', userId);
     return reply(chatId, 'Немає що підтверджувати.');
   }
+  if ((p as any).kind === 'receipt') {
+    const rp = p as ReceiptPending;
+    if (!rp.items_sum || rp.items_sum <= 0 || !rp.parts?.length) {
+      return reply(chatId, 'У цієї частини чека немає суми. Надішліть фото з підсумком або /no.');
+    }
+    const { data: ins, error: rErr } = await sb.from('transactions').insert({
+      user_id: userId,
+      amount: rp.items_sum,
+      type: 'expense',
+      description: rp.description || 'Чек',
+      source: 'telegram',
+      source_id: tgSourceId(rp.parts[rp.parts.length - 1].update_id),
+      receipt_url: rp.parts[0].path,
+      receipt_parts: rp.parts.length > 1 ? rp.parts.map((x) => x.path) : null,
+      date: receiptDate(rp.date),
+    }).select('id').single();
+    if (rErr && rErr.code !== '23505') {
+      console.error('receipt confirm insert error:', rErr);
+      return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
+    }
+    await sb.from('profiles').update({ telegram_pending: null }).eq('id', userId);
+    if (ins) {
+      categorizeLater(ins.id);
+      return reply(chatId, `✅ записано за сумою позицій ${fmtMoney(rp.items_sum)}, ${rp.description || 'Чек'}`);
+    }
+    return;
+  }
   // source_id з відкладеного запису: дедуп по update_id лишається в силі
-  const ok = await insertTx(chatId, userId, p);
+  const ok = await insertTx(chatId, userId, p as Pending);
   if (ok) {
     const { error: clrErr } = await sb.from('profiles').update({ telegram_pending: null }).eq('id', userId);
     if (clrErr) console.error('pending clear error:', clrErr);
@@ -485,7 +611,8 @@ Deno.serve(async (req) => {
 
   // Фото чека: лише для привʼязаних профілів (whitelist вище)
   if (photos) {
-    await addReceipt(chatId, prof.id, Number(update.update_id) || 0, photos);
+    await addReceipt(chatId, prof.id, Number(update.update_id) || 0, photos,
+      msg?.media_group_id ? String(msg.media_group_id) : undefined);
     return new Response('ok');
   }
 
