@@ -3,7 +3,7 @@
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { freeToPayout, lastPayout, type Snapshot } from '../_shared/budget.ts';
+import { deriveAccounts, freeToPayout, lastPayout, type AccTx, type Snapshot } from '../_shared/budget.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -50,7 +50,10 @@ const HELP =
   'Фото чека: сума й магазин розпізнаються автоматично\n' +
   '/yes: підтвердити дохід, схожий на Monobank\n' +
   '/balance: баланс за місяць\n' +
-  '/last: останні 5 записів';
+  '/last: останні 5 записів\n\n' +
+  'Рахунок: слово ощад, приват, моно або готівка на початку чи в кінці опису (для фото: у підписі), ' +
+  'наприклад «250 кава приват». Без слова: рахунок, куди приходить зарплата. ' +
+  'Кнопки під відповіддю змінюють рахунок.';
 
 // Відповідь у чат; помилки Telegram не валять обробку апдейту
 // Постійна клавіатура під полем вводу: кнопки шлють звичайний текст, який роутер розуміє
@@ -74,8 +77,154 @@ async function reply(chatId: number, text: string, keyboard: unknown = MAIN_KB) 
   }
 }
 
+// Виклик методу Bot API без відповіді; помилки лише в лог
+async function tgCall(method: string, body: Record<string, unknown>) {
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) console.error(method + ' failed:', r.status, (await r.text()).slice(0, 200));
+  } catch (e) {
+    console.error(method + ' failed:', e);
+  }
+}
+
+// Рахунки операцій. Сімʼя спільна: активні рахунки обох без фільтра user_id
+type Acc = { id: number; name: string; bank: string | null; kind: string; is_salary: boolean | null };
+const BANK_WORDS: Record<string, string> = {
+  'ощад': 'oschad', 'oschad': 'oschad', 'приват': 'privat', 'privat': 'privat',
+  'моно': 'mono', 'mono': 'mono', 'monobank': 'mono', 'готівка': 'cash', 'кеш': 'cash', 'cash': 'cash',
+};
+
+async function activeAccounts(): Promise<Acc[]> {
+  const { data, error } = await sb.from('accounts')
+    .select('id,name,bank,kind,is_salary')
+    .eq('active', true)
+    .order('sort_order', { ascending: true })
+    .order('id', { ascending: true });
+  if (error) console.error('accounts lookup error:', error);
+  return (data || []) as Acc[];
+}
+
+// За замовчуванням: рахунок, куди приходить зарплата, далі перший активний дебетовий
+const defaultAccount = (accs: Acc[]): Acc | null =>
+  accs.find((a) => a.is_salary === true) || accs.find((a) => a.kind === 'debit') || null;
+
+// Слово-ключ рахунку: банк за словником, інакше початок назви рахунку (від 3 літер)
+function matchWord(word: string, accs: Acc[]): Acc | null {
+  const w = word.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+  if (!w) return null;
+  const bank = BANK_WORDS[w];
+  if (bank) {
+    const a = accs.find((x) => x.bank === bank || (bank === 'cash' && x.kind === 'cash'));
+    if (a) return a;
+  }
+  if (w.length >= 3) return accs.find((x) => x.name.toLowerCase().startsWith(w)) || null;
+  return null;
+}
+
+// Рахунок з тексту: перше або останнє слово; знайдене слово вирізається з опису.
+// allowWhole: текст може складатися лише зі слова-ключа (підпис фото); для опису витрати так не можна
+function pickAccount(text: string, accs: Acc[], allowWhole: boolean): { acc: Acc | null; rest: string; matched: boolean } {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length > (allowWhole ? 0 : 1)) {
+    for (const i of words.length > 1 ? [0, words.length - 1] : [0]) {
+      const a = matchWord(words[i], accs);
+      if (a) {
+        words.splice(i, 1);
+        return { acc: a, rest: words.join(' '), matched: true };
+      }
+    }
+  }
+  return { acc: defaultAccount(accs), rest: text.trim(), matched: false };
+}
+
+async function resolveAccount(hint: string, allowWhole: boolean) {
+  const accs = await activeAccounts();
+  return { ...pickAccount(hint, accs, allowWhole), accs };
+}
+
 const fmtMoney = (n: number) =>
   new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + ' ₴';
+
+// Текст підтвердження запису: той самий для відповіді і для редагування після вибору рахунку
+type TxView = { amount: number | string; type: string; description: string | null; receipt_parts?: string[] | null };
+function txText(t: TxView, accName: string | null): string {
+  const parts = t.receipt_parts && t.receipt_parts.length > 1 ? ` (чек із ${t.receipt_parts.length} фото)` : '';
+  return `✅ ${t.type === 'income' ? 'Дохід' : 'Витрата'}: ${fmtMoney(Number(t.amount))}, ${t.description || ''}${parts}` +
+    ` · ${accName || 'без рахунку'}`;
+}
+
+// Inline-кнопки інших активних рахунків: callback_data acc:<txId>:<accountId> (до 64 байт)
+function accKeyboard(txId: number, accs: Acc[], currentId: number | null) {
+  const rows = accs
+    .filter((a) => a.id !== currentId)
+    .map((a) => [{ text: a.name, callback_data: `acc:${txId}:${a.id}` }]);
+  return rows.length ? { inline_keyboard: rows } : null;
+}
+
+// Відповідь після запису. restoreKb: перед цим була CONFIRM_KB, тож спершу повертаємо MAIN_KB,
+// а кнопки рахунків ідуть окремим повідомленням (одне повідомлення несе лише одну клавіатуру)
+async function replyTx(
+  chatId: number, txId: number, t: TxView, accountId: number | null,
+  opts: { note?: string; restoreKb?: boolean; accs?: Acc[] } = {},
+) {
+  const accs = opts.accs || await activeAccounts();
+  const name = accs.find((a) => a.id === accountId)?.name ?? null;
+  const text = txText(t, name) + (opts.note ? '\n' + opts.note : '');
+  const kb = accKeyboard(txId, accs, accountId);
+  if (!kb) return reply(chatId, text);
+  if (opts.restoreKb) {
+    await reply(chatId, text);
+    return reply(chatId, 'Змінити рахунок:', kb);
+  }
+  return reply(chatId, text, kb);
+}
+
+// Натискання кнопки рахунку: whitelist за chat_id, зміна account_id лише в записах із Telegram
+async function onCallback(cq: any) {
+  const cbId = String(cq?.id || '');
+  if (!cbId) return;
+  const answer = (text: string) => tgCall('answerCallbackQuery', { callback_query_id: cbId, text });
+  try {
+    const chatId: number | undefined = cq?.message?.chat?.id;
+    const msgId: number | undefined = cq?.message?.message_id;
+    if (!chatId || !msgId) return answer('Повідомлення недоступне');
+    const { data: prof, error: profErr } = await sb.from('profiles').select('id').eq('telegram_chat_id', chatId).maybeSingle();
+    if (profErr) {
+      console.error('callback profile lookup error:', profErr);
+      return answer('Помилка, спробуйте ще раз');
+    }
+    if (!prof) return answer('Доступ закритий');
+    const m = String(cq?.data || '').match(/^acc:(\d+):(\d+)$/);
+    if (!m) return answer('Невідома дія');
+    const txId = Number(m[1]), accId = Number(m[2]);
+    const accs = await activeAccounts();
+    const acc = accs.find((a) => a.id === accId);
+    if (!acc) return answer('Рахунок недоступний');
+    const { data: rows, error: upErr } = await sb.from('transactions')
+      .update({ account_id: accId })
+      .eq('id', txId)
+      .eq('source', 'telegram')
+      .select('id,amount,type,description,receipt_parts');
+    if (upErr) {
+      console.error('callback update error:', upErr);
+      return answer('Не вдалося змінити рахунок');
+    }
+    if (!rows || !rows.length) return answer('Операцію не знайдено');
+    await answer(`Рахунок: ${acc.name}`);
+    const kb = accKeyboard(txId, accs, accId);
+    await tgCall('editMessageText', {
+      chat_id: chatId, message_id: msgId, text: txText(rows[0] as TxView, acc.name),
+      ...(kb ? { reply_markup: kb } : {}),
+    });
+  } catch (e) {
+    console.error('callback error:', (e as Error)?.message);
+    await answer('Помилка, спробуйте ще раз');
+  }
+}
 
 // Сьогодні за Києвом у форматі YYYY-MM-DD (Edge Functions працюють в UTC)
 function todayKyiv(): string {
@@ -235,6 +384,8 @@ type ReceiptPending = {
   date: string | null;
   items_sum: number | null;
   expires: string;
+  account_id?: number | null; // рахунок з підпису першої частини або за замовчуванням
+  account_name?: string | null;
 };
 
 const isLiveReceipt = (p: any): p is ReceiptPending =>
@@ -252,7 +403,7 @@ const posNum = (v: unknown): number | null => {
 };
 
 async function addReceipt(
-  chatId: number, userId: string, updateId: number, photos: any[], mediaGroupId?: string,
+  chatId: number, userId: string, updateId: number, photos: any[], mediaGroupId?: string, caption?: string,
 ) {
   if (!CLAUDE_API_KEY) return reply(chatId, 'Розпізнавання чеків не налаштовано');
   const sourceId = tgSourceId(updateId);
@@ -300,6 +451,15 @@ async function addReceipt(
   const description = (typeof res.description === 'string' && res.description.trim()) || 'Чек';
   const total = res.has_total === true ? posNum(res.amount) : null;
 
+  // Рахунок: слово-ключ у підписі фото переозначає; інакше рахунок першої частини чи за замовчуванням
+  const accs = await activeAccounts();
+  const cap = caption && caption.trim() ? pickAccount(caption, accs, true) : null;
+  let accountId: number | null;
+  if (cap?.matched) accountId = cap.acc?.id ?? null;
+  else if (wasReceipt && pending0.account_id !== undefined) accountId = pending0.account_id ?? null;
+  else accountId = defaultAccount(accs)?.id ?? null;
+  const accountName = accs.find((a) => a.id === accountId)?.name ?? (wasReceipt ? pending0.account_name ?? null : null);
+
   if (total === null) {
     // Підсумку на фото немає: чекаємо наступну частину, транзакцію не створюємо
     const itemsSum = posNum(res.items_sum);
@@ -311,6 +471,8 @@ async function addReceipt(
       date: typeof res.date === 'string' ? res.date : null,
       items_sum: itemsSum,
       expires: new Date(Date.now() + PENDING_TTL_MS).toISOString(),
+      account_id: accountId,
+      account_name: accountName,
     };
     let saved = false;
     if (!wasReceipt) {
@@ -350,6 +512,7 @@ async function addReceipt(
     receipt_url: parts[0].path,
     receipt_parts: parts.length > 1 ? parts.map((x) => x.path) : null,
     date: receiptDate(res.date),
+    account_id: accountId,
   }).select('id').single();
   if (error) {
     if (error.code === '23505') return; // повтор апдейту встиг пройти isDuplicate: мовчимо
@@ -361,12 +524,17 @@ async function addReceipt(
     if (clrErr) console.error('pending clear error:', clrErr);
   }
   categorizeLater(ins.id);
-  return reply(chatId, `✅ ${fmtMoney(total)}, ${description}` + (parts.length > 1 ? ` (чек із ${parts.length} фото)` : ''));
+  return replyTx(chatId, ins.id, {
+    amount: total, type: 'expense', description, receipt_parts: parts.length > 1 ? parts.map((x) => x.path) : null,
+  }, accountId, { accs });
 }
 
 // Відкладений запис для /yes: profiles.telegram_pending, TTL 10 хв
 const PENDING_TTL_MS = 10 * 60 * 1000;
-type Pending = { amount: number; type: string; description: string; date: string; source_id: string; expires?: string };
+type Pending = {
+  amount: number; type: string; description: string; date: string; source_id: string; expires?: string;
+  account_id?: number | null; account_name?: string | null; // рахунок операції (старі записи pending без нього)
+};
 
 const ddmm = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)}`;
 
@@ -400,7 +568,10 @@ async function findMonoIncome(amount: number, date: string): Promise<{ amount: n
 
 // Вставка запису з Telegram і відповідь у чат.
 // Повертає true, якщо запис у базі (вставлено або вже був по source_id)
-async function insertTx(chatId: number, userId: string, p: Pending): Promise<boolean> {
+async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = false): Promise<boolean> {
+  const accs = await activeAccounts();
+  // pending, збережений до появи рахунків, отримує рахунок за замовчуванням
+  const accountId = p.account_id !== undefined ? p.account_id ?? null : defaultAccount(accs)?.id ?? null;
   const { data: ins, error } = await sb.from('transactions').insert({
     user_id: userId,
     amount: p.amount,
@@ -409,6 +580,7 @@ async function insertTx(chatId: number, userId: string, p: Pending): Promise<boo
     source: 'telegram',
     source_id: p.source_id,
     date: p.date,
+    account_id: accountId,
   }).select('id').single();
   if (error) {
     if (error.code === '23505') return true; // повтор апдейту встиг пройти isDuplicate: мовчимо
@@ -417,7 +589,7 @@ async function insertTx(chatId: number, userId: string, p: Pending): Promise<boo
     return false;
   }
   categorizeLater(ins.id);
-  await reply(chatId, `✅ ${p.type === 'income' ? 'Дохід' : 'Витрата'}: ${fmtMoney(p.amount)}, ${p.description}`);
+  await replyTx(chatId, ins.id, { amount: p.amount, type: p.type, description: p.description }, accountId, { accs, restoreKb });
   return true;
 }
 
@@ -426,7 +598,12 @@ async function addTx(chatId: number, userId: string, updateId: number, type: 'in
   if (!amount || amount <= 0) return reply(chatId, 'Сума має бути більша за нуль.');
   const sourceId = tgSourceId(updateId);
   if (await isDuplicate(sourceId)) return;
-  const p: Pending = { amount, type, description: desc.trim(), date: todayKyiv(), source_id: sourceId };
+  // Слово-ключ рахунку на початку чи в кінці опису вирізається з нього
+  const r = await resolveAccount(desc, false);
+  const p: Pending = {
+    amount, type, description: r.rest, date: todayKyiv(), source_id: sourceId,
+    account_id: r.acc?.id ?? null, account_name: r.acc?.name ?? null,
+  };
 
   // Дохід міг уже прийти з Monobank: не вставляємо, просимо підтвердження /yes
   if (type === 'income') {
@@ -464,6 +641,8 @@ async function confirmPending(chatId: number, userId: string) {
     if (!rp.items_sum || rp.items_sum <= 0 || !rp.parts?.length) {
       return reply(chatId, 'У цієї частини чека немає суми. Надішліть фото з підсумком або /no.');
     }
+    const accs = await activeAccounts();
+    const rpAccount = rp.account_id !== undefined ? rp.account_id ?? null : defaultAccount(accs)?.id ?? null;
     const { data: ins, error: rErr } = await sb.from('transactions').insert({
       user_id: userId,
       amount: rp.items_sum,
@@ -474,6 +653,7 @@ async function confirmPending(chatId: number, userId: string) {
       receipt_url: rp.parts[0].path,
       receipt_parts: rp.parts.length > 1 ? rp.parts.map((x) => x.path) : null,
       date: receiptDate(rp.date),
+      account_id: rpAccount,
     }).select('id').single();
     if (rErr && rErr.code !== '23505') {
       console.error('receipt confirm insert error:', rErr);
@@ -482,12 +662,16 @@ async function confirmPending(chatId: number, userId: string) {
     await sb.from('profiles').update({ telegram_pending: null }).eq('id', userId);
     if (ins) {
       categorizeLater(ins.id);
-      return reply(chatId, `✅ записано за сумою позицій ${fmtMoney(rp.items_sum)}, ${rp.description || 'Чек'}`);
+      return replyTx(chatId, ins.id, {
+        amount: rp.items_sum, type: 'expense', description: rp.description || 'Чек',
+        receipt_parts: rp.parts.length > 1 ? rp.parts.map((x) => x.path) : null,
+      }, rpAccount, { accs, note: 'Записано за сумою позицій: підсумку на фото не було.' });
     }
     return;
   }
   // source_id з відкладеного запису: дедуп по update_id лишається в силі
-  const ok = await insertTx(chatId, userId, p as Pending);
+  // Перед /yes була CONFIRM_KB: відповідь повертає MAIN_KB, кнопки рахунків окремим повідомленням
+  const ok = await insertTx(chatId, userId, p as Pending, true);
   if (ok) {
     const { error: clrErr } = await sb.from('profiles').update({ telegram_pending: null }).eq('id', userId);
     if (clrErr) console.error('pending clear error:', clrErr);
@@ -523,13 +707,27 @@ const fmtInt = (n: number) => new Intl.NumberFormat('uk-UA', { maximumFractionDi
 // «Вільно до виплати» за правилом білої і кредитної картки (DESIGN.md), спільна логіка в _shared/budget.ts
 async function freeBlock(today: string): Promise<string> {
   const [acc, fix, cred, sal] = await Promise.all([
-    sb.from('accounts').select('kind,balance,debt,active').eq('active', true),
+    sb.from('accounts').select('id,name,kind,balance,debt,active,mono_account_id,balance_updated_at')
+      .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
     sb.from('fixed_payments').select('name,amount,day_of_month,type,active,credit_ok').eq('active', true),
     sb.from('credits').select('name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
     sb.from('salary_config').select('rate,split_day,advance_day,salary_day,savings_pct').order('id').limit(1).maybeSingle(),
   ]);
   if (acc.error || fix.error || cred.error || sal.error || !sal.data) throw new Error('budget data lookup failed');
-  const snap: Snapshot = { accounts: acc.data || [], fixed: fix.data || [], credits: cred.data || [], salary: sal.data };
+  // Похідний баланс ручних рахунків: операції з account_id після balance_updated_at (deriveAccounts)
+  const manual = (acc.data || []).filter((a) => !a.mono_account_id && a.balance_updated_at);
+  const since = Math.min(...manual.map((a) => Date.parse(a.balance_updated_at)).filter((t) => !isNaN(t)));
+  let accTx: AccTx[] = [];
+  if (isFinite(since)) {
+    const { data: at, error: atErr } = await sb.from('transactions')
+      .select('account_id,type,amount,created_at')
+      .not('account_id', 'is', null)
+      .gte('created_at', new Date(since).toISOString());
+    if (atErr) throw new Error('account tx lookup failed');
+    accTx = (at || []) as AccTx[];
+  }
+  const accounts = deriveAccounts(acc.data || [], accTx);
+  const snap: Snapshot = { accounts, fixed: fix.data || [], credits: cred.data || [], salary: sal.data };
 
   // Витрати поточного періоду: від останньої виплати до сьогодні (як у застосунку)
   const from = lastPayout(snap.salary, today).date;
@@ -545,7 +743,10 @@ async function freeBlock(today: string): Promise<string> {
   const r = freeToPayout(snap, today, spent);
   const kind = r.nextPayout.kind === 'advance' ? 'аванс' : 'зарплата';
   const due = ddmm(r.nextPayout.date);
-  let out = `Вільно до виплати: ${fmtInt(r.freeNow)} (${kind} ${due}) · на день ${fmtInt(r.perDay)}`;
+  const accLine = 'Рахунки: ' + accounts
+    .map((a) => `${a.name} ${a.kind === 'credit' ? 'борг ' + fmtInt(Number(a.debt) || 0) : fmtInt(Number(a.balance) || 0)}`)
+    .join(' · ');
+  let out = accLine + '\n' + `Вільно до виплати: ${fmtInt(r.freeNow)} (${kind} ${due}) · на день ${fmtInt(r.perDay)}`;
   if (r.cashNow < 0) out += `\nПотрібно ${fmtInt(-r.cashNow)} плюсових на білі платежі до ${due}`;
   return out;
 }
@@ -553,16 +754,21 @@ async function freeBlock(today: string): Promise<string> {
 async function last(chatId: number) {
   const { data, error } = await sb
     .from('transactions')
-    .select('amount,type,description,date,source')
+    .select('amount,type,description,date,source,account_id')
     .order('date', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(5);
   if (error || !data) return reply(chatId, 'Не вдалося отримати список.');
   if (!data.length) return reply(chatId, 'Записів ще немає.');
+  // Назви рахунків (і неактивних): помилка лише прибирає назву з дужок
+  const { data: accRows, error: accErr } = await sb.from('accounts').select('id,name');
+  if (accErr) console.error('last: accounts lookup error:', accErr);
+  const accName = new Map((accRows || []).map((a) => [a.id, a.name]));
   const lines = data.map((t) => {
     const d = `${t.date.slice(8, 10)}.${t.date.slice(5, 7)}`;
     const s = t.source === 'mono' ? 'mono' : t.source === 'telegram' ? 'tg' : 'вручну';
-    return `${d} ${t.type === 'income' ? '+' : '-'}${fmtMoney(Number(t.amount))} ${t.description || ''} (${s})`;
+    const an = t.account_id != null ? accName.get(t.account_id) : null;
+    return `${d} ${t.type === 'income' ? '+' : '-'}${fmtMoney(Number(t.amount))} ${t.description || ''} (${s}${an ? ', ' + an : ''})`;
   });
   return reply(chatId, '📋 Останні:\n' + lines.join('\n'));
 }
@@ -582,6 +788,12 @@ Deno.serve(async (req) => {
   }
 
   // Далі завжди 200: інакше Telegram повторює той самий апдейт
+  // Кнопки рахунку під відповіддю: окремий тип апдейту без message
+  if (update?.callback_query) {
+    await onCallback(update.callback_query);
+    return new Response('ok');
+  }
+
   const msg = update?.message;
   const chatId: number | undefined = msg?.chat?.id;
   const text: string = (msg?.text || '').trim();
@@ -612,7 +824,8 @@ Deno.serve(async (req) => {
   // Фото чека: лише для привʼязаних профілів (whitelist вище)
   if (photos) {
     await addReceipt(chatId, prof.id, Number(update.update_id) || 0, photos,
-      msg?.media_group_id ? String(msg.media_group_id) : undefined);
+      msg?.media_group_id ? String(msg.media_group_id) : undefined,
+      typeof msg?.caption === 'string' ? msg.caption : undefined);
     return new Response('ok');
   }
 

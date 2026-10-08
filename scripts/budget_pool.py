@@ -5,13 +5,55 @@
 #   не кредитних рахунків; cashNow = ці кошти - білі з датою в [зараз; кінець періоду);
 #   freeNow = max(0, min(varPool - spent, cashNow)). credit_ok за замовчуванням: fixed false,
 #   credits true, якщо source містить 'privat'.
-# Вхід: JSON {accounts, fixed, credits, salary, spent?} (знімок БД; spent: витрати періоду, за замовчуванням 0).
+# Вхід: JSON {accounts, fixed, credits, salary, spent?, account_tx?} (знімок БД; spent: витрати періоду, за замовчуванням 0).
+# Похідний баланс ручних рахунків (як deriveAccounts у _shared/budget.ts): якщо є account_tx
+#   (список {account_id, type, amount, created_at}), рахунки без mono_account_id з id і balance_updated_at
+#   отримують операції, створені строго після balance_updated_at: debit/cash balance - витрати + доходи,
+#   credit debt + витрати - доходи (не менше 0). Без account_tx знімок рахується як раніше.
 # Запуск: PYTHONUTF8=1 python scripts/budget_pool.py <snapshot.json> [YYYY-MM-DD сьогодні] [YYYY-MM-DD зараз]
 #   «сьогодні» визначає період (виплата строго після нього), «зараз» початок вікна whiteDue (без нього весь період).
 import calendar, json, sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+
+
+def parse_ts(s):
+    """Мітка часу Postgres/ISO (+00:00, +00, Z) з точністю до мілісекунд, як Date.parse у TS."""
+    s = str(s).strip().replace(' ', 'T', 1)
+    if s.endswith('Z'):
+        s = s[:-1] + '+00:00'
+    t = datetime.fromisoformat(s)
+    return t.replace(microsecond=t.microsecond // 1000 * 1000)
+
+
+def derive_accounts(accounts, txs):
+    """Копії рахунків з ефективними balance/debt (правило похідного балансу, див. шапку)."""
+    out = []
+    for a in accounts or []:
+        a2 = dict(a)
+        out.append(a2)
+        if a.get('mono_account_id') or a.get('id') is None or not a.get('balance_updated_at'):
+            continue
+        since = parse_ts(a['balance_updated_at'])
+        exp = inc = 0.0
+        for t in txs or []:
+            if t.get('account_id') is None or int(t['account_id']) != int(a['id']):
+                continue
+            if not parse_ts(t['created_at']) > since:
+                continue
+            if t.get('type') == 'income':
+                inc += float(t['amount'])
+            else:
+                exp += float(t['amount'])
+        if a.get('kind') == 'credit':
+            a2['debt'] = round(max(0.0, float(a['debt']) + exp - inc), 2)
+        else:
+            a2['balance'] = round(float(a['balance']) - exp + inc, 2)
+    return out
+
 
 snap = json.load(open(sys.argv[1], encoding='utf-8-sig'))
+if snap.get('account_tx') is not None:
+    snap['accounts'] = derive_accounts(snap['accounts'], snap['account_tx'])
 today = date.fromisoformat(sys.argv[2]) if len(sys.argv) > 2 else date.today()
 now = date.fromisoformat(sys.argv[3]) if len(sys.argv) > 3 else None
 cfg = snap['salary']

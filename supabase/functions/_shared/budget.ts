@@ -3,7 +3,12 @@
 // Чисті функції без залежностей: модуль запускається і в Edge Function, і в Node для звірки з Python.
 // Дати: рядки YYYY-MM-DD, обчислення в UTC, щоб часовий пояс не зсував день.
 
-export type Account = { kind?: string; balance: number | string; debt: number | string; active?: boolean };
+export type Account = {
+  id?: number; name?: string; kind?: string; balance: number | string; debt: number | string; active?: boolean;
+  mono_account_id?: string | null; balance_updated_at?: string | null;
+};
+// Операція з привʼязкою до рахунку (для похідного балансу ручних рахунків)
+export type AccTx = { account_id: number | null; type: string; amount: number | string; created_at: string };
 export type Fixed = { name: string; amount: number | string; day_of_month: number; type: string; active?: boolean; credit_ok?: boolean | null };
 export type Credit = {
   name: string; monthly_amount: number | string; payment_day: number;
@@ -24,6 +29,28 @@ export const diffDays = (a: string, b: string) => Math.round((parse(b).getTime()
 const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 const round2 = (x: number) => Math.round(x * 100) / 100;
 const num = (x: unknown) => Number(x) || 0;
+
+// Похідний баланс ручних рахунків (DESIGN.md, «Наскрізне»): для рахунку без mono_account_id
+// додаємо операції з його account_id, створені строго після balance_updated_at.
+// debit/cash: balance − витрати + доходи; credit: debt + витрати − доходи (не менше 0), balance не чіпаємо.
+// Рахунки Monobank не коригуємо: баланс з API уже містить усі операції. Без мітки часу теж не коригуємо.
+// Витрата: усе, що не 'income' (як у freeBlock). Повертає копії, вхідні обʼєкти не змінює.
+export function deriveAccounts(accounts: Account[], txs: AccTx[]): Account[] {
+  return (accounts || []).map((a) => {
+    const out = { ...a };
+    if (a.mono_account_id || a.id == null || !a.balance_updated_at) return out;
+    const since = Date.parse(a.balance_updated_at);
+    if (isNaN(since)) return out;
+    let exp = 0, inc = 0;
+    for (const t of txs || []) {
+      if (Number(t.account_id) !== Number(a.id) || !(Date.parse(t.created_at) > since)) continue;
+      if (t.type === 'income') inc += num(t.amount); else exp += num(t.amount);
+    }
+    if (a.kind === 'credit') out.debt = round2(Math.max(0, num(a.debt) + exp - inc));
+    else out.balance = round2(num(a.balance) - exp + inc);
+    return out;
+  });
+}
 
 // Робочі дні Пн-Пт у місяці (y, m) з d1 по d2 включно
 function wd(y: number, m: number, d1: number, d2: number): number {

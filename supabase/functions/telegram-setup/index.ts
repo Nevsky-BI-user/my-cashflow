@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         url: webhookUrl,
         secret_token: WEBHOOK_SECRET,
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'callback_query'],
         drop_pending_updates: true,
       }),
     });
