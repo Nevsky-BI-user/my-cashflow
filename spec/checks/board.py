@@ -13,25 +13,21 @@ def layout(page):
 
 
 def verify(page, n, tag):
-    """Перевіряє сітку з n цілей (поточна велика + решта + «+ Ціль» останньою)."""
+    """Перевіряє сітку з n цілей (поточна велика + решта); пунктирної плитки «+ Ціль» немає, кнопка в шапці сторінки."""
     # прибрати курсор: hover збільшує плитку на 1%
     page.mouse.move(2, 2)
     page.wait_for_timeout(300)
     t = layout(page)
-    check(len(t) == n + 1, f'{tag}: {len(t) - 1} плиток цілей замість {n}')
-    check(t[-1]['add'] and sum(x['add'] for x in t) == 1, f'{tag}: «+ Ціль» не остання в сітці')
+    check(len(t) == n, f'{tag}: {len(t)} плиток у сітці замість {n} цілей')
+    check(not any(x['add'] for x in t), f'{tag}: пунктирна плитка «+ Ціль» на дошці')
     big = [x for x in t if x['big']]
     small = [x for x in t if not x['big']]
-    col = small[0]['w']
     for x in small:
-        check(abs(x['w'] - col) <= TOL, f'{tag}: ширини плиток різні {[round(s["w"]) for s in small]}')
+        check(abs(x['w'] - small[0]['w']) <= TOL, f'{tag}: ширини плиток різні {[round(s["w"]) for s in small]}')
         want = x['w'] * 10 / 16
         check(abs(x['h'] - want) <= TOL, f'{tag}: висота плитки {x["h"]:.0f} замість {want:.0f} (16:10)')
     hs = [round(x['h']) for x in small]
-    check(max(hs) - min(hs) <= TOL, f'{tag}: висоти звичайних плиток різні {hs}')
-    add = t[-1]
-    goals_h = [x['h'] for x in small if not x['add']] or [add['w'] * 10 / 16]
-    check(add['h'] <= max(goals_h) + TOL, f'{tag}: «+ Ціль» вища за плитки')
+    check(not hs or max(hs) - min(hs) <= TOL, f'{tag}: висоти звичайних плиток різні {hs}')
     if big:
         b = big[0]
         if n - 1 >= 2:
@@ -39,7 +35,6 @@ def verify(page, n, tag):
             check(abs(b['h'] - want) <= TOL, f'{tag}: велика {b["h"]:.0f}px, очікували 2 ряди + gap = {want:.0f}')
         else:
             check(abs(b['w'] / b['h'] - 16 / 9) < 0.03, f'{tag}: велика не 16:9 ({b["w"]:.0f}x{b["h"]:.0f})')
-            check(abs(add['y'] - b['y']) <= TOL or n == 2, f'{tag}: «+ Ціль» не в першому ряду поруч із великою')
     # жодна плитка не накладається на іншу
     for i, a in enumerate(t):
         for c in t[i + 1:]:
@@ -88,7 +83,7 @@ def desktop(page):
     go_tab(page, 4)
     columns(page)
     both_widths(page, 3, 'goals-1280-3.jpg')
-    page.locator('.board-d .gtile-add').click()
+    page.locator('.dtitle .goals-add').click()
     page.wait_for_timeout(300)
     d = dialog(page, 'Ціль')
     d.locator("input[aria-label='Назва']").fill('Відпустка')

@@ -1,5 +1,5 @@
 # ПК-Потік: фільтри, підсумок вибірки, таблиця по днях, дровер деталей зі стрілками; телефон: мобільний список і модалка
-from helpers import SHOTS, check, dialog, go_tab, shot
+from helpers import SHOTS, check, dialog, freeze, go_tab, shot
 
 ROWS = '.p-flow.desk .flow-row.tx'
 DESCS = "[...document.querySelectorAll('.p-flow.desk .flow-row.tx .flow-desc')].map(e=>e.innerText)"
@@ -22,7 +22,7 @@ def desktop(page):
     days = page.locator('.p-flow.desk .flow-day').all_inner_texts()
     check(days and ',' in days[0], f'заголовок дня без дня тижня: {days[:1]}')
     page.mouse.move(2, 2)
-    shot(page, 'flow-1280.jpg')
+    shot(page, 'flow-full-1280.jpg')
     # пошук звужує рядки, підсумок перераховується
     _search(page, 'Сільпо')
     descs = page.evaluate(DESCS)
@@ -75,6 +75,90 @@ def desktop(page):
     check(page.locator(ROWS).count() == n0, '«Скинути фільтри» не повернув рядки')
 
 
+MON_GEN = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня']
+DAYS = "[...document.querySelectorAll('.p-flow.desk .flow-group .flow-day span:first-child')].map(e=>e.innerText)"
+CHIPS = """(()=>{const bar=document.querySelector('.p-flow.desk .flow-bar').getBoundingClientRect();const box=document.querySelector('.flow-cats');
+return {sw:box.scrollWidth,cw:box.clientWidth,bar:{l:bar.left,r:bar.right,t:bar.top,b:bar.bottom},
+chips:[...box.querySelectorAll('.flow-chip')].map(e=>{const r=e.getBoundingClientRect();return {t:e.innerText.trim(),l:r.left,r:r.right,t0:r.top,b:r.bottom,sw:e.scrollWidth,cw:e.clientWidth,h:r.height}}),
+names:BCAT.map(b=>b.name)}})()"""
+CHIPS_N = "document.querySelectorAll('.flow-cats .flow-chip:not(.flow-more)').length - 1"
+
+
+def _keys(page):
+    """Дати груп по днях у порядку показу: (місяць, день)."""
+    out = []
+    for d in page.evaluate(DAYS):
+        day, mon = d.split(',')[0].split(' ')
+        out.append((MON_GEN.index(mon), int(day)))
+    return out
+
+
+def sort_chips(page):
+    """ПК 1920x900: усі чипи категорій видно без обрізання і скролу; за замовчуванням від старіших до новіших, перемикач міняє порядок."""
+    freeze(page, '2026-10-08')
+    page.set_viewport_size({'width': 1920, 'height': 900})
+    page.wait_for_timeout(300)
+    go_tab(page, 2)
+    c = page.evaluate(CHIPS)
+    check(c['sw'] <= c['cw'] + 1, f'ряд категорій прокручується: {c["sw"]} > {c["cw"]}')
+    txt = [x['t'] for x in c['chips']]
+    check(txt and txt[0] == 'Усі', f'перший чип категорій не «Усі»: {txt[:2]}')
+    missing = [n for n in c['names'] if not any(n in t for t in txt)]
+    check(not missing, f'немає чипів категорій: {missing}')
+    b = c['bar']
+    for x in c['chips']:
+        inside = x['l'] >= b['l'] - 0.5 and x['r'] <= b['r'] + 0.5 and x['t0'] >= b['t'] - 0.5 and x['b'] <= b['b'] + 0.5
+        check(inside, f'чип поза панеллю: {x}')
+        check(x['sw'] <= x['cw'] + 1 and x['h'] <= 24.5, f'чип обрізаний або вищий за 24px: {x}')
+    check(page.locator('.flow-cats .flow-chip.on').all_inner_texts() == ['Усі'], 'без фільтра підсвічений не лише «Усі»')
+    on = page.locator('.flow-sort button[aria-pressed=true]').inner_text()
+    check('Старіші' in on, f'порядок за замовчуванням «{on}», а не «Старіші»')
+    k = _keys(page)
+    check(len(k) >= 3 and k[0] < k[-1] and k == sorted(k), f'групи не від старіших до новіших: {k}')
+    rows0 = page.evaluate(DESCS)
+    page.locator('.flow-sort button', has_text='Новіші').click()
+    page.wait_for_timeout(300)
+    k2 = _keys(page)
+    check(k2 == sorted(k2, reverse=True) and k2[0] > k2[-1], f'«Новіші» не перевернуло групи: {k2}')
+    check(sorted(page.evaluate(DESCS)) == sorted(rows0), 'після зміни порядку інший набір операцій')
+    page.locator('.flow-sort button', has_text='Старіші').click()
+    page.wait_for_timeout(300)
+    check(_keys(page) == k, 'повернення до «Старіші» не відновило порядок')
+    # вибраний чип підсвічений, «Усі» ні; «Усі» знімає фільтр
+    page.locator('.flow-cats .flow-chip', has_text='Продукти').click()
+    page.wait_for_timeout(300)
+    on = page.locator('.flow-cats .flow-chip.on').all_inner_texts()
+    check(len(on) == 1 and 'Продукти' in on[0], f'після вибору підсвічено {on}')
+    cats = page.locator(ROWS + ' .flow-cat').all_inner_texts()
+    check(cats and all('Продукти' in t for t in cats), f'фільтр «Продукти» пропустив інші категорії: {cats}')
+    page.locator('.flow-cats .flow-chip', has_text='Усі').first.click()
+    page.wait_for_timeout(300)
+    check(page.locator('.flow-cats .flow-chip.on').all_inner_texts() == ['Усі'], '«Усі» не зняло фільтр категорій')
+
+
+def more_chips(page):
+    """Понад 14 категорій (фікстура: 4 додаткові в BCAT): видно 14, «ще N» розгортає решту, «згорнути» повертає 14."""
+    extra = ''.join("{id:'x%d',name:'Тест %d',limit:100,color:'#999999',icon:'*'}," % (i, i) for i in range(4))
+    freeze(page, '2026-10-08', patch=[('const BCAT=[', 'const BCAT=[' + extra)])
+    go_tab(page, 2)
+    names = page.evaluate('BCAT.map(b=>b.name)')
+    more = page.locator('.flow-cats .flow-more')
+    check(more.count() == 1, f'категорій {len(names)}, а кнопки «ще N» немає')
+    shown = page.evaluate(CHIPS_N)
+    check(shown == 14, f'у згорнутому ряду {shown} категорій, а не 14')
+    t = more.inner_text()
+    hidden = int(t.split()[-1])
+    more.click()
+    page.wait_for_timeout(250)
+    full = page.evaluate(CHIPS_N)
+    check(full == shown + hidden, f'«{t}» розгорнуло {full} замість {shown + hidden}')
+    txt = page.locator('.flow-cats .flow-chip').all_inner_texts()
+    check(all(any(n in x for x in txt) for n in names), 'після розгортання не всі категорії')
+    more.click()
+    page.wait_for_timeout(250)
+    check(page.evaluate(CHIPS_N) == 14, '«згорнути» не повернуло 14 чипів')
+
+
 def subscription(page):
     go_tab(page, 2)
     hint = page.locator('.flow-hint')
@@ -102,5 +186,7 @@ def mobile(page):
 CHECKS = [
     ('Потік: фільтри, підсумок, дровер, стрілки', 'desktop', desktop),
     ('Потік: підказка про підписку', 'desktop', subscription),
+    ('Потік 1920: усі категорії видно, від старіших до новіших, перемикач порядку', 'desktop', sort_chips),
+    ('Потік: понад 14 категорій згорнуто з «ще N»', 'desktop', more_chips),
     ('Потік на телефоні: список і модалка', 'mobile', mobile),
 ]
