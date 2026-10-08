@@ -1,4 +1,4 @@
-# План проти фактів: новий постійний платіж із вікна «Платежі» одразу видно в «Найближчих операціях» Огляду і в Потоці
+# План проти фактів: новий постійний платіж із вікна «Платежі» одразу видно в «Найближче» Огляду і в Потоці
 from datetime import date, timedelta
 
 from helpers import check, dialog, go_tab, open_payout
@@ -15,7 +15,7 @@ def fixed_appears(page):
     end = min(d for d, _ in (open_payout(t + timedelta(days=k)) for k in range(1, 40)) if d > start)
     nxt = t + timedelta(days=1)
     day = nxt.day if nxt < end and nxt.month == t.month else t.day
-    hero0 = page.inner_text('.o-hero')
+    strip0 = page.inner_text('.o-strip')
     go_tab(page, 3)
     page.evaluate(FAB)
     page.wait_for_timeout(400)
@@ -39,8 +39,8 @@ def fixed_appears(page):
     row = page.locator('.o-next .o-next-row', has_text=NAME)
     if day > t.day:
         check('через' in row.inner_text() and 'future' in (row.get_attribute('class') or ''), 'майбутній плановий рядок не приглушений або без «через N дн.»')
-    # факти не змінились: план не входить у «Дохід / Витрати / Залишок»
-    check(page.inner_text('.o-hero') == hero0, 'плановий платіж змінив фактичні суми в герої')
+    # факти не змінились: план не входить у «Дохід / Витрати / Залишок» (герой «Вільно до виплати» від плану залежить, бо бюджет періоду мінус обовʼязкові)
+    check(page.inner_text('.o-strip') == strip0, 'плановий платіж змінив фактичні суми «Дохід / Витрати / Залишок»')
     go_tab(page, 2)
     flow = page.locator('.panel.p-flow .row-plan', has_text=NAME)
     check(flow.count() == 1, 'у Потоці немає планового рядка')

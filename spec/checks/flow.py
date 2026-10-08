@@ -38,7 +38,7 @@ def desktop(page):
     page.locator('.flow-kind button', has_text='Доходи').click()
     page.wait_for_timeout(250)
     amts = page.evaluate("[...document.querySelectorAll('.p-flow.desk .flow-row .flow-amt')].map(e=>e.style.color)")
-    check(amts and all(c == 'var(--green)' for c in amts), f'у «Доходах» не лише зелені суми: {amts}')
+    check(amts and all(c == 'var(--green-t)' for c in amts), f'у «Доходах» не лише зелені суми: {amts}')
     check('доходи +' in page.inner_text('.flow-sum'), 'підсумок без доходів')
     page.locator('.flow-kind button', has_text='Усі').click()
     page.wait_for_timeout(250)
@@ -69,7 +69,7 @@ def desktop(page):
     check(drw.count() == 0, 'Esc не закрив дровер')
     # порожній стан і «Скинути фільтри»
     _search(page, 'жодної такої операції')
-    check('За цим фільтром операцій немає' in page.inner_text('.p-flow.desk'), 'немає порожнього стану')
+    check('Нічого не знайдено' in page.inner_text('.p-flow.desk'), 'немає порожнього стану')
     page.locator('.flow-reset-big').click()
     page.wait_for_timeout(300)
     check(page.locator(ROWS).count() == n0, '«Скинути фільтри» не повернув рядки')

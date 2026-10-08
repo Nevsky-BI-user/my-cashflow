@@ -80,8 +80,8 @@ def mobile(page):
     check(row.evaluate('e=>e.scrollLeft') > 0, 'ряд карток не прокрутився')
     row.evaluate('e=>e.scrollLeft=0')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол сторінки на 375')
-    free = page.locator('.o-free').inner_text()
-    check('Вільно до виплати' in free or 'Дефіцит' in free, f'рядок «Вільно» не знайдено: {free!r}')
+    free = page.locator('.o-free').inner_text().lower()  # підпис героя у верхньому регістрі (text-transform)
+    check('вільно до виплати' in free, f'герой «Вільно до виплати» не знайдено: {free!r}')
     shot(page, 'ov-375.jpg')
 
 
