@@ -5,9 +5,10 @@
 #   не кредитних рахунків; cashNow = ці кошти - білі з датою в [зараз; кінець періоду);
 #   freeNow = max(0, min(varPool - spent, cashNow)). credit_ok за замовчуванням: fixed false,
 #   credits true, якщо source містить 'privat'.
-# Вхід: JSON {accounts, fixed, credits, salary, spent?, account_tx?} (знімок БД; spent: витрати періоду, за замовчуванням 0).
+# Вхід: JSON {accounts, fixed, credits, salary, spent?, account_tx?} (знімок БД; spent: витрати періоду, за замовчуванням 0;
+#   accounts[].min_spend, min_spend_fee: правило мінімальних витрат за місяць, п. 11).
 # Похідний баланс ручних рахунків (як deriveAccounts у _shared/budget.ts): якщо є account_tx
-#   (список {account_id, type, amount, created_at}), рахунки без mono_account_id з id і balance_updated_at
+#   (список {account_id, type, amount, created_at, date?}), рахунки без mono_account_id з id і balance_updated_at
 #   отримують операції, створені строго після balance_updated_at: debit/cash balance - витрати + доходи,
 #   credit debt + витрати - доходи (не менше 0). Без account_tx знімок рахується як раніше.
 # Запуск: PYTHONUTF8=1 python scripts/budget_pool.py <snapshot.json> [YYYY-MM-DD сьогодні] [YYYY-MM-DD зараз]
@@ -42,6 +43,12 @@
 #                з датою в попередньому місяці, що ще не настала; 0, якщо події у вікні немає
 #   cashAtPayout залишок на d1 = max(0, cashNow - (varPoolCur - spent)) (п. 8)
 #   varPoolNext  max(0, min(planNext, cashAtPayout + виплата d1 - whiteNext - cardRepayNext)) (п. 8)
+#   minSpend     правило мінімальних витрат (п. 11): для активних рахунків з min_spend > 0 список
+#                {accountId, month, spent, min, fee, left, metOn?}; spent = Σ витрат (type = 'expense') account_tx
+#                з цим account_id і датою (поле date, без нього перші 10 знаків created_at) у місяці «зараз»;
+#                left = max(0, min - spent); metOn: дата операції, на якій накопичена сума (порядок date, created_at,
+#                amount) досягла min. Якщо left > 0, 1-го числа наступного місяця списується fee: подія «біла»,
+#                входить у whiteDue (feeNow), якщо 1-ше в [зараз; d1), і у whiteNext (feeNext), якщо в [d1; d2)
 #   Старі поля payout, end, obligations, oblSum, oblWhite, pool0, savings, ... лишаються без змін.
 import calendar, json, sys
 from datetime import date, datetime, timedelta
@@ -231,6 +238,52 @@ def card_repay(start, end):
 
 card_repay_now = card_repay(max(t_now, period[0]), d1)
 white_due += card_repay_now
+
+
+def tx_day(t):
+    """Дата операції: поле date, без нього перші 10 знаків created_at."""
+    return str(t.get('date') or t.get('created_at') or '')[:10]
+
+
+def min_spend_rows():
+    """п. 11: поріг мінімальних витрат за календарний місяць t_now для рахунків з min_spend > 0."""
+    month = t_now.isoformat()[:7]
+    rows = []
+    for a in ACCS:
+        mn = float(a.get('min_spend') or 0)
+        if mn <= 0 or a.get('id') is None:
+            continue
+        # id порівнюється рядком: у демо-знімку id рахунків текстові (l1), у БД числові
+        txs = [t for t in snap.get('account_tx') or [] if t.get('account_id') is not None and str(t['account_id']) == str(a['id'])
+               and t.get('type') == 'expense' and tx_day(t)[:7] == month]
+        txs.sort(key=lambda t: (tx_day(t), str(t.get('created_at') or ''), float(t['amount'])))
+        cum, met = 0.0, None
+        for t in txs:
+            cum += float(t['amount'])
+            if met is None and cum >= mn - 1e-9:
+                met = tx_day(t)
+        aid = int(a['id']) if str(a['id']).isdigit() else a['id']
+        row = {'accountId': aid, 'month': month, 'spent': round(cum, 2), 'min': mn,
+               'fee': float(a.get('min_spend_fee') or 0), 'left': round(max(0.0, mn - cum), 2)}
+        if met:
+            row['metOn'] = met
+        rows.append(row)
+    return rows
+
+
+min_spend = min_spend_rows()
+fee_date = date(t_now.year + (t_now.month == 12), t_now.month % 12 + 1, 1)  # найближче 1-ше строго після t_now
+
+
+def min_spend_fee(start, end):
+    """Сума комісій за недосягнутий поріг, якщо 1-ше наступного місяця в [start; end)."""
+    if not (start <= fee_date < end):
+        return 0.0
+    return round(sum(r['fee'] for r in min_spend if r['left'] > 0 and r['fee'] > 0), 2)
+
+
+fee_now = min_spend_fee(max(t_now, period[0]), d1)
+white_due += fee_now
 cash_now = cash_own + unassigned - white_due
 plan_cur = var_pool
 var_pool_cur = min(plan_cur, max(0.0, cash_now) + spent)  # п. 5
@@ -251,11 +304,16 @@ n_pool0 = next_payout[2] - n_oblsum - deficit
 n_savings = round(max(0.0, n_pool0) * pct / 100, 2)
 plan_next = max(0.0, n_pool0 - n_savings)
 white_next = sum(o[2] for o in obl_n if not o[3] and o[2] > 0)
+fee_next = min_spend_fee(d1, d2)
+white_next += fee_next
 
 
 card_repay_next = card_repay(d1, d2)
 cash_at_payout = max(0.0, cash_now - (var_pool_cur - spent))
 var_pool_next = max(0.0, min(plan_next, cash_at_payout + next_payout[2] - white_next - card_repay_next))
+for r in min_spend:
+    print(f"мін. витрати рахунку {r['accountId']} за {r['month']}: {r['spent']:.2f} з {r['min']:.2f}, лишилось {r['left']:.2f}"
+          + (f", досягнуто {r['metOn']}" if r.get('metOn') else f", інакше комісія {r['fee']:.2f} {fee_date}"))
 print(f"наступний період {d1}..{d2}: плановий {plan_next:.2f}; білі {white_next:.2f}; погашення кредитки {card_repay_next:.2f}; "
       f"залишок на {d1} {cash_at_payout:.2f}; бюджет {var_pool_next:.2f}")
 # машинний рядок для spec/checks/budget.py
@@ -269,4 +327,5 @@ print('JSON ' + json.dumps({
     'perDay': per_day, 'shortage': shortage,
     'nextPayout': {'date': str(next_payout[0]), 'kind': 'advance' if next_payout[1] == 'аванс' else 'salary', 'amount': next_payout[2]},
     'planNext': plan_next, 'whiteNext': white_next, 'cardRepayNext': card_repay_next,
-    'cardRepayNow': card_repay_now, 'cashAtPayout': cash_at_payout, 'varPoolNext': var_pool_next}, ensure_ascii=False))
+    'cardRepayNow': card_repay_now, 'cashAtPayout': cash_at_payout, 'varPoolNext': var_pool_next,
+    'minSpend': min_spend, 'feeNow': fee_now, 'feeNext': fee_next}, ensure_ascii=False))

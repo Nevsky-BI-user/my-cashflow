@@ -6,10 +6,14 @@
 export type Account = {
   id?: number; name?: string; kind?: string; balance: number | string; debt: number | string; active?: boolean;
   mono_account_id?: string | null; balance_updated_at?: string | null; debt_month?: string | null;
+  min_spend?: number | string | null; min_spend_fee?: number | string | null;
 };
 // Операція з привʼязкою до рахунку (для похідного балансу ручних рахунків)
 // source: 'mono' | 'telegram' | 'manual' (потрібен лише для unassignedAdj: операції Monobank без рахунку не рахуємо)
-export type AccTx = { account_id: number | null; type: string; amount: number | string; created_at: string; source?: string | null };
+// date: дата операції (YYYY-MM-DD), потрібна для порогу мінімальних витрат (без неї перші 10 знаків created_at)
+export type AccTx = { account_id: number | null; type: string; amount: number | string; created_at: string; source?: string | null; date?: string | null };
+// Поріг мінімальних витрат рахунку за календарний місяць (DESIGN.md, п. 11)
+export type MinSpendRow = { accountId: number; month: string; spent: number; min: number; fee: number; left: number; metOn?: string };
 export type Fixed = { name: string; amount: number | string; day_of_month: number; type: string; active?: boolean; credit_ok?: boolean | null };
 export type Credit = {
   name: string; monthly_amount: number | string; payment_day: number;
@@ -69,6 +73,48 @@ export function unassignedAdj(txs: AccTx[], since?: number): number {
     s += t.type === 'income' ? num(t.amount) : -num(t.amount);
   }
   return round2(s);
+}
+
+// Дата операції: поле date, без нього перші 10 знаків created_at (як tx_day у budget_pool.py)
+const txDay = (t: AccTx) => String(t.date || t.created_at || '').slice(0, 10);
+
+// Мінімальні витрати за місяць (DESIGN.md, п. 11): для активних рахунків з min_spend > 0 сума витрат
+// (type = 'expense' строго) з цим account_id і датою в календарному місяці today. left = max(0, min − spent);
+// metOn: дата операції, на якій накопичена сума (порядок date, created_at, amount) досягла порогу.
+export function minSpendStatus(accounts: Account[], txs: AccTx[], today: string): MinSpendRow[] {
+  const month = today.slice(0, 7);
+  const out: MinSpendRow[] = [];
+  for (const a of accounts || []) {
+    const mn = num(a.min_spend);
+    if (a.active === false || mn <= 0 || a.id == null) continue;
+    const list = (txs || []).filter((t) => t.account_id != null && Number(t.account_id) === Number(a.id) &&
+      t.type === 'expense' && txDay(t).slice(0, 7) === month);
+    const cmp = (u: string, v: string) => (u < v ? -1 : u > v ? 1 : 0); // порівняння за кодами, як у Python
+    list.sort((x, y) => cmp(txDay(x), txDay(y)) || cmp(String(x.created_at || ''), String(y.created_at || '')) ||
+      num(x.amount) - num(y.amount));
+    let cum = 0; let met: string | undefined;
+    for (const t of list) {
+      cum += num(t.amount);
+      if (met == null && cum >= mn - 1e-9) met = txDay(t);
+    }
+    const row: MinSpendRow = { accountId: Number(a.id), month, spent: round2(cum), min: mn, fee: num(a.min_spend_fee), left: round2(Math.max(0, mn - cum)) };
+    if (met) row.metOn = met;
+    out.push(row);
+  }
+  return out;
+}
+
+// Найближче 1-ше число строго після today: дата списання комісії за недосягнутий поріг поточного місяця
+export function minSpendFeeDate(today: string): string {
+  const t = parse(today);
+  return iso(mk(t.getUTCFullYear(), t.getUTCMonth() + 2, 1));
+}
+
+// Сума комісій у вікні [start; end): подія 1-го числа наступного місяця, лише поки поріг не досягнуто
+export function minSpendFee(rows: MinSpendRow[], today: string, start: string, end: string): number {
+  const d = minSpendFeeDate(today);
+  if (!(start <= d && d < end)) return 0;
+  return round2((rows || []).filter((r) => r.left > 0 && r.fee > 0).reduce((s, r) => s + r.fee, 0));
 }
 
 // Робочі дні Пн-Пт у місяці (y, m) з d1 по d2 включно
@@ -205,8 +251,9 @@ export function periodBudget(snap: Snapshot, today: string) {
 
 // «Вільно до виплати» на today: поточний період [остання виплата; наступна), spent: витрати з останньої виплати.
 // unassigned: знакова поправка від unassignedAdj (операції без рахунку), додається до власних (п. 9).
+// minSpend: рядки minSpendStatus (п. 11); комісія за недосягнутий поріг біла: whiteSum або whiteNext за датою 1-го.
 // Рахунки в snap мають бути вже ефективні (deriveAccounts).
-export function freeToPayout(snap: Snapshot, today: string, spent: number, unassigned = 0) {
+export function freeToPayout(snap: Snapshot, today: string, spent: number, unassigned = 0, minSpend: MinSpendRow[] = []) {
   const last = lastPayout(snap.salary, today);
   const pb = periodBudget(snap, addDays(last.date, -1)); // як periodBudget(pbOpen − 1) у застосунку
   const fut = payouts(snap.salary, today, 0, 3).filter((p) => p.date > today);
@@ -219,7 +266,8 @@ export function freeToPayout(snap: Snapshot, today: string, spent: number, unass
   const white = obligations(snap, today, next.date).filter((o) => !o.credit_ok && o.amount > 0);
   // Погашення кредитки 25-го в [today; next) платиться з дебетових коштів, тож це теж «біле» (п. 10)
   const cardRepayNow = cardRepay(snap, today, today, next.date);
-  const whiteSum = white.reduce((s, o) => s + o.amount, 0) + cardRepayNow;
+  const feeNow = minSpendFee(minSpend, today, today, next.date);
+  const whiteSum = white.reduce((s, o) => s + o.amount, 0) + cardRepayNow + feeNow;
   const cashNow = ownDebit + unassigned - whiteSum;
   const planCur = pb.varPool;
   const budgetCur = capBudget(planCur, cashNow, spent); // п. 5
@@ -230,8 +278,9 @@ export function freeToPayout(snap: Snapshot, today: string, spent: number, unass
   const perDay = daysLeft > 0 ? freeNow / daysLeft : 0; // п. 7
   // Наступний період [next; after) (п. 8): залишок на виплату + виплата − білі − погашення кредитки, не більше планового
   const pbn = periodBudget(snap, addDays(next.date, -1));
+  const feeNext = minSpendFee(minSpend, today, next.date, after.date);
   const whiteNext = obligations(snap, next.date, after.date).filter((o) => !o.credit_ok && o.amount > 0)
-    .reduce((s, o) => s + o.amount, 0);
+    .reduce((s, o) => s + o.amount, 0) + feeNext;
   const cardRepayNext = cardRepay(snap, today, next.date, after.date);
   const cashAtPayout = Math.max(0, cashNow - (budgetCur - spent));
   const varPoolNext = Math.max(0, Math.min(pbn.varPool, cashAtPayout + next.amount - whiteNext - cardRepayNext));
@@ -240,5 +289,6 @@ export function freeToPayout(snap: Snapshot, today: string, spent: number, unass
     spent, ownDebit, unassigned, white, whiteSum, cardRepayNow, cashNow, freeRaw, freeNow, daysLeft, perDay,
     planCur, varPoolCur: budgetCur, shortage,
     planNext: pbn.varPool, whiteNext, cardRepayNext, varPoolNext, cashAtPayout,
+    minSpend, feeNow, feeNext,
   };
 }

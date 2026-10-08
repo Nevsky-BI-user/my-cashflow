@@ -3,14 +3,17 @@
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { deriveAccounts, freeToPayout, lastPayout, unassignedAdj, type AccTx, type Snapshot } from '../_shared/budget.ts';
+import { deriveAccounts, freeToPayout, lastPayout, minSpendStatus, unassignedAdj, type AccTx, type Snapshot } from '../_shared/budget.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
+// Сильніша модель: одна повторна спроба для підозрілого результату Haiku (див. receiptSuspect)
+const RECEIPT_MODEL_STRONG = 'claude-sonnet-5-5';
 const RECEIPT_SYSTEM =
   'Розпізнай чек. Відповідай ТІЛЬКИ JSON без пояснень: ' +
   '{"has_total": true або false, "amount": число або null, "items_sum": число або null, ' +
-  '"description": назва магазину або 2-3 слова, "date": "YYYY-MM-DD" або null}. ' +
+  '"description": назва магазину або 2-3 слова, "date": "YYYY-MM-DD" або null, "readable": "good" або "poor"}. ' +
+  'readable = "poor", якщо частина цифр розмита, обрізана або нечітка, інакше "good". ' +
   'has_total = true ЛИШЕ коли на фото є рядок підсумку чека (СУМА, До сплати, Разом, Всього, TOTAL), ' +
   'і тоді amount = саме це число з рядка підсумку. ' +
   'НІКОЛИ не сумуй позиції в amount: якщо рядка підсумку немає, повертай has_total: false, amount: null, ' +
@@ -335,8 +338,8 @@ async function downloadTgFile(fileId: string): Promise<Uint8Array | null> {
   }
 }
 
-// Claude vision: повертає розібраний JSON або null при помилці API
-async function recognizeReceipt(b64s: string[]): Promise<any | null> {
+// Claude vision однією моделлю: повертає розібраний JSON або null при помилці API
+async function askReceipt(b64s: string[], model: string): Promise<any | null> {
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -346,7 +349,7 @@ async function recognizeReceipt(b64s: string[]): Promise<any | null> {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: RECEIPT_MODEL,
+        model,
         max_tokens: 400,
         system: RECEIPT_SYSTEM,
         messages: [{
@@ -379,6 +382,37 @@ async function recognizeReceipt(b64s: string[]): Promise<any | null> {
     console.error('claude fetch error:', e);
     return null;
   }
+}
+
+// Причина перечитати чек сильнішою моделлю або null: помилка чи немає жодної суми, нечітке фото,
+// підсумок розходиться із сумою позицій більше ніж на max(1 ₴, 2 %), дата з чека не пройшла б receiptDate як є
+function receiptSuspect(r: any): string | null {
+  if (!r || r.error) return 'error';
+  const amount = posNum(r.amount);
+  const items = posNum(r.items_sum);
+  if (amount === null && items === null) return 'no_amount';
+  if (r.readable === 'poor') return 'poor';
+  if (r.has_total === true && amount !== null && items !== null && Math.abs(items - amount) > Math.max(1, amount * 0.02)) {
+    return 'sum_mismatch';
+  }
+  if (r.date != null && receiptDate(r.date) !== r.date) return 'date';
+  return null;
+}
+
+// Відповідь придатна: є підсумок або (немає підсумку і є сума позицій)
+function receiptValid(r: any): boolean {
+  return !!r && !r.error && (posNum(r.amount) !== null || (r.has_total === false && posNum(r.items_sum) !== null));
+}
+
+// Каскад: Haiku; підозрілий результат одна спроба Sonnet на тих самих фото; беремо Sonnet, якщо валідний.
+// Діє на кожен виклик, зокрема для частин довгого чека
+async function recognizeReceipt(b64s: string[]): Promise<any | null> {
+  const first = await askReceipt(b64s, RECEIPT_MODEL);
+  const reason = receiptSuspect(first);
+  if (!reason) return first;
+  console.log('receipt escalate', reason);
+  const strong = await askReceipt(b64s, RECEIPT_MODEL_STRONG);
+  return receiptValid(strong) ? strong : first;
 }
 
 // Стан збирання частин довгого чека (profiles.telegram_pending з kind: 'receipt')
@@ -711,12 +745,15 @@ async function balance(chatId: number) {
   return reply(chatId, free ? month + '\n\n' + free : month);
 }
 
-const fmtInt = (n: number) => new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 0 }).format(Math.round(n)) + ' ₴';
+const fmtNum = (n: number) => new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 0 }).format(Math.round(n));
+const fmtInt = (n: number) => fmtNum(n) + ' ₴';
+// Місяць після «за» (знахідний відмінок збігається з називним)
+const MONTH_ACC = ['січень', 'лютий', 'березень', 'квітень', 'травень', 'червень', 'липень', 'серпень', 'вересень', 'жовтень', 'листопад', 'грудень'];
 
 // «Вільно до виплати» за правилом білої і кредитної картки (DESIGN.md), спільна логіка в _shared/budget.ts
 async function freeBlock(today: string): Promise<string> {
   const [acc, fix, cred, sal] = await Promise.all([
-    sb.from('accounts').select('id,name,kind,balance,debt,active,mono_account_id,balance_updated_at')
+    sb.from('accounts').select('id,name,kind,balance,debt,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
     sb.from('fixed_payments').select('name,amount,day_of_month,type,active,credit_ok').eq('active', true),
     sb.from('credits').select('name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
@@ -726,16 +763,16 @@ async function freeBlock(today: string): Promise<string> {
   // Похідний баланс ручних рахунків: операції з account_id після balance_updated_at (deriveAccounts)
   const manual = (acc.data || []).filter((a) => !a.mono_account_id && a.balance_updated_at);
   const since = Math.min(...manual.map((a) => Date.parse(a.balance_updated_at)).filter((t) => !isNaN(t)));
-  let accTx: AccTx[] = [];
-  if (isFinite(since)) {
-    const { data: at, error: atErr } = await sb.from('transactions')
-      .select('account_id,type,amount,created_at')
-      .not('account_id', 'is', null)
-      .gte('created_at', new Date(since).toISOString());
-    if (atErr) throw new Error('account tx lookup failed');
-    accTx = (at || []) as AccTx[];
-  }
+  // Той самий запит дає й витрати поточного місяця для порогу мінімальних витрат (п. 11): операції місяця,
+  // записані до звірки балансу, теж мають рахуватись. Зайві рядки deriveAccounts відсіює міткою created_at.
+  const monthStart = today.slice(0, 7) + '-01';
+  let atQ = sb.from('transactions').select('account_id,type,amount,created_at,date').not('account_id', 'is', null);
+  atQ = isFinite(since) ? atQ.or(`created_at.gte."${new Date(since).toISOString()}",date.gte.${monthStart}`) : atQ.gte('date', monthStart);
+  const { data: at, error: atErr } = await atQ;
+  if (atErr) throw new Error('account tx lookup failed');
+  const accTx = (at || []) as AccTx[];
   const accounts = deriveAccounts(acc.data || [], accTx);
+  const minSpend = minSpendStatus(accounts, accTx.filter((t) => String(t.date || '') <= today), today);
   // Операції без рахунку (п. 9): віднімаються від власних, доки не розподілені; ті, що створені до мітки балансу, не рахуємо.
   // Нагадування: витрати з бота й застосунку без рахунку за 60 днів
   const lowerMs = Math.min(isFinite(since) ? since : Infinity, Date.now() - 60 * 86_400_000);
@@ -762,7 +799,7 @@ async function freeBlock(today: string): Promise<string> {
   if (txErr) throw new Error('spent lookup failed');
   const spent = (tx || []).reduce((s, t) => s + (Number(t.amount) || 0), 0);
 
-  const r = freeToPayout(snap, today, spent, unassigned);
+  const r = freeToPayout(snap, today, spent, unassigned, minSpend);
   const kind = r.nextPayout.kind === 'advance' ? 'аванс' : 'зарплата';
   const due = ddmm(r.nextPayout.date);
   const accLine = 'Рахунки: ' + accounts
@@ -770,6 +807,14 @@ async function freeBlock(today: string): Promise<string> {
     .join(' · ');
   let out = accLine + '\n' + `Вільно до виплати: ${fmtInt(r.freeNow)} (${kind} ${due}) · на день ${fmtInt(r.perDay)}`;
   if (r.shortage > 0) out += `\nБракує ${fmtInt(r.shortage)} на білі платежі до ${due}`;
+  // Поріг мінімальних витрат за місяць (п. 11): «Ощадбанк: витрачено 1 763 з 15 000 за жовтень, ще 13 237 до 31.10, інакше комісія 400 ₴»
+  for (const m of r.minSpend) {
+    const a = accounts.find((x) => Number(x.id) === m.accountId);
+    const [y, mo] = m.month.split('-').map(Number);
+    const end = `${String(new Date(Date.UTC(y, mo, 0)).getUTCDate()).padStart(2, '0')}.${String(mo).padStart(2, '0')}`;
+    out += `\n${a?.name || 'Рахунок'}: витрачено ${fmtNum(m.spent)} з ${fmtNum(m.min)} за ${MONTH_ACC[mo - 1]}, ` +
+      (m.left > 0 ? `ще ${fmtNum(m.left)} до ${end}, інакше комісія ${fmtInt(m.fee)}` : `поріг ${fmtNum(m.min)} досягнуто`);
+  }
   if (lost.length) {
     out += `\n⚠️ Без рахунку: ${lost.length} ${lost.length === 1 ? 'операція' : lost.length < 5 ? 'операції' : 'операцій'} ` +
       `на ${fmtInt(lostSum)}, виберіть рахунок під повідомленнями або в застосунку`;
