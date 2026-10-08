@@ -3,7 +3,7 @@
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { deriveAccounts, freeToPayout, lastPayout, type AccTx, type Snapshot } from '../_shared/budget.ts';
+import { deriveAccounts, freeToPayout, lastPayout, unassignedAdj, type AccTx, type Snapshot } from '../_shared/budget.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -51,9 +51,9 @@ const HELP =
   '/yes: підтвердити дохід, схожий на Monobank\n' +
   '/balance: баланс за місяць\n' +
   '/last: останні 5 записів\n\n' +
-  'Рахунок: слово ощад, приват, моно або готівка на початку чи в кінці опису (для фото: у підписі), ' +
-  'наприклад «250 кава приват». Без слова: рахунок, куди приходить зарплата. ' +
-  'Кнопки під відповіддю змінюють рахунок.';
+  'Рахунок: слово ощад, приват або готівка на початку чи в кінці опису (для фото: у підписі), ' +
+  'наприклад «250 кава приват». Без слова витрата лишається без рахунку, бот спитає кнопками; ' +
+  'дохід іде на рахунок зарплати. Операції Monobank приходять самі.';
 
 // Відповідь у чат; помилки Telegram не валять обробку апдейту
 // Постійна клавіатура під полем вводу: кнопки шлють звичайний текст, який роутер розуміє
@@ -91,7 +91,9 @@ async function tgCall(method: string, body: Record<string, unknown>) {
   }
 }
 
-// Рахунки операцій. Сімʼя спільна: активні рахунки обох без фільтра user_id
+// Рахунки операцій. Сімʼя спільна: активні рахунки обох без фільтра user_id.
+// Рахунки Monobank (mono_account_id) для ручних операцій не пропонуються: їхні операції приходять з банку самі,
+// інакше витрата задвоїться. Тому вони не потрапляють ні в слова-ключі, ні в кнопки, ні в callback
 type Acc = { id: number; name: string; bank: string | null; kind: string; is_salary: boolean | null };
 const BANK_WORDS: Record<string, string> = {
   'ощад': 'oschad', 'oschad': 'oschad', 'приват': 'privat', 'privat': 'privat',
@@ -102,13 +104,15 @@ async function activeAccounts(): Promise<Acc[]> {
   const { data, error } = await sb.from('accounts')
     .select('id,name,bank,kind,is_salary')
     .eq('active', true)
+    .is('mono_account_id', null)
     .order('sort_order', { ascending: true })
     .order('id', { ascending: true });
   if (error) console.error('accounts lookup error:', error);
   return (data || []) as Acc[];
 }
 
-// За замовчуванням: рахунок, куди приходить зарплата, далі перший активний дебетовий
+// Лише для доходів: рахунок, куди приходить зарплата, далі перший активний дебетовий.
+// Для витрат рахунок за замовчуванням не підставляється (account_id = null, бот питає кнопками)
 const defaultAccount = (accs: Acc[]): Acc | null =>
   accs.find((a) => a.is_salary === true) || accs.find((a) => a.kind === 'debit') || null;
 
@@ -138,7 +142,7 @@ function pickAccount(text: string, accs: Acc[], allowWhole: boolean): { acc: Acc
       }
     }
   }
-  return { acc: defaultAccount(accs), rest: text.trim(), matched: false };
+  return { acc: null, rest: text.trim(), matched: false };
 }
 
 async function resolveAccount(hint: string, allowWhole: boolean) {
@@ -154,7 +158,7 @@ type TxView = { amount: number | string; type: string; description: string | nul
 function txText(t: TxView, accName: string | null): string {
   const parts = t.receipt_parts && t.receipt_parts.length > 1 ? ` (чек із ${t.receipt_parts.length} фото)` : '';
   return `✅ ${t.type === 'income' ? 'Дохід' : 'Витрата'}: ${fmtMoney(Number(t.amount))}, ${t.description || ''}${parts}` +
-    ` · ${accName || 'без рахунку'}`;
+    ` · ${accName || 'рахунок не вибрано. З якого рахунку?'}`;
 }
 
 // Inline-кнопки інших активних рахунків: callback_data acc:<txId>:<accountId> (до 64 байт)
@@ -457,7 +461,7 @@ async function addReceipt(
   let accountId: number | null;
   if (cap?.matched) accountId = cap.acc?.id ?? null;
   else if (wasReceipt && pending0.account_id !== undefined) accountId = pending0.account_id ?? null;
-  else accountId = defaultAccount(accs)?.id ?? null;
+  else accountId = null; // чек це витрата: рахунок за замовчуванням не підставляємо
   const accountName = accs.find((a) => a.id === accountId)?.name ?? (wasReceipt ? pending0.account_name ?? null : null);
 
   if (total === null) {
@@ -570,8 +574,8 @@ async function findMonoIncome(amount: number, date: string): Promise<{ amount: n
 // Повертає true, якщо запис у базі (вставлено або вже був по source_id)
 async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = false): Promise<boolean> {
   const accs = await activeAccounts();
-  // pending, збережений до появи рахунків, отримує рахунок за замовчуванням
-  const accountId = p.account_id !== undefined ? p.account_id ?? null : defaultAccount(accs)?.id ?? null;
+  // pending, збережений до появи рахунків: дохід іде на рахунок зарплати, витрата без рахунку
+  const accountId = p.account_id !== undefined ? p.account_id ?? null : p.type === 'income' ? defaultAccount(accs)?.id ?? null : null;
   const { data: ins, error } = await sb.from('transactions').insert({
     user_id: userId,
     amount: p.amount,
@@ -600,9 +604,11 @@ async function addTx(chatId: number, userId: string, updateId: number, type: 'in
   if (await isDuplicate(sourceId)) return;
   // Слово-ключ рахунку на початку чи в кінці опису вирізається з нього
   const r = await resolveAccount(desc, false);
+  // Дохід без слова-ключа іде на рахунок зарплати; витрата без нього лишається без рахунку (кнопки під відповіддю)
+  const acc = r.acc ?? (type === 'income' ? defaultAccount(r.accs) : null);
   const p: Pending = {
     amount, type, description: r.rest, date: todayKyiv(), source_id: sourceId,
-    account_id: r.acc?.id ?? null, account_name: r.acc?.name ?? null,
+    account_id: acc?.id ?? null, account_name: acc?.name ?? null,
   };
 
   // Дохід міг уже прийти з Monobank: не вставляємо, просимо підтвердження /yes
@@ -642,7 +648,7 @@ async function confirmPending(chatId: number, userId: string) {
       return reply(chatId, 'У цієї частини чека немає суми. Надішліть фото з підсумком або /no.');
     }
     const accs = await activeAccounts();
-    const rpAccount = rp.account_id !== undefined ? rp.account_id ?? null : defaultAccount(accs)?.id ?? null;
+    const rpAccount = rp.account_id !== undefined ? rp.account_id ?? null : null;
     const { data: ins, error: rErr } = await sb.from('transactions').insert({
       user_id: userId,
       amount: rp.items_sum,
@@ -727,6 +733,19 @@ async function freeBlock(today: string): Promise<string> {
     accTx = (at || []) as AccTx[];
   }
   const accounts = deriveAccounts(acc.data || [], accTx);
+  // Операції без рахунку (п. 9): віднімаються від власних, доки не розподілені; ті, що створені до мітки балансу, не рахуємо.
+  // Нагадування: витрати з бота й застосунку без рахунку за 60 днів
+  const lowerMs = Math.min(isFinite(since) ? since : Infinity, Date.now() - 60 * 86_400_000);
+  const { data: ua, error: uaErr } = await sb.from('transactions')
+    .select('account_id,type,amount,created_at,source,date')
+    .is('account_id', null)
+    .gte('created_at', new Date(lowerMs).toISOString());
+  if (uaErr) throw new Error('unassigned lookup failed');
+  const unTx = (ua || []) as (AccTx & { date: string })[];
+  const unassigned = isFinite(since) ? unassignedAdj(unTx, since) : 0;
+  const from60 = shiftDate(today, -60);
+  const lost = unTx.filter((t) => t.type !== 'income' && (t.source === 'telegram' || t.source === 'manual') && t.date >= from60);
+  const lostSum = lost.reduce((s, t) => s + (Number(t.amount) || 0), 0);
   const snap: Snapshot = { accounts, fixed: fix.data || [], credits: cred.data || [], salary: sal.data };
 
   // Витрати поточного періоду: від останньої виплати до сьогодні (як у застосунку)
@@ -740,14 +759,18 @@ async function freeBlock(today: string): Promise<string> {
   if (txErr) throw new Error('spent lookup failed');
   const spent = (tx || []).reduce((s, t) => s + (Number(t.amount) || 0), 0);
 
-  const r = freeToPayout(snap, today, spent);
+  const r = freeToPayout(snap, today, spent, unassigned);
   const kind = r.nextPayout.kind === 'advance' ? 'аванс' : 'зарплата';
   const due = ddmm(r.nextPayout.date);
   const accLine = 'Рахунки: ' + accounts
     .map((a) => `${a.name} ${a.kind === 'credit' ? 'борг ' + fmtInt(Number(a.debt) || 0) : fmtInt(Number(a.balance) || 0)}`)
     .join(' · ');
   let out = accLine + '\n' + `Вільно до виплати: ${fmtInt(r.freeNow)} (${kind} ${due}) · на день ${fmtInt(r.perDay)}`;
-  if (r.cashNow < 0) out += `\nПотрібно ${fmtInt(-r.cashNow)} плюсових на білі платежі до ${due}`;
+  if (r.shortage > 0) out += `\nБракує ${fmtInt(r.shortage)} на білі платежі до ${due}`;
+  if (lost.length) {
+    out += `\n⚠️ Без рахунку: ${lost.length} ${lost.length === 1 ? 'операція' : lost.length < 5 ? 'операції' : 'операцій'} ` +
+      `на ${fmtInt(lostSum)}, виберіть рахунок під повідомленнями або в застосунку`;
+  }
   return out;
 }
 

@@ -5,10 +5,11 @@
 
 export type Account = {
   id?: number; name?: string; kind?: string; balance: number | string; debt: number | string; active?: boolean;
-  mono_account_id?: string | null; balance_updated_at?: string | null;
+  mono_account_id?: string | null; balance_updated_at?: string | null; debt_month?: string | null;
 };
 // Операція з привʼязкою до рахунку (для похідного балансу ручних рахунків)
-export type AccTx = { account_id: number | null; type: string; amount: number | string; created_at: string };
+// source: 'mono' | 'telegram' | 'manual' (потрібен лише для unassignedAdj: операції Monobank без рахунку не рахуємо)
+export type AccTx = { account_id: number | null; type: string; amount: number | string; created_at: string; source?: string | null };
 export type Fixed = { name: string; amount: number | string; day_of_month: number; type: string; active?: boolean; credit_ok?: boolean | null };
 export type Credit = {
   name: string; monthly_amount: number | string; payment_day: number;
@@ -50,6 +51,24 @@ export function deriveAccounts(accounts: Account[], txs: AccTx[]): Account[] {
     else out.balance = round2(num(a.balance) - exp + inc);
     return out;
   });
+}
+
+// Бюджет розпочатого періоду, обмежений готівкою (DESIGN.md, п. 5):
+// min(плановий, max(0, cashNow) + витрачено). Змінює сторінку «Бюджет», а не «Вільно до виплати».
+export const capBudget = (plan: number, cashNow: number, spent: number): number =>
+  Math.min(plan, Math.max(0, cashNow) + spent);
+
+// Операції без рахунку (DESIGN.md, п. 9): дохід плюс, витрата мінус; повертає знакову поправку до власних.
+// Операції Monobank не рахуємо (баланс з API уже їх містить). since (мс): лише створені строго після цієї мітки
+// (мінімальний balance_updated_at ручних рахунків), щоб не віднімати старі.
+export function unassignedAdj(txs: AccTx[], since?: number): number {
+  let s = 0;
+  for (const t of txs || []) {
+    if (t.account_id != null || t.source === 'mono') continue;
+    if (since != null && !(Date.parse(t.created_at) > since)) continue;
+    s += t.type === 'income' ? num(t.amount) : -num(t.amount);
+  }
+  return round2(s);
 }
 
 // Робочі дні Пн-Пт у місяці (y, m) з d1 по d2 включно
@@ -131,6 +150,41 @@ function obligations(snap: Snapshot, start: string, end: string): Obligation[] {
   return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
+// Погашення кредитки у вікні [start; end) (DESIGN.md, п. 10): подія 25-го числа місяця E (у короткому місяці останній день)
+// = борг, утворений до кінця місяця M = E-1: debt_eff кредитних рахунків із debt_month раніше за місяць E
+// (лише для найближчої події від today, бо далі борг уже погашений) плюс кредитні обовʼязкові (credit_ok, витрати)
+// з датою в місяці M, що ще не настала (date >= today).
+export function cardRepay(snap: Snapshot, today: string, start: string, end: string): number {
+  const ev = (y: number, m: number) => iso(mk(y, m, Math.min(25, lastDay(y, m))));
+  const t = parse(today);
+  let y = t.getUTCFullYear(), m = t.getUTCMonth() + 1;
+  let first = ev(y, m);
+  if (first < today) { m++; if (m > 12) { m = 1; y++; } first = ev(y, m); }
+  let sum = 0;
+  const s = parse(start);
+  let ey = s.getUTCFullYear(), em = s.getUTCMonth() + 1;
+  for (let i = 0; i < 3; i++) {
+    const e = ev(ey, em);
+    if (start <= e && e < end) {
+      const eMonth = e.slice(0, 7);
+      if (e === first) {
+        for (const a of snap.accounts || []) {
+          if (a.active === false || a.kind !== 'credit' || !a.debt_month) continue;
+          if (String(a.debt_month).slice(0, 7) < eMonth) sum += num(a.debt);
+        }
+      }
+      const mStart = eMonth + '-01';
+      const [py, pm] = em > 1 ? [ey, em - 1] : [ey - 1, 12];
+      const pStart = iso(mk(py, pm, 1));
+      for (const o of obligations(snap, pStart > today ? pStart : today, mStart)) {
+        if (o.credit_ok && o.amount > 0) sum += o.amount;
+      }
+    }
+    em++; if (em > 12) { em = 1; ey++; }
+  }
+  return round2(sum);
+}
+
 // Бюджет періоду, що починається з першої виплати після today (точний аналог budget_pool.py)
 export function periodBudget(snap: Snapshot, today: string) {
   const cfg = snap.salary;
@@ -149,25 +203,42 @@ export function periodBudget(snap: Snapshot, today: string) {
   return { payout: pn, end: pa.date, obligations: obl, oblSum, own, debt, deficit, pool0, savings, varPool };
 }
 
-// «Вільно до виплати» на today: поточний період [остання виплата; наступна), spent: витрати з останньої виплати
-export function freeToPayout(snap: Snapshot, today: string, spent: number) {
+// «Вільно до виплати» на today: поточний період [остання виплата; наступна), spent: витрати з останньої виплати.
+// unassigned: знакова поправка від unassignedAdj (операції без рахунку), додається до власних (п. 9).
+// Рахунки в snap мають бути вже ефективні (deriveAccounts).
+export function freeToPayout(snap: Snapshot, today: string, spent: number, unassigned = 0) {
   const last = lastPayout(snap.salary, today);
   const pb = periodBudget(snap, addDays(last.date, -1)); // як periodBudget(pbOpen − 1) у застосунку
-  const next = payouts(snap.salary, today, 0, 3).find((p) => p.date > today)!;
-  // Власні кошти дебетових рахунків (кредитна картка не дає плюсових грошей)
+  const fut = payouts(snap.salary, today, 0, 3).filter((p) => p.date > today);
+  const next = fut[0], after = fut[1];
+  // Власні кошти дебетових і готівкових рахунків (кредитна картка не дає плюсових грошей)
   const ownDebit = (snap.accounts || [])
     .filter((a) => a.active !== false && a.kind !== 'credit')
     .reduce((s, a) => s + num(a.balance), 0);
   // «Білі» платежі: не можна оплатити кредиткою; лише витрати, доходи cashNow не збільшують
   const white = obligations(snap, today, next.date).filter((o) => !o.credit_ok && o.amount > 0);
-  const whiteSum = white.reduce((s, o) => s + o.amount, 0);
-  const cashNow = ownDebit - whiteSum;
-  const freeRaw = Math.min(pb.varPool - spent, cashNow);
-  const freeNow = Math.max(0, freeRaw);
+  // Погашення кредитки 25-го в [today; next) платиться з дебетових коштів, тож це теж «біле» (п. 10)
+  const cardRepayNow = cardRepay(snap, today, today, next.date);
+  const whiteSum = white.reduce((s, o) => s + o.amount, 0) + cardRepayNow;
+  const cashNow = ownDebit + unassigned - whiteSum;
+  const planCur = pb.varPool;
+  const budgetCur = capBudget(planCur, cashNow, spent); // п. 5
+  const freeRaw = Math.min(budgetCur - spent, cashNow);
+  const freeNow = Math.max(0, freeRaw); // п. 6
+  const shortage = cashNow < 0 ? -cashNow : 0;
   const daysLeft = Math.max(0, diffDays(today, next.date));
-  const perDay = daysLeft > 0 ? freeNow / daysLeft : 0;
+  const perDay = daysLeft > 0 ? freeNow / daysLeft : 0; // п. 7
+  // Наступний період [next; after) (п. 8): залишок на виплату + виплата − білі − погашення кредитки, не більше планового
+  const pbn = periodBudget(snap, addDays(next.date, -1));
+  const whiteNext = obligations(snap, next.date, after.date).filter((o) => !o.credit_ok && o.amount > 0)
+    .reduce((s, o) => s + o.amount, 0);
+  const cardRepayNext = cardRepay(snap, today, next.date, after.date);
+  const cashAtPayout = Math.max(0, cashNow - (budgetCur - spent));
+  const varPoolNext = Math.max(0, Math.min(pbn.varPool, cashAtPayout + next.amount - whiteNext - cardRepayNext));
   return {
-    lastPayout: last, nextPayout: next, periodStart: last.date, varPool: pb.varPool, pool0: pb.pool0,
-    spent, ownDebit, white, whiteSum, cashNow, freeRaw, freeNow, daysLeft, perDay,
+    lastPayout: last, nextPayout: next, periodStart: last.date, varPool: planCur, pool0: pb.pool0,
+    spent, ownDebit, unassigned, white, whiteSum, cardRepayNow, cashNow, freeRaw, freeNow, daysLeft, perDay,
+    planCur, varPoolCur: budgetCur, shortage,
+    planNext: pbn.varPool, whiteNext, cardRepayNext, varPoolNext, cashAtPayout,
   };
 }
