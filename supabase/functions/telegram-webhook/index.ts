@@ -289,13 +289,16 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-// Дата з чека: лише валідна YYYY-MM-DD і не в майбутньому, інакше сьогодні за Києвом
+// Дата з чека: лише валідна YYYY-MM-DD, не в майбутньому і не старша за 45 днів, інакше сьогодні за Києвом
 function receiptDate(raw: unknown): string {
   const today = todayKyiv();
   if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return today;
   const d = new Date(raw + 'T00:00:00Z');
   if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw) return today;
-  return raw > today ? today : raw;
+  if (raw > today) return today;
+  // Чек старший за 45 днів: найімовірніше модель помилилась у році, беремо сьогодні
+  const ageDays = (Date.parse(today + 'T00:00:00Z') - d.getTime()) / 86400000;
+  return ageDays > 45 ? today : raw;
 }
 
 // Стійкий розбір відповіді моделі: перший {...} з тексту
