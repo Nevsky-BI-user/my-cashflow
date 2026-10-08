@@ -45,7 +45,8 @@ def fixed_appears(page):
     flow = page.locator('.panel.p-flow .row-plan', has_text=NAME)
     check(flow.count() == 1, 'у Потоці немає планового рядка')
     ft = flow.inner_text()
-    check('через' in ft or 'сьогодні' in ft, f'плановий рядок у Потоці без «через N дн.»: {ft!r}')
+    # v139: замість «через N дн.» сірий прогноз балансу після платежу («план», якщо дата за горизонтом прогнозу)
+    check('прогноз' in ft or 'план' in ft, f'плановий рядок у Потоці без прогнозу балансу: {ft!r}')
 
 
 CHECKS = [

@@ -1,55 +1,51 @@
-# Змінний бюджет наступного періоду за правилом власника (08.10.2026):
-#   бюджет = наступна виплата - обовʼязкові платежі до наступної виплати - поточний мінус
-#   (мінус = борги мінус власні кошти, якщо більше нуля); результат <= 0 означає нуль і перенесення дефіциту.
-# Правило «білої» картки (08.10.2026): білі обовʼязкові (credit_ok = false) йдуть лише з власних коштів
-#   не кредитних рахунків; cashNow = ці кошти - білі з датою в [зараз; кінець періоду);
-#   freeNow = max(0, min(varPool - spent, cashNow)). credit_ok за замовчуванням: fixed false,
-#   credits true, якщо source містить 'privat'.
+# Еталон грошової логіки (DESIGN.md, «Гроші по рахунках», третя редакція, п. 1-12; власник 08.10.2026).
+# Правило каси (п. 12, варіант А): відсотків не платимо, усе, що лягло на кредитку за місяць M, гаситься власними
+#   грошима 24-го числа M+1 (вихідні не зсуваються). Каса по датах: старт = ownDebit + unassigned «зараз», далі події до
+#   горизонту, баланс після кожної. Бюджет періоду не більший за найнижчу касу від його початку до горизонту мінус
+#   бюджети попередніх періодів (жадібно від поточного).
 # Вхід: JSON {accounts, fixed, credits, salary, spent?, account_tx?} (знімок БД; spent: витрати періоду, за замовчуванням 0;
 #   accounts[].min_spend, min_spend_fee: правило мінімальних витрат за місяць, п. 11).
 # Похідний баланс ручних рахунків (як deriveAccounts у _shared/budget.ts): якщо є account_tx
 #   (список {account_id, type, amount, created_at, date?}), рахунки без mono_account_id з id і balance_updated_at
 #   отримують операції, створені строго після balance_updated_at: debit/cash balance - витрати + доходи,
-#   credit debt + витрати - доходи (не менше 0). Без account_tx знімок рахується як раніше.
+#   credit debt + витрати - доходи (не менше 0) і кошики debt_months [[YYYY-MM, сума]]: збережений борг у місяці
+#   debt_month (без нього місяць мітки), витрати за місяцем дати операції, доходи гасять найстаріші кошики.
 # Запуск: PYTHONUTF8=1 python scripts/budget_pool.py <snapshot.json> [YYYY-MM-DD сьогодні] [YYYY-MM-DD зараз]
-#   «сьогодні» визначає період (виплата строго після нього), «зараз» початок вікна whiteDue (без нього весь період).
+#   «сьогодні» визначає період (виплата строго після нього), «зараз» початок каси по датах (без нього початок періоду).
 #   Застосунок і бот викликають з «сьогодні» = (остання виплата - 1 день), «зараз» = справжня дата: тоді поточний
-#   період = [остання виплата; наступна), а «наступний» = [наступна; після неї).
+#   період = [остання виплата d0; наступна d1), «наступний» = [d1; d2).
 #
-# Правило власника (DESIGN.md, 08.10.2026, третя редакція, п. 1-10), поля останнього рядка 'JSON {...}':
-#   own          Σ ефективних balance усіх активних рахунків знімка (як було, використовує deficit; кредитні дають 0)
+# Події каси (cash_events, п. 12), сортування (дата, виплата, дохід, біла, комісія, погашення, назва):
+#   payout   виплати з датою строго після «зараз» (виплата сьогодні вже в балансі), плюс
+#   income   постійні доходи в дату, плюс
+#   white    обовʼязкові без credit_ok (витрати) у дату, з датою >= «зараз», мінус
+#   repay    погашення кредитки 24-го M+1: кошики боргу кредитних рахунків за місяцем M (прострочене 24-те: «зараз»)
+#            плюс обовʼязкові з credit_ok з датою >= «зараз» у місяці M (раніші вже в боргу рахунку), мінус
+#   fee      комісія за недосягнутий поріг мінімальних витрат (п. 11) 1-го числа наступного місяця, мінус
+# Горизонт: max(3-тя виплата після «зараз», найпізніше погашення в межах 60 днів), включно.
+#
+# Поля останнього рядка 'JSON {...}':
+#   own, debt    Σ ефективних balance / debt активних рахунків; deficit max(0, debt - own) (довідково)
 #   ownDebit     Σ ефективних balance дебетових і готівкових рахунків (п. 2), без поправки unassigned
-#   debt         Σ ефективних боргів активних рахунків (п. 2)
-#   deficit      max(0, debt - own); pool0 бюджет без накопичень; savings накопичення;
-#                varPool плановий бюджет періоду (= planCur, лишено для сумісності)
-#   whiteDue     «білі» (без credit_ok, витрати) в [max(зараз; початок); кінець поточного періоду) (п. 3) плюс
-#                погашення кредитки 25-го з цього вікна (п. 10), бо воно платиться з дебетових коштів;
-#                борг уже погашено (debt_eff = 0): нічого не додається
-#   cardRepayNow частина whiteDue, що є погашенням кредитки (0, якщо 25-те поза вікном [зараз; d1))
 #   unassigned   знакова поправка п. 9: Σ(доходи - витрати) операцій account_tx без account_id (не source=mono),
 #                створених строго після мінімального balance_updated_at ручних рахунків; 0, якщо account_tx немає
-#   cashNow      ownDebit + unassigned - whiteDue (п. 4)
-#   planCur      плановий бюджет поточного періоду (= varPool)
-#   varPoolCur   обмежений бюджет (п. 5) = min(planCur, max(0, cashNow) + spent)
-#   spent        витрати поточного періоду зі знімка
-#   freeNow      «Вільно до виплати» (п. 6) = max(0, min(varPoolCur - spent, cashNow))
-#   perDay       freeNow / днів від «зараз» до наступної виплати (п. 7), 0 якщо днів немає
-#   shortage     -cashNow, якщо cashNow < 0, інакше 0 («Бракує N на білі платежі»)
-#   nextPayout   {date, kind, amount} виплати, що завершує поточний період (d1)
-#   planNext     плановий бюджет наступного періоду [d1; d2) за правилами періоду
-#   whiteNext    «білі» обовʼязкові в [d1; d2)
-#   cardRepayNext погашення кредитки 25-го в [d1; d2) (п. 10): debt_eff кредитних рахунків із debt_month раніше за
-#                місяць події (лише для найближчої події від «зараз») + кредитні обовʼязкові (credit_ok, витрати)
-#                з датою в попередньому місяці, що ще не настала; 0, якщо події у вікні немає
-#   cashAtPayout залишок на d1 = max(0, cashNow - (varPoolCur - spent)) (п. 8)
-#   varPoolNext  max(0, min(planNext, cashAtPayout + виплата d1 - whiteNext - cardRepayNext)) (п. 8)
+#   startCash    ownDebit + unassigned; timeline [{date, amount, name, kind, balance}] події каси до horizon
+#   pool0        виплата d0 - чисті відтоки каси в [d0; d1); savings накопичення; varPool = planCur = pool0 - savings
+#   whiteDue     чисті відтоки каси в [зараз; d1) = startCash - cashBeforePayout
+#   cardRepayNow погашення кредитки в [зараз; d1); feeNow комісія в [зараз; d1)
+#   cashNow      = cashBeforePayout: каса напередодні d1; daysToPayout днів від «зараз» до d1
+#   cashBeforeSalary, daysToSalary, salaryDate: те саме до найближчої виплати «зарплата»
+#   minCash, minCashDate найнижча каса від «зараз» до горизонту (старт теж точка) і дата події
+#   freeNow      max(0, min(planCur - spent, minCash)); varPoolCur = spent + freeNow; shortage = max(0, -minCash)
+#   perDay       freeNow / daysToPayout (0, якщо днів немає)
+#   planNext     виплата d1 - чисті відтоки [d1; d2) - накопичення; whiteNext білі [d1; d2) + feeNext;
+#                cardRepayNext погашення в [d1; d2)
+#   varPoolNext  max(0, min(planNext, найнижча каса від d1 - freeNow)); cashAtPayout max(0, cashNow - freeNow)
+#   periods      [{start, end, payout, plan, budget}] від поточного до горизонту, бюджети жадібно
 #   minSpend     правило мінімальних витрат (п. 11): для активних рахунків з min_spend > 0 список
 #                {accountId, month, spent, min, fee, left, metOn?}; spent = Σ витрат (type = 'expense') account_tx
-#                з цим account_id і датою (поле date, без нього перші 10 знаків created_at) у місяці «зараз»;
-#                left = max(0, min - spent); metOn: дата операції, на якій накопичена сума (порядок date, created_at,
-#                amount) досягла min. Якщо left > 0, 1-го числа наступного місяця списується fee: подія «біла»,
-#                входить у whiteDue (feeNow), якщо 1-ше в [зараз; d1), і у whiteNext (feeNext), якщо в [d1; d2)
-#   Старі поля payout, end, obligations, oblSum, oblWhite, pool0, savings, ... лишаються без змін.
+#                з цим account_id і датою (поле date, без нього перші 10 знаків created_at) у місяці «зараз»
+#   Старі поля payout, end, obligations, oblSum, oblWhite лишаються.
 import calendar, json, sys
 from datetime import date, datetime, timedelta
 
@@ -73,8 +69,10 @@ def derive_accounts(accounts, txs):
             continue
         since = parse_ts(a['balance_updated_at'])
         exp = inc = 0.0
+        # кошики боргу за місяцем (п. 12): збережений борг у debt_month (без нього місяць мітки), витрати за датою операції
+        bk = {str(a.get('debt_month') or '')[:7] or str(a['balance_updated_at'])[:7]: float(a.get('debt') or 0)}
         for t in txs or []:
-            if t.get('account_id') is None or int(t['account_id']) != int(a['id']):
+            if t.get('account_id') is None or str(t['account_id']) != str(a['id']):
                 continue
             if not parse_ts(t['created_at']) > since:
                 continue
@@ -82,8 +80,18 @@ def derive_accounts(accounts, txs):
                 inc += float(t['amount'])
             else:
                 exp += float(t['amount'])
+                m = str(t.get('date') or t['created_at'])[:7]
+                bk[m] = bk.get(m, 0.0) + float(t['amount'])
         if a.get('kind') == 'credit':
             a2['debt'] = round(max(0.0, float(a['debt']) + exp - inc), 2)
+            left = inc  # доходи (погашення) гасять найстаріші кошики
+            out_b = []
+            for m in sorted(bk):
+                v = bk[m] - min(left, bk[m])
+                left -= bk[m] - v
+                if round(v, 2) > 0:
+                    out_b.append([m, round(v, 2)])
+            a2['debt_months'] = out_b
         else:
             a2['balance'] = round(float(a['balance']) - exp + inc, 2)
     return out
@@ -137,28 +145,31 @@ net = own - debt
 deficit = max(0.0, -net)
 
 
-def in_window(day, start, end):
-    """Дата платежу з днем місяця day у вікні [start, end)."""
-    for y, m in [(start.year, start.month), (end.year, end.month)]:
-        d = date(y, m, min(day, calendar.monthrange(y, m)[1]))
-        if start <= d < end:
-            return d
-    return None
+def months_span(start, end):
+    """Місяці (y, m) від місяця start до місяця end включно."""
+    k, last = start.year * 12 + start.month - 1, end.year * 12 + end.month - 1
+    while k <= last:
+        y, m = divmod(k, 12)
+        yield y, m + 1
+        k += 1
 
 
 def period_obl(start, end):
-    """Обовʼязкові у вікні [start, end): постійні (дохід зі знаком мінус) і активні розстрочки."""
+    """Обовʼязкові у вікні [start, end): постійні (дохід зі знаком мінус) і активні розстрочки, помісячно (п. 12)."""
     res = []
-    for f in snap['fixed'] or []:
-        if f.get('active') is False:
-            continue
-        d = in_window(int(f['day_of_month']), start, end)
-        if d:
-            amt = float(f['amount'])
-            res.append((d, f['name'], amt if f['type'] != 'income' else -amt, f.get('credit_ok') is True))
-    for c in snap['credits'] or []:
-        d = in_window(int(c['payment_day']), start, end)
-        if d:
+    for y, m in months_span(start, end):
+        last = calendar.monthrange(y, m)[1]
+        for f in snap['fixed'] or []:
+            if f.get('active') is False:
+                continue
+            d = date(y, m, min(int(f['day_of_month']), last))
+            if start <= d < end:
+                amt = float(f['amount'])
+                res.append((d, f['name'], amt if f['type'] != 'income' else -amt, f.get('credit_ok') is True))
+        for c in snap['credits'] or []:
+            d = date(y, m, min(int(c['payment_day']), last))
+            if not (start <= d < end):
+                continue
             first = c['start_year'] * 12 + c['start_month']
             cur = d.year * 12 + (d.month - 1)
             if first <= cur <= first + int(c['total_payments']) - 1:
@@ -170,27 +181,8 @@ def period_obl(start, end):
 
 
 obl = period_obl(*period)
-
 obl_sum = sum(o[2] for o in obl)
-pool = p_next[2] - obl_sum - deficit
-
-print(f"сьогодні {today}; власні кошти {own:.2f}, борги {debt:.2f}, нетто {net:.2f}, мінус до перекриття {deficit:.2f}")
-print(f"наступна виплата: {p_next[1]} {p_next[0]} = {p_next[2]:.2f}; період до {p_after[0]} ({p_after[1]})")
-for d, n, a, ok in obl:
-    print(f"  {d}  {n:<32} {a:>10.2f}  {'кредитна' if ok else 'біла'}")
-print(f"обовʼязкові за період: {obl_sum:.2f}")
-print(f"змінний бюджет періоду: {max(0.0, pool):.2f}" + (f"  (дефіцит {-pool:.2f} переноситься далі)" if pool < 0 else ""))
-
-# накопичення лише з додатного залишку: savings = pool0 * savings_pct / 100, змінні = pool0 - savings
 pct = float(snap.get('savings_pct', cfg.get('savings_pct', 0)) or 0)
-savings = round(max(0.0, pool) * pct / 100, 2)
-var_pool = max(0.0, pool - savings)
-print(f"накопичення {pct:g}%: {savings:.2f}; змінні після накопичень: {var_pool:.2f}")
-# біла картка: обовʼязкові без credit_ok (лише витрати), вікно whiteDue [max(now, start); end)
-white = [o for o in obl if not o[3] and o[2] > 0]
-obl_white = sum(o[2] for o in white)
-w_from = max(now, period[0]) if now else period[0]
-white_due = sum(o[2] for o in white if w_from <= o[0] < period[1])
 cash_own = sum(float(a['balance']) for a in ACCS if a.get('kind') != 'credit')
 
 # п. 9: операції без рахунку (лише після мінімального balance_updated_at ручних рахунків, не mono)
@@ -207,37 +199,6 @@ if snap.get('account_tx') is not None and manual:
 spent = float(snap.get('spent') or 0)
 d1 = period[1]
 t_now = now or period[0]
-def card_repay(start, end):
-    """Погашення кредитки 25-го числа в [start, end) (п. 10), див. шапку."""
-    def ev(y, m):
-        return date(y, m, min(25, calendar.monthrange(y, m)[1]))
-    y, m = t_now.year, t_now.month
-    first = ev(y, m)
-    if first < t_now:
-        y, m = (y, m + 1) if m < 12 else (y + 1, 1)
-        first = ev(y, m)
-    total = 0.0
-    ey, em = start.year, start.month
-    for _ in range(3):
-        e = ev(ey, em)
-        if start <= e < end:
-            if e == first:
-                for a in ACCS:
-                    if a.get('kind') == 'credit' and a.get('debt_month') and str(a['debt_month'])[:7] < e.isoformat()[:7]:
-                        total += float(a['debt'])
-            m_start = date(ey, em, 1)
-            p_start = date(ey - 1, 12, 1) if em == 1 else date(ey, em - 1, 1)
-            for o in period_obl(max(p_start, t_now), m_start):
-                if o[3] and o[2] > 0:
-                    total += o[2]
-        em += 1
-        if em > 12:
-            em, ey = 1, ey + 1
-    return round(total, 2)
-
-
-card_repay_now = card_repay(max(t_now, period[0]), d1)
-white_due += card_repay_now
 
 
 def tx_day(t):
@@ -273,49 +234,179 @@ def min_spend_rows():
 
 min_spend = min_spend_rows()
 fee_date = date(t_now.year + (t_now.month == 12), t_now.month % 12 + 1, 1)  # найближче 1-ше строго після t_now
+fee_total = round(sum(r['fee'] for r in min_spend if r['left'] > 0 and r['fee'] > 0), 2)
 
 
 def min_spend_fee(start, end):
     """Сума комісій за недосягнутий поріг, якщо 1-ше наступного місяця в [start; end)."""
-    if not (start <= fee_date < end):
-        return 0.0
-    return round(sum(r['fee'] for r in min_spend if r['left'] > 0 and r['fee'] > 0), 2)
+    return fee_total if start <= fee_date < end else 0.0
 
 
-fee_now = min_spend_fee(max(t_now, period[0]), d1)
-white_due += fee_now
-cash_now = cash_own + unassigned - white_due
+# п. 12: каса по датах. Борг кредитного рахунку за місяць M гаситься 24-го M+1 (прострочене: «зараз»)
+def repay_date(month):
+    y, m = int(month[:4]), int(month[5:7])
+    y, m = (y, m + 1) if m < 12 else (y + 1, 1)
+    d = date(y, m, 24)
+    return d if d >= t_now else t_now
+
+
+def debt_buckets(a):
+    """Кошики боргу [(YYYY-MM, сума)]: з derive_accounts (debt_months) або весь борг у місяці debt_month
+    (без нього місяць мітки balance_updated_at, без неї місяць «зараз»)."""
+    b = a.get('debt_months')
+    if b is None:
+        m = str(a.get('debt_month') or '')[:7] or str(a.get('balance_updated_at') or '')[:7] or t_now.isoformat()[:7]
+        b = [[m, float(a.get('debt') or 0)]]
+    return [(m, float(v)) for m, v in b if float(v) > 0]
+
+
+def all_payouts(lo, hi):
+    """Виплати з датою в [lo; hi] і строго після t_now: (дата, назва, сума)."""
+    out = []
+    for y, m in months_span(date(lo.year, lo.month, 1) - timedelta(days=1), hi + timedelta(days=31)):
+        out += [p for p in payouts(y, m) if lo <= p[0] <= hi and p[0] > t_now]
+    return sorted(out)
+
+
+KIND_ORDER = {'payout': 0, 'income': 1, 'white': 2, 'fee': 3, 'repay': 4}
+
+
+def cash_events(lo, hi):
+    """Події каси з датою в [lo; hi] (п. 12): виплати (після «зараз») плюс, постійні доходи плюс, білі мінус у дату,
+    кредитні обовʼязкові з датою >= «зараз» і борг кредитних рахунків мінус 24-го M+1, комісія п. 11 мінус 1-го."""
+    ev = []
+    for d, n, a in all_payouts(lo, hi):
+        ev.append({'date': d, 'amount': a, 'name': n, 'kind': 'payout', 'payout': 'advance' if n == 'аванс' else 'salary'})
+    for d, n, a, ok in period_obl(lo, hi + timedelta(days=1)):
+        if a < 0:
+            ev.append({'date': d, 'amount': -a, 'name': n, 'kind': 'income'})
+        elif not ok:
+            ev.append({'date': d, 'amount': -a, 'name': n, 'kind': 'white'})
+    rep = {}
+    if hi >= t_now:
+        for d, n, a, ok in period_obl(t_now, hi + timedelta(days=1)):
+            if ok and a > 0:
+                r = repay_date(d.isoformat()[:7])
+                if lo <= r <= hi:
+                    rep[r] = rep.get(r, 0.0) + a
+        for a in ACCS:
+            if a.get('kind') != 'credit':
+                continue
+            for m, v in debt_buckets(a):
+                r = repay_date(m)
+                if lo <= r <= hi:
+                    rep[r] = rep.get(r, 0.0) + v
+    for r, v in rep.items():
+        if round(v, 2) > 0:
+            ev.append({'date': r, 'amount': -round(v, 2), 'name': 'Погашення кредитки', 'kind': 'repay'})
+    if fee_total > 0 and lo <= fee_date <= hi:
+        ev.append({'date': fee_date, 'amount': -fee_total, 'name': 'Комісія за мінімальні витрати', 'kind': 'fee'})
+    ev.sort(key=lambda e: (e['date'], KIND_ORDER[e['kind']], e['name']))
+    return ev
+
+
+def net_out(a, b):
+    """Чисті відтоки каси (без виплат) у [a; b)."""
+    return round(-sum(e['amount'] for e in cash_events(a, b - timedelta(days=1)) if e['kind'] != 'payout'), 2)
+
+
+def plan_of(payout_amt, a, b):
+    """План періоду [a; b): виплата - відтоки каси - накопичення (п. 12). Повертає (pool0, savings, план)."""
+    p0 = round(payout_amt - net_out(a, b), 2)
+    sv = round(max(0.0, p0) * pct / 100, 2)
+    return p0, sv, max(0.0, p0 - sv)
+
+
+# горизонт: не менше 3 виплат після «зараз» і до найпізнішого погашення в межах 60 днів, включно
+fut_now = all_payouts(t_now, t_now + timedelta(days=120))
+p3 = fut_now[2][0]
+lim = t_now + timedelta(days=60)
+ev_all = cash_events(t_now, max(p3, lim))
+horizon = max([p3] + [e['date'] for e in ev_all if e['kind'] == 'repay' and e['date'] <= lim])
+start_cash = round(cash_own + unassigned, 2)
+timeline, bal = [], start_cash
+for e in ev_all:
+    if e['date'] > horizon:
+        break
+    bal = round(bal + e['amount'], 2)
+    timeline.append({**e, 'date': str(e['date']), 'balance': bal})
+min_cash, min_cash_date = start_cash, str(t_now)
+for e in timeline:
+    if e['balance'] < min_cash - 1e-9:
+        min_cash, min_cash_date = e['balance'], e['date']
+
+
+def cash_before(d):
+    """Каса напередодні дати d: баланс після всіх подій з датою < d."""
+    b = start_cash
+    for e in timeline:
+        if e['date'] < str(d):
+            b = e['balance']
+    return b
+
+
+def min_from(d):
+    """Найнижча каса від дати d (події з датою >= d) до горизонту; подій немає: каса напередодні d."""
+    vals = [e['balance'] for e in timeline if e['date'] >= str(d)]
+    return min(vals) if vals else cash_before(d)
+
+
+pool, savings, var_pool = plan_of(p_next[2], period[0], d1)
+print(f"сьогодні {today}; власні кошти {own:.2f}, борги {debt:.2f}, нетто {net:.2f}, мінус до перекриття {deficit:.2f}")
+print(f"поточна виплата: {p_next[1]} {p_next[0]} = {p_next[2]:.2f}; період до {p_after[0]} ({p_after[1]})")
+for d, n, a, ok in obl:
+    print(f"  {d}  {n:<32} {a:>10.2f}  {'кредитна, гаситься 24-го наступного місяця' if ok else 'біла'}")
+print(f"обовʼязкові за період: {obl_sum:.2f}; відтоки каси за період {net_out(period[0], d1):.2f}")
+print(f"план періоду: {max(0.0, pool):.2f}; накопичення {pct:g}%: {savings:.2f}; змінні після накопичень: {var_pool:.2f}")
+obl_white = sum(o[2] for o in obl if not o[3] and o[2] > 0)
+
+cash_now = cash_before(d1)  # каса напередодні наступної виплати
+white_due = round(start_cash - cash_now, 2)  # чисті відтоки каси в [зараз; d1)
+card_repay_now = round(-sum(e['amount'] for e in timeline if e['kind'] == 'repay' and e['date'] < str(d1)), 2)
+fee_now = min_spend_fee(t_now, d1)
 plan_cur = var_pool
-var_pool_cur = min(plan_cur, max(0.0, cash_now) + spent)  # п. 5
-free_now = max(0.0, min(var_pool_cur - spent, cash_now))  # п. 6
-shortage = -cash_now if cash_now < 0 else 0.0
+free_now = max(0.0, min(plan_cur - spent, min_cash))  # п. 12
+var_pool_cur = spent + free_now
+shortage = max(0.0, -min_cash)
 days_left = max(0, (d1 - t_now).days)
-per_day = free_now / days_left if days_left > 0 else 0.0  # п. 7
-print(f"білі за період: {obl_white:.2f}; білі з {w_from} до {period[1]}: {white_due:.2f}; "
-      f"власні не кредитних {cash_own:.2f}; без рахунку {unassigned:.2f}; cashNow {cash_now:.2f}; витрати {spent:.2f}; "
-      f"бюджет обмежений {var_pool_cur:.2f}; freeNow {free_now:.2f}; на день {per_day:.2f}")
+per_day = free_now / days_left if days_left > 0 else 0.0
+print(f"каса зараз (власні {cash_own:.2f} + без рахунку {unassigned:.2f}) {start_cash:.2f}; горизонт {horizon}")
+for e in timeline:
+    print(f"  {e['date']}  {e['amount']:>+12.2f}  {e['balance']:>12.2f}  {e['kind']:<6} {e['name']}")
+print(f"найнижча каса {min_cash:.2f} ({min_cash_date}); каса до {d1} {cash_now:.2f}; витрати {spent:.2f}; "
+      f"бюджет {var_pool_cur:.2f}; freeNow {free_now:.2f}; на день {per_day:.2f}")
 
-# п. 8, 10: наступний період [d1; d2)
+# наступний період [d1; d2) і далі жадібно до горизонту
 d2 = future[2][0]
 next_payout = p_after
-obl_n = period_obl(d1, d2)
-n_oblsum = sum(o[2] for o in obl_n)
-n_pool0 = next_payout[2] - n_oblsum - deficit
-n_savings = round(max(0.0, n_pool0) * pct / 100, 2)
-plan_next = max(0.0, n_pool0 - n_savings)
-white_next = sum(o[2] for o in obl_n if not o[3] and o[2] > 0)
+n_pool0, n_savings, plan_next = plan_of(next_payout[2], d1, d2)
 fee_next = min_spend_fee(d1, d2)
-white_next += fee_next
-
-
-card_repay_next = card_repay(d1, d2)
-cash_at_payout = max(0.0, cash_now - (var_pool_cur - spent))
-var_pool_next = max(0.0, min(plan_next, cash_at_payout + next_payout[2] - white_next - card_repay_next))
+white_next = round(sum(o[2] for o in period_obl(d1, d2) if not o[3] and o[2] > 0) + fee_next, 2)
+card_repay_next = round(-sum(e['amount'] for e in cash_events(d1, d2 - timedelta(days=1)) if e['kind'] == 'repay'), 2)
+cash_at_payout = max(0.0, cash_now - free_now)
+var_pool_next = max(0.0, min(plan_next, min_from(d1) - free_now))
+periods = [{'start': str(period[0]), 'end': str(d1), 'payout': p_next[2], 'plan': plan_cur, 'budget': var_pool_cur}]
+used = free_now
+bounds = [d1] + [p[0] for p in fut_now if p[0] > d1]
+pmap = {p[0]: p for p in fut_now}
+for i in range(len(bounds) - 1):
+    s, e = bounds[i], bounds[i + 1]
+    if s > horizon:
+        break
+    pl = plan_of(pmap[s][2], s, e)[2]
+    b = var_pool_next if i == 0 else max(0.0, min(pl, min_from(s) - used))
+    used += b
+    periods.append({'start': str(s), 'end': str(e), 'payout': pmap[s][2], 'plan': pl, 'budget': b})
+sal = next((p for p in fut_now if p[1] == 'зарплата'), None)
+cash_before_salary = cash_before(sal[0]) if sal else None
+days_to_salary = (sal[0] - t_now).days if sal else None
 for r in min_spend:
     print(f"мін. витрати рахунку {r['accountId']} за {r['month']}: {r['spent']:.2f} з {r['min']:.2f}, лишилось {r['left']:.2f}"
           + (f", досягнуто {r['metOn']}" if r.get('metOn') else f", інакше комісія {r['fee']:.2f} {fee_date}"))
-print(f"наступний період {d1}..{d2}: плановий {plan_next:.2f}; білі {white_next:.2f}; погашення кредитки {card_repay_next:.2f}; "
-      f"залишок на {d1} {cash_at_payout:.2f}; бюджет {var_pool_next:.2f}")
+print(f"наступний період {d1}..{d2}: план {plan_next:.2f}; найнижча каса від {d1} {min_from(d1):.2f}; бюджет {var_pool_next:.2f}")
+print(f"до виплати {d1} ({days_left} дн.): каса {cash_now:.2f}; до зарплати {sal[0] if sal else '-'} ({days_to_salary} дн.): каса {cash_before_salary}")
+for p in periods:
+    print(f"  період {p['start']}..{p['end']}: план {p['plan']:.2f}, бюджет {p['budget']:.2f}")
 # машинний рядок для spec/checks/budget.py
 print('JSON ' + json.dumps({
     'payout': {'date': str(p_next[0]), 'kind': 'advance' if p_next[1] == 'аванс' else 'salary', 'amount': p_next[2]},
@@ -328,4 +419,7 @@ print('JSON ' + json.dumps({
     'nextPayout': {'date': str(next_payout[0]), 'kind': 'advance' if next_payout[1] == 'аванс' else 'salary', 'amount': next_payout[2]},
     'planNext': plan_next, 'whiteNext': white_next, 'cardRepayNext': card_repay_next,
     'cardRepayNow': card_repay_now, 'cashAtPayout': cash_at_payout, 'varPoolNext': var_pool_next,
-    'minSpend': min_spend, 'feeNow': fee_now, 'feeNext': fee_next}, ensure_ascii=False))
+    'minSpend': min_spend, 'feeNow': fee_now, 'feeNext': fee_next,
+    'cashBeforePayout': cash_now, 'daysToPayout': days_left, 'cashBeforeSalary': cash_before_salary,
+    'daysToSalary': days_to_salary, 'salaryDate': str(sal[0]) if sal else None, 'minCash': min_cash, 'minCashDate': min_cash_date,
+    'horizon': str(horizon), 'startCash': start_cash, 'timeline': timeline, 'periods': periods}, ensure_ascii=False))

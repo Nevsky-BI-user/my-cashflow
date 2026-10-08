@@ -6,7 +6,7 @@ from helpers import check, current_ref, demo_snapshot, freeze, num, open_payout,
 
 TODAY = '2026-10-08'
 # o-ms-list: поріг мінімальних витрат рахунку (п. 11), у демо в Ощаду він є
-ORDER = ['o-hero', 'o-accs', 'o-ms-list', 'o-next', 'o-budget', 'o-recent', 'o-weeks', 'o-strip', 'o-ccy']
+ORDER = ['o-hero', 'o-accs', 'o-bal', 'o-ms-list', 'o-next', 'o-budget', 'o-recent', 'o-weeks', 'o-strip', 'o-ccy']
 
 
 def _spent(page, start, today):

@@ -144,7 +144,7 @@ def phone_shot(page):
 
 def _tomorrow_cell(page, sel, day='9'):
     # клітинка дня (за замовчуванням 9-го, завтра від DAY) у сітці Календаря: текст рядка прогнозу
-    return page.evaluate("""([sel,d])=>{const c=[...document.querySelectorAll(sel)].find(e=>{const n=e.closest('.cal-cell');return n&&n.firstChild&&n.firstChild.textContent.trim()===d});return c?c.textContent:null}""", [sel, day])
+    return page.evaluate("""([sel,d])=>{const c=[...document.querySelectorAll(sel)].find(e=>{const n=e.closest('.cal-cell');if(!n)return false;const dn=n.querySelector('.cal-dn');return (dn||n.firstChild).textContent.trim()===d});return c?c.textContent:null}""", [sel, day])
 
 
 def calendar_forecast_desktop(page):

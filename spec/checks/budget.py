@@ -12,7 +12,8 @@ FIX = SPEC / 'fixtures' / 'snapshot.json'
 # третій елемент: «зараз» для вікна білих платежів whiteDue (None: увесь період)
 CASES = [('2026-10-08', None, None), ('2026-10-21', None, None), ('2026-11-05', None, None), ('2026-10-08', 40000, None),
          ('2026-10-08', 100000, None), ('2026-10-08', None, '2026-10-26'), ('2026-10-20', None, '2026-10-08')]
-NUMS = ['oblSum', 'own', 'debt', 'deficit', 'pool0', 'savings', 'varPool', 'oblWhite', 'whiteDue', 'cashNow']
+# whiteDue і cashNow з п. 12 рахує каса по датах (cashCore), їх звіряє spec/checks/money.py
+NUMS = ['oblSum', 'own', 'debt', 'deficit', 'pool0', 'savings', 'varPool', 'oblWhite']
 
 
 def reference(snap, today, now=None):
@@ -34,10 +35,8 @@ def math(page):
         if debt is not None:
             snap['accounts'][1]['debt'] = debt
         ref = reference(snap, today, now)
-        # погашення кредитки 25-го в [зараз; кінець періоду) біле (DESIGN.md п. 10): входить у whiteDue і зменшує cashNow
-        js = page.evaluate("""([t,s,n])=>{const pb=periodBudget(t,s.salary,s.accounts,s.fixed,s.credits,s.salary.savings_pct,n||undefined);
-const tn=pbDate(n||pb.start),wf=tn>pbDate(pb.start)?tn:pbDate(pb.start);const r=cardRepay(wf,pb.end,tn,s.accounts,s.fixed,s.credits).total;
-return Object.assign(pb,{whiteDue:pb.whiteDue+r,cashNow:pb.cashNow-r})}""", [today, snap, now])
+        # план п. 12: виплата − чисті відтоки каси періоду (погашення кредитки 24-го M+1) − накопичення
+        js = page.evaluate("""([t,s,n])=>periodBudget(t,s.salary,s.accounts,s.fixed,s.credits,s.salary.savings_pct,n||undefined)""", [today, snap, now])
         tag = f'{today}' + (f', борг {debt}' if debt is not None else '') + (f', зараз {now}' if now else '')
         check(js['payout']['date'] == ref['payout']['date'] and js['payout']['kind'] == ref['payout']['kind'],
               f'{tag}: виплата JS {js["payout"]}, еталон {ref["payout"]}')

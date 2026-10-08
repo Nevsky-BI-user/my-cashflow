@@ -12,11 +12,14 @@ ROWS = ("[31,'Ринок',300,'out','telegram',null,'food',0,null],[31,'Кава
 PATCH = [('TX_DEMO_ROWS=[', 'TX_DEMO_ROWS=[' + ROWS)]
 # поля cashCore, які звіряються з еталоном (допуск 1 ₴)
 FIELDS = ['own', 'ownDebit', 'debt', 'whiteDue', 'unassigned', 'cashNow', 'planCur', 'varPoolCur', 'spent', 'freeNow', 'perDay',
-          'shortage', 'planNext', 'whiteNext', 'cardRepayNext', 'cashAtPayout', 'varPoolNext']
+          'shortage', 'planNext', 'whiteNext', 'cardRepayNext', 'cashAtPayout', 'varPoolNext',
+          'cashBeforePayout', 'daysToPayout', 'cashBeforeSalary', 'daysToSalary', 'minCash']
 CORE = """()=>{const c=window.__cashCore;return {own:c.own,ownDebit:c.ownDebit,debt:c.debt,whiteDue:c.whiteDue,unassigned:c.unassigned,
 cashNow:c.cashNow,planCur:c.planCur,varPoolCur:c.varPoolCur,spent:c.spent,freeNow:c.freeNow,perDay:c.perDay,shortage:c.shortage,
 planNext:c.planNext,whiteNext:c.whiteNext,cardRepayNext:c.cardRepayNext!=null?c.cardRepayNext:(c.repayNext?c.repayNext.total:null),
-cashAtPayout:c.cashAtPayout,varPoolNext:c.varPoolNext,unN:c.unList.length}}"""
+cashAtPayout:c.cashAtPayout,varPoolNext:c.varPoolNext,unN:c.unList.length,cashBeforePayout:c.cashBeforePayout,daysToPayout:c.daysToPayout,
+cashBeforeSalary:c.cashBeforeSalary,daysToSalary:c.daysToSalary,minCash:c.minCash,minCashDate:c.minCashDate,horizon:c.horizon,
+tl:c.timeline.events.map(e=>[pbIso(e.date),Math.round(e.amount*100)/100,Math.round(e.balance*100)/100])}}"""
 
 
 def _ref(page):
@@ -39,6 +42,19 @@ def parity(page):
         print(f'      {k:<14}{js[k]:>12.2f}{ref[k]:>14.2f}')
     for k in FIELDS:
         check(js[k] is not None and abs(js[k] - ref[k]) <= 1, f'{k}: застосунок {js[k]}, еталон {ref[k]}')
+    # каса по датах (п. 12): та сама послідовність подій і балансів, та сама дата найнижчої точки і горизонт
+    for k in ('minCashDate', 'horizon'):
+        check(js[k] == ref[k], f'{k}: застосунок {js[k]}, еталон {ref[k]}')
+    pt = {}
+    for e in ref['timeline']:
+        pt[e['date']] = e['balance']
+    jt = {}
+    for d, a, b in js['tl']:
+        jt[d] = b
+    check(sorted(pt) == sorted(jt), f'дні подій каси різні: {sorted(set(pt) ^ set(jt))}')
+    bad = [d for d in pt if abs(pt[d] - jt[d]) > 1]
+    check(not bad, f'баланс каси на кінець дня різний: {[(d, jt[d], pt[d]) for d in bad]}')
+    print(f'      каса по датах: {len(js["tl"])} подій до {js["horizon"]}, найнижча {js["minCash"]:.2f} ({js["minCashDate"]})')
     check(abs(ref['unassigned']) >= 1 and js['unN'] >= 2, f'фікстура без операцій без рахунку: {ref["unassigned"]}, {js["unN"]}')
     # ті самі числа в DOM: рядок-пояснення під «Вільно до виплати» і KPI
     go_tab(page, 0)
@@ -219,7 +235,7 @@ def min_spend(page):
     row = page.locator('.ck-day .cal-ev[data-date="2026-11-01"]', has_text='Комісія Ощадбанку')
     check(row.count() == 1, 'у таблиці Календаря немає події комісії 01.11')
     rt = _sp(row.inner_text())
-    check('(витрачено ' in rt and 'з 15 000)' in rt and '400 ₴' in rt and 'біла' in rt, f'рядок комісії: {rt!r}')
+    check('(витрачено ' in rt and 'з 15 000)' in rt and '400 ₴' in rt and 'комісія' in rt, f'рядок комісії: {rt!r}')
     page.mouse.move(2, 2)
     shot(page, 'ms-cal-1920.jpg', full=False)
     # поріг досягнуто: події немає ні в ядрі, ні в Календарі, на картці «без комісії»

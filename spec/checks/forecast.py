@@ -42,9 +42,12 @@ def calendar(page):
     check(cal.locator('.cal-badge', has_text='А').count() == 1 and cal.locator('.cal-badge', has_text='З').count() == 1,
           'у сітці місяця немає бейджів виплат А і З')
     t = date.today()
-    if t.day <= 25:
-        check(cal.locator('.cal-debt').count() == 1, 'у сітці немає бейджа «борг» на 25-те')
-        check(cal.locator('.cal-ev-debt').count() == 1, 'у таблиці подій немає дедлайну боргу')
+    # v139 (DESIGN.md п. 12): борг кредитки гаситься 24-го наступного місяця, подія «Погашення кредитки» з тегом «погашення»
+    if t.day <= 24:
+        d24 = f'{t.year}-{t.month:02d}-24'
+        check('Погашення кредитки' in page.inner_text(f'.ck-cal .cal-cell[data-date="{d24}"]'), 'у сітці немає погашення кредитки 24-го')
+        rep = page.evaluate("d=>[...document.querySelectorAll('.cal-tbl .cal-ev[data-date=\"'+d+'\"] .ce-tg')].map(e=>e.textContent)", d24)
+        check('погашення' in rep, f'у таблиці подій немає погашення 24-го: {rep}')
     evs = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(e=>({d:e.dataset.date,p:e.classList.contains('past'),td:e.classList.contains('today'),b:e.dataset.bal}))")
     check(evs, 'у календарі немає таблиці подій')
     iso = t.isoformat()

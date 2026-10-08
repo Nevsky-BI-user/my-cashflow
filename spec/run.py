@@ -106,7 +106,7 @@ def main():
     rows = []
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=not a.headed)
+            browser = p.chromium.launch(headless=not a.headed, args=['--mute-audio'])
             try:
                 for mod, name, vp, fn, opts in checks:
                     t1 = time.time()

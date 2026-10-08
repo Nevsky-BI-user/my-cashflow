@@ -1,4 +1,4 @@
-// Бюджет періоду і «вільно до виплати» за правилом власника (DESIGN.md, 08.10.2026).
+// Бюджет періоду, каса по датах і «вільно до виплати» за правилом власника (DESIGN.md, п. 1-12, 08.10.2026).
 // Перенесено з scripts/budget_pool.py і scripts/salary_check.py; те саме рахує застосунок (periodBudget).
 // Чисті функції без залежностей: модуль запускається і в Edge Function, і в Node для звірки з Python.
 // Дати: рядки YYYY-MM-DD, обчислення в UTC, щоб часовий пояс не зсував день.
@@ -7,6 +7,7 @@ export type Account = {
   id?: number; name?: string; kind?: string; balance: number | string; debt: number | string; active?: boolean;
   mono_account_id?: string | null; balance_updated_at?: string | null; debt_month?: string | null;
   min_spend?: number | string | null; min_spend_fee?: number | string | null;
+  debt_months?: [string, number][]; // кошики боргу за місяцем (п. 12), ставить deriveAccounts
 };
 // Операція з привʼязкою до рахунку (для похідного балансу ручних рахунків)
 // source: 'mono' | 'telegram' | 'manual' (потрібен лише для unassignedAdj: операції Monobank без рахунку не рахуємо)
@@ -47,12 +48,28 @@ export function deriveAccounts(accounts: Account[], txs: AccTx[]): Account[] {
     const since = Date.parse(a.balance_updated_at);
     if (isNaN(since)) return out;
     let exp = 0, inc = 0;
+    // кошики боргу за місяцем (п. 12): збережений борг у debt_month (без нього місяць мітки), витрати за датою операції
+    const bk: Record<string, number> = { [String(a.debt_month || '').slice(0, 7) || String(a.balance_updated_at).slice(0, 7)]: num(a.debt) };
     for (const t of txs || []) {
-      if (Number(t.account_id) !== Number(a.id) || !(Date.parse(t.created_at) > since)) continue;
-      if (t.type === 'income') inc += num(t.amount); else exp += num(t.amount);
+      if (t.account_id == null || String(t.account_id) !== String(a.id) || !(Date.parse(t.created_at) > since)) continue;
+      if (t.type === 'income') inc += num(t.amount);
+      else {
+        exp += num(t.amount);
+        const m = String(t.date || t.created_at).slice(0, 7);
+        bk[m] = (bk[m] || 0) + num(t.amount);
+      }
     }
-    if (a.kind === 'credit') out.debt = round2(Math.max(0, num(a.debt) + exp - inc));
-    else out.balance = round2(num(a.balance) - exp + inc);
+    if (a.kind === 'credit') {
+      out.debt = round2(Math.max(0, num(a.debt) + exp - inc));
+      let left = inc; // доходи (погашення) гасять найстаріші кошики
+      const months: [string, number][] = [];
+      for (const m of Object.keys(bk).sort()) {
+        const v = bk[m] - Math.min(left, bk[m]);
+        left -= bk[m] - v;
+        if (round2(v) > 0) months.push([m, round2(v)]);
+      }
+      out.debt_months = months;
+    } else out.balance = round2(num(a.balance) - exp + inc);
     return out;
   });
 }
@@ -161,77 +178,152 @@ export function lastPayout(cfg: SalaryCfg, today: string): Payout {
   return l[l.length - 1];
 }
 
-// Дата платежу з днем місяця day у вікні [start; end) або null (як in_period у budget_pool.py)
-function inWindow(day: number, start: string, end: string): string | null {
+// Місяці [y, m] (m: 1..12) від місяця start до місяця end включно
+function monthsSpan(start: string, end: string): [number, number][] {
   const s = parse(start), e = parse(end);
-  for (const [y, m] of [[s.getUTCFullYear(), s.getUTCMonth() + 1], [e.getUTCFullYear(), e.getUTCMonth() + 1]]) {
-    const d = iso(mk(y, m, Math.min(day, lastDay(y, m))));
-    if (start <= d && d < end) return d;
+  const out: [number, number][] = [];
+  for (let k = s.getUTCFullYear() * 12 + s.getUTCMonth(); k <= e.getUTCFullYear() * 12 + e.getUTCMonth(); k++) {
+    out.push([Math.floor(k / 12), (k % 12) + 1]);
   }
-  return null;
+  return out;
 }
 
-// Обовʼязкові у вікні [start; end): постійні (дохід зі знаком мінус) і активні розстрочки
+const byDate = (a: { date: string; name: string }, b: { date: string; name: string }) =>
+  a.date < b.date ? -1 : a.date > b.date ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+
+// Обовʼязкові у вікні [start; end): постійні (дохід зі знаком мінус) і активні розстрочки, помісячно (п. 12, як period_obl)
 function obligations(snap: Snapshot, start: string, end: string): Obligation[] {
   const out: Obligation[] = [];
-  for (const f of snap.fixed || []) {
-    if (f.active === false) continue;
-    const d = inWindow(Number(f.day_of_month), start, end);
-    if (!d) continue;
-    const a = num(f.amount);
-    out.push({ date: d, name: f.name, amount: f.type !== 'income' ? a : -a, credit_ok: f.credit_ok === true });
-  }
-  for (const c of snap.credits || []) {
-    const d = inWindow(Number(c.payment_day), start, end);
-    if (!d) continue;
-    // Та сама арифметика місяців, що в budget_pool.py і застосунку
-    const first = Number(c.start_year) * 12 + Number(c.start_month);
-    const cur = Number(d.slice(0, 4)) * 12 + (Number(d.slice(5, 7)) - 1);
-    if (first <= cur && cur <= first + Number(c.total_payments) - 1) {
-      // credit_ok не заданий: кредитна, якщо розстрочка ПриватБанку (як у budget_pool.py)
-      const ok = c.credit_ok ?? String(c.source || '').toLowerCase().includes('privat');
-      out.push({ date: d, name: c.name + ' (розстрочка)', amount: num(c.monthly_amount), credit_ok: ok === true });
+  for (const [y, m] of monthsSpan(start, end)) {
+    const ld = lastDay(y, m);
+    for (const f of snap.fixed || []) {
+      if (f.active === false) continue;
+      const d = iso(mk(y, m, Math.min(Number(f.day_of_month), ld)));
+      if (!(start <= d && d < end)) continue;
+      const a = num(f.amount);
+      out.push({ date: d, name: f.name, amount: f.type !== 'income' ? a : -a, credit_ok: f.credit_ok === true });
     }
-  }
-  return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-}
-
-// Погашення кредитки у вікні [start; end) (DESIGN.md, п. 10): подія 25-го числа місяця E (у короткому місяці останній день)
-// = борг, утворений до кінця місяця M = E-1: debt_eff кредитних рахунків із debt_month раніше за місяць E
-// (лише для найближчої події від today, бо далі борг уже погашений) плюс кредитні обовʼязкові (credit_ok, витрати)
-// з датою в місяці M, що ще не настала (date >= today).
-export function cardRepay(snap: Snapshot, today: string, start: string, end: string): number {
-  const ev = (y: number, m: number) => iso(mk(y, m, Math.min(25, lastDay(y, m))));
-  const t = parse(today);
-  let y = t.getUTCFullYear(), m = t.getUTCMonth() + 1;
-  let first = ev(y, m);
-  if (first < today) { m++; if (m > 12) { m = 1; y++; } first = ev(y, m); }
-  let sum = 0;
-  const s = parse(start);
-  let ey = s.getUTCFullYear(), em = s.getUTCMonth() + 1;
-  for (let i = 0; i < 3; i++) {
-    const e = ev(ey, em);
-    if (start <= e && e < end) {
-      const eMonth = e.slice(0, 7);
-      if (e === first) {
-        for (const a of snap.accounts || []) {
-          if (a.active === false || a.kind !== 'credit' || !a.debt_month) continue;
-          if (String(a.debt_month).slice(0, 7) < eMonth) sum += num(a.debt);
-        }
-      }
-      const mStart = eMonth + '-01';
-      const [py, pm] = em > 1 ? [ey, em - 1] : [ey - 1, 12];
-      const pStart = iso(mk(py, pm, 1));
-      for (const o of obligations(snap, pStart > today ? pStart : today, mStart)) {
-        if (o.credit_ok && o.amount > 0) sum += o.amount;
+    for (const c of snap.credits || []) {
+      const d = iso(mk(y, m, Math.min(Number(c.payment_day), ld)));
+      if (!(start <= d && d < end)) continue;
+      // Та сама арифметика місяців, що в budget_pool.py і застосунку
+      const first = Number(c.start_year) * 12 + Number(c.start_month);
+      const cur = y * 12 + (m - 1);
+      if (first <= cur && cur <= first + Number(c.total_payments) - 1) {
+        // credit_ok не заданий: кредитна, якщо розстрочка ПриватБанку (як у budget_pool.py)
+        const ok = c.credit_ok ?? String(c.source || '').toLowerCase().includes('privat');
+        out.push({ date: d, name: c.name + ' (розстрочка)', amount: num(c.monthly_amount), credit_ok: ok === true });
       }
     }
-    em++; if (em > 12) { em = 1; ey++; }
   }
-  return round2(sum);
+  return out.sort(byDate);
 }
 
-// Бюджет періоду, що починається з першої виплати після today (точний аналог budget_pool.py)
+// Каса по датах (DESIGN.md, п. 12). Подія: kind payout | income | white | fee | repay, amount зі знаком, balance після
+export type CashEvent = { date: string; amount: number; name: string; kind: string; payout?: 'advance' | 'salary'; balance?: number };
+const KIND_ORDER: Record<string, number> = { payout: 0, income: 1, white: 2, fee: 3, repay: 4 };
+
+// Погашення боргу за місяць M (YYYY-MM): 24-те M+1, вихідні не зсуваються; прострочене гаситься «зараз»
+export function repayDate(month: string, now: string): string {
+  const y = Number(month.slice(0, 4)), m = Number(month.slice(5, 7));
+  const d = iso(mk(m < 12 ? y : y + 1, m < 12 ? m + 1 : 1, 24));
+  return d >= now ? d : now;
+}
+
+// Кошики боргу кредитного рахунку [[YYYY-MM, сума]]: з deriveAccounts або весь борг у місяці debt_month
+// (без нього місяць мітки balance_updated_at, без неї місяць «зараз»)
+export function debtBuckets(a: Account, now: string): [string, number][] {
+  const b = a.debt_months ?? [[String(a.debt_month || '').slice(0, 7) || String(a.balance_updated_at || '').slice(0, 7) || now.slice(0, 7), num(a.debt)]];
+  return b.filter((x) => num(x[1]) > 0).map((x) => [x[0], num(x[1])]);
+}
+
+// Виплати з датою в [lo; hi] і строго після now
+function payoutsIn(cfg: SalaryCfg, lo: string, hi: string, now: string): Payout[] {
+  const l = parse(lo);
+  const from = iso(mk(l.getUTCFullYear(), l.getUTCMonth(), 1)); // місяць перед lo
+  const out: Payout[] = [];
+  for (const [y, m] of monthsSpan(from, addDays(hi, 31))) out.push(...monthPayouts(cfg, y, m));
+  return out.filter((p) => lo <= p.date && p.date <= hi && p.date > now)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+// Події каси з датою в [lo; hi] (як cash_events у budget_pool.py). Рахунки в snap мають бути вже ефективні (deriveAccounts).
+export function cashEvents(snap: Snapshot, now: string, lo: string, hi: string, minSpend: MinSpendRow[] = []): CashEvent[] {
+  const ev: CashEvent[] = [];
+  for (const p of payoutsIn(snap.salary, lo, hi, now)) {
+    ev.push({ date: p.date, amount: p.amount, name: p.kind === 'advance' ? 'аванс' : 'зарплата', kind: 'payout', payout: p.kind });
+  }
+  const hiX = addDays(hi, 1);
+  for (const o of obligations(snap, lo, hiX)) {
+    if (o.amount < 0) ev.push({ date: o.date, amount: -o.amount, name: o.name, kind: 'income' });
+    else if (!o.credit_ok) ev.push({ date: o.date, amount: -o.amount, name: o.name, kind: 'white' });
+  }
+  const rep: Record<string, number> = {};
+  if (hi >= now) {
+    for (const o of obligations(snap, now, hiX)) {
+      if (!o.credit_ok || !(o.amount > 0)) continue;
+      const r = repayDate(o.date.slice(0, 7), now);
+      if (lo <= r && r <= hi) rep[r] = (rep[r] || 0) + o.amount;
+    }
+    for (const a of snap.accounts || []) {
+      if (a.active === false || a.kind !== 'credit') continue;
+      for (const [m, v] of debtBuckets(a, now)) {
+        const r = repayDate(m, now);
+        if (lo <= r && r <= hi) rep[r] = (rep[r] || 0) + v;
+      }
+    }
+  }
+  for (const r of Object.keys(rep)) {
+    const v = round2(rep[r]);
+    if (v > 0) ev.push({ date: r, amount: -v, name: 'Погашення кредитки', kind: 'repay' });
+  }
+  const fee = round2((minSpend || []).filter((r) => r.left > 0 && r.fee > 0).reduce((s, r) => s + r.fee, 0));
+  const fd = minSpendFeeDate(now);
+  if (fee > 0 && lo <= fd && fd <= hi) ev.push({ date: fd, amount: -fee, name: 'Комісія за мінімальні витрати', kind: 'fee' });
+  return ev.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
+    (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+// Чисті відтоки каси (без виплат) у [a; b)
+function netOut(snap: Snapshot, now: string, a: string, b: string, minSpend: MinSpendRow[]): number {
+  return round2(-cashEvents(snap, now, a, addDays(b, -1), minSpend).filter((e) => e.kind !== 'payout').reduce((s, e) => s + e.amount, 0));
+}
+
+// План періоду [a; b): виплата − відтоки каси − накопичення (п. 12)
+function planOf(snap: Snapshot, now: string, payout: number, a: string, b: string, minSpend: MinSpendRow[]) {
+  const pool0 = round2(payout - netOut(snap, now, a, b, minSpend));
+  const pct = num(snap.savings_pct ?? snap.salary.savings_pct ?? 0);
+  const savings = round2(Math.max(0, pool0) * pct / 100);
+  return { pool0, savings, plan: Math.max(0, pool0 - savings) };
+}
+
+// Погашення кредитки у вікні [start; end) за правилом п. 12 (сума подій repay)
+export function cardRepay(snap: Snapshot, today: string, start: string, end: string, minSpend: MinSpendRow[] = []): number {
+  return round2(-cashEvents(snap, today, start, addDays(end, -1), minSpend).filter((e) => e.kind === 'repay').reduce((s, e) => s + e.amount, 0));
+}
+
+// Каса по датах від today до горизонту: max(3-тя виплата, найпізніше погашення в межах 60 днів), включно
+export function cashTimeline(snap: Snapshot, today: string, startCash: number, minSpend: MinSpendRow[] = []) {
+  const fut = payoutsIn(snap.salary, today, addDays(today, 120), today);
+  const p3 = fut[2].date, lim = addDays(today, 60);
+  const all = cashEvents(snap, today, today, p3 > lim ? p3 : lim, minSpend);
+  let horizon = p3;
+  for (const e of all) if (e.kind === 'repay' && e.date <= lim && e.date > horizon) horizon = e.date;
+  const events: CashEvent[] = [];
+  let bal = round2(startCash);
+  for (const e of all) {
+    if (e.date > horizon) break;
+    bal = round2(bal + e.amount);
+    events.push({ ...e, balance: bal });
+  }
+  let minCash = round2(startCash), minCashDate = today;
+  for (const e of events) if ((e.balance as number) < minCash - 1e-9) { minCash = e.balance as number; minCashDate = e.date; }
+  const before = (d: string) => { let b = round2(startCash); for (const e of events) if (e.date < d) b = e.balance as number; return b; };
+  const minFrom = (d: string) => { const v = events.filter((e) => e.date >= d).map((e) => e.balance as number); return v.length ? Math.min(...v) : before(d); };
+  return { startCash: round2(startCash), horizon, events, minCash, minCashDate, before, minFrom, payouts: fut };
+}
+
+// Бюджет періоду, що починається з першої виплати після today: старі поля для сумісності (план за п. 12 рахує freeToPayout)
 export function periodBudget(snap: Snapshot, today: string) {
   const cfg = snap.salary;
   const future = payouts(cfg, today, 0, 3).filter((p) => p.date > today);
@@ -242,53 +334,54 @@ export function periodBudget(snap: Snapshot, today: string) {
   const deficit = Math.max(0, debt - own);
   const obl = obligations(snap, pn.date, pa.date);
   const oblSum = obl.reduce((s, o) => s + o.amount, 0);
-  const pool0 = pn.amount - oblSum - deficit;
-  const pct = num(snap.savings_pct ?? cfg.savings_pct ?? 0);
-  const savings = round2(Math.max(0, pool0) * pct / 100);
-  const varPool = Math.max(0, pool0 - savings);
-  return { payout: pn, end: pa.date, obligations: obl, oblSum, own, debt, deficit, pool0, savings, varPool };
+  return { payout: pn, end: pa.date, obligations: obl, oblSum, own, debt, deficit };
 }
 
-// «Вільно до виплати» на today: поточний період [остання виплата; наступна), spent: витрати з останньої виплати.
+// «Вільно до виплати» на today (п. 12): поточний період [остання виплата d0; d1), spent: витрати з d0.
 // unassigned: знакова поправка від unassignedAdj (операції без рахунку), додається до власних (п. 9).
-// minSpend: рядки minSpendStatus (п. 11); комісія за недосягнутий поріг біла: whiteSum або whiteNext за датою 1-го.
+// minSpend: рядки minSpendStatus (п. 11); комісія 1-го числа: подія каси.
 // Рахунки в snap мають бути вже ефективні (deriveAccounts).
 export function freeToPayout(snap: Snapshot, today: string, spent: number, unassigned = 0, minSpend: MinSpendRow[] = []) {
   const last = lastPayout(snap.salary, today);
-  const pb = periodBudget(snap, addDays(last.date, -1)); // як periodBudget(pbOpen − 1) у застосунку
   const fut = payouts(snap.salary, today, 0, 3).filter((p) => p.date > today);
   const next = fut[0], after = fut[1];
   // Власні кошти дебетових і готівкових рахунків (кредитна картка не дає плюсових грошей)
   const ownDebit = (snap.accounts || [])
     .filter((a) => a.active !== false && a.kind !== 'credit')
     .reduce((s, a) => s + num(a.balance), 0);
-  // «Білі» платежі: не можна оплатити кредиткою; лише витрати, доходи cashNow не збільшують
-  const white = obligations(snap, today, next.date).filter((o) => !o.credit_ok && o.amount > 0);
-  // Погашення кредитки 25-го в [today; next) платиться з дебетових коштів, тож це теж «біле» (п. 10)
-  const cardRepayNow = cardRepay(snap, today, today, next.date);
+  const tl = cashTimeline(snap, today, ownDebit + unassigned, minSpend);
+  const cur = planOf(snap, today, last.amount, last.date, next.date, minSpend);
+  const planCur = cur.plan;
+  const cashNow = tl.before(next.date); // каса напередодні d1
+  const whiteSum = round2(tl.startCash - cashNow);
+  const white = tl.events.filter((e) => e.date < next.date && e.kind === 'white').map((e) => ({ date: e.date, name: e.name, amount: -e.amount }));
+  const cardRepayNow = round2(-tl.events.filter((e) => e.date < next.date && e.kind === 'repay').reduce((s, e) => s + e.amount, 0));
   const feeNow = minSpendFee(minSpend, today, today, next.date);
-  const whiteSum = white.reduce((s, o) => s + o.amount, 0) + cardRepayNow + feeNow;
-  const cashNow = ownDebit + unassigned - whiteSum;
-  const planCur = pb.varPool;
-  const budgetCur = capBudget(planCur, cashNow, spent); // п. 5
-  const freeRaw = Math.min(budgetCur - spent, cashNow);
-  const freeNow = Math.max(0, freeRaw); // п. 6
-  const shortage = cashNow < 0 ? -cashNow : 0;
+  const freeRaw = Math.min(planCur - spent, tl.minCash);
+  const freeNow = Math.max(0, freeRaw);
+  const varPoolCur = spent + freeNow;
+  const shortage = Math.max(0, -tl.minCash);
   const daysLeft = Math.max(0, diffDays(today, next.date));
-  const perDay = daysLeft > 0 ? freeNow / daysLeft : 0; // п. 7
-  // Наступний період [next; after) (п. 8): залишок на виплату + виплата − білі − погашення кредитки, не більше планового
-  const pbn = periodBudget(snap, addDays(next.date, -1));
+  const perDay = daysLeft > 0 ? freeNow / daysLeft : 0;
+  // Наступний період [d1; d2)
+  const nx = planOf(snap, today, next.amount, next.date, after.date, minSpend);
   const feeNext = minSpendFee(minSpend, today, next.date, after.date);
-  const whiteNext = obligations(snap, next.date, after.date).filter((o) => !o.credit_ok && o.amount > 0)
-    .reduce((s, o) => s + o.amount, 0) + feeNext;
-  const cardRepayNext = cardRepay(snap, today, next.date, after.date);
-  const cashAtPayout = Math.max(0, cashNow - (budgetCur - spent));
-  const varPoolNext = Math.max(0, Math.min(pbn.varPool, cashAtPayout + next.amount - whiteNext - cardRepayNext));
+  const whiteNext = round2(obligations(snap, next.date, after.date).filter((o) => !o.credit_ok && o.amount > 0)
+    .reduce((s, o) => s + o.amount, 0) + feeNext);
+  const cardRepayNext = cardRepay(snap, today, next.date, after.date, minSpend);
+  const cashAtPayout = Math.max(0, cashNow - freeNow);
+  const varPoolNext = Math.max(0, Math.min(nx.plan, tl.minFrom(next.date) - freeNow));
+  // Найближча зарплата: каса напередодні
+  const sal = tl.payouts.find((p) => p.kind === 'salary');
+  const cashBeforeSalary = sal ? tl.before(sal.date) : null;
+  const daysToSalary = sal ? diffDays(today, sal.date) : null;
   return {
-    lastPayout: last, nextPayout: next, periodStart: last.date, varPool: planCur, pool0: pb.pool0,
+    lastPayout: last, nextPayout: next, periodStart: last.date, varPool: planCur, pool0: cur.pool0,
     spent, ownDebit, unassigned, white, whiteSum, cardRepayNow, cashNow, freeRaw, freeNow, daysLeft, perDay,
-    planCur, varPoolCur: budgetCur, shortage,
-    planNext: pbn.varPool, whiteNext, cardRepayNext, varPoolNext, cashAtPayout,
+    planCur, varPoolCur, shortage,
+    planNext: nx.plan, whiteNext, cardRepayNext, varPoolNext, cashAtPayout,
     minSpend, feeNow, feeNext,
+    cashBeforePayout: cashNow, daysToPayout: daysLeft, cashBeforeSalary, daysToSalary, salaryDate: sal ? sal.date : null,
+    minCash: tl.minCash, minCashDate: tl.minCashDate, horizon: tl.horizon, startCash: tl.startCash, timeline: tl.events,
   };
 }

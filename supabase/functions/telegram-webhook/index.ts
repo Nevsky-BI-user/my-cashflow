@@ -3,7 +3,7 @@
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { deriveAccounts, freeToPayout, lastPayout, minSpendStatus, unassignedAdj, type AccTx, type Snapshot } from '../_shared/budget.ts';
+import { debtBuckets, deriveAccounts, freeToPayout, lastPayout, minSpendStatus, repayDate, unassignedAdj, type AccTx, type Snapshot } from '../_shared/budget.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -753,7 +753,7 @@ const MONTH_ACC = ['січень', 'лютий', 'березень', 'квіте
 // «Вільно до виплати» за правилом білої і кредитної картки (DESIGN.md), спільна логіка в _shared/budget.ts
 async function freeBlock(today: string): Promise<string> {
   const [acc, fix, cred, sal] = await Promise.all([
-    sb.from('accounts').select('id,name,kind,balance,debt,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
+    sb.from('accounts').select('id,name,kind,balance,debt,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
     sb.from('fixed_payments').select('name,amount,day_of_month,type,active,credit_ok').eq('active', true),
     sb.from('credits').select('name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
@@ -802,10 +802,17 @@ async function freeBlock(today: string): Promise<string> {
   const r = freeToPayout(snap, today, spent, unassigned, minSpend);
   const kind = r.nextPayout.kind === 'advance' ? 'аванс' : 'зарплата';
   const due = ddmm(r.nextPayout.date);
+  // Кредитка: борг і найближча дата погашення (24-те наступного місяця після місяця боргу, DESIGN.md п. 12)
+  const repayOf = (a: (typeof accounts)[number]) => {
+    const ds = debtBuckets(a, today).map((b) => repayDate(b[0], today)).sort();
+    return ds.length ? `, закрити до ${ddmm(ds[0])}` : '';
+  };
   const accLine = 'Рахунки: ' + accounts
-    .map((a) => `${a.name} ${a.kind === 'credit' ? 'борг ' + fmtInt(Number(a.debt) || 0) : fmtInt(Number(a.balance) || 0)}`)
+    .map((a) => `${a.name} ${a.kind === 'credit' ? 'борг ' + fmtInt(Number(a.debt) || 0) + repayOf(a) : fmtInt(Number(a.balance) || 0)}`)
     .join(' · ');
   let out = accLine + '\n' + `Вільно до виплати: ${fmtInt(r.freeNow)} (${kind} ${due}) · на день ${fmtInt(r.perDay)}`;
+  // Каса напередодні виплати (DESIGN.md п. 12): усі білі платежі, комісії й погашення кредиток до дати виплати вже враховані
+  out += `\nДо виплати ${due} (${r.daysToPayout} дн.): каса ${fmtInt(r.cashBeforePayout)}`;
   if (r.shortage > 0) out += `\nБракує ${fmtInt(r.shortage)} на білі платежі до ${due}`;
   // Поріг мінімальних витрат за місяць (п. 11): «Ощадбанк: витрачено 1 763 з 15 000 за жовтень, ще 13 237 до 31.10, інакше комісія 400 ₴»
   for (const m of r.minSpend) {
