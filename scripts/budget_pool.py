@@ -1,4 +1,4 @@
-# Еталон грошової логіки (DESIGN.md, «Гроші по рахунках», третя редакція, п. 1-12; власник 08.10.2026).
+# Еталон грошової логіки (DESIGN.md, «Гроші по рахунках», третя редакція, п. 1-13; власник 08.10.2026, п. 13: 09.10.2026).
 # Правило каси (п. 12, варіант А): відсотків не платимо, усе, що лягло на кредитку за місяць M, гаситься власними
 #   грошима 24-го числа M+1 (вихідні не зсуваються). Каса по датах: старт = ownDebit + unassigned «зараз», далі події до
 #   горизонту, баланс після кожної. Бюджет періоду не більший за найнижчу касу від його початку до горизонту мінус
@@ -10,6 +10,11 @@
 #   отримують операції, створені строго після balance_updated_at: debit/cash balance - витрати + доходи,
 #   credit debt + витрати - доходи (не менше 0) і кошики debt_months [[YYYY-MM, сума]]: збережений борг у місяці
 #   debt_month (без нього місяць мітки), витрати за місяцем дати операції, доходи гасять найстаріші кошики.
+# Оплата постійного платежу (п. 13): fixed[] містить id і variable (сума змінна, amount = середня; на розрахунок не
+#   впливає), account_tx[] містить fixed_id. Операція type = 'expense' з fixed_id = f.id і датою (поле date, без нього
+#   перші 10 знаків created_at) у місяці M закриває платіж f місяця M: його немає в обовʼязкових, білих, погашеннях і касі
+#   по датах (факт уже зменшив баланс рахунку). Оплата раніше дати платежу теж закриває місяць. Майбутні місяці: amount.
+#   Знімок мусить містити привʼязані операції всіх місяців вікна (від місяця «сьогодні»).
 # Запуск: PYTHONUTF8=1 python scripts/budget_pool.py <snapshot.json> [YYYY-MM-DD сьогодні] [YYYY-MM-DD зараз]
 #   «сьогодні» визначає період (виплата строго після нього), «зараз» початок каси по датах (без нього початок періоду).
 #   Застосунок і бот викликають з «сьогодні» = (остання виплата - 1 день), «зараз» = справжня дата: тоді поточний
@@ -45,6 +50,7 @@
 #   minSpend     правило мінімальних витрат (п. 11): для активних рахунків з min_spend > 0 список
 #                {accountId, month, spent, min, fee, left, metOn?}; spent = Σ витрат (type = 'expense') account_tx
 #                з цим account_id і датою (поле date, без нього перші 10 знаків created_at) у місяці «зараз»
+#   paidFixed    п. 13: [[id, YYYY-MM]] оплачених постійних платежів (відсортовано)
 #   Старі поля payout, end, obligations, oblSum, oblWhite лишаються.
 import calendar, json, sys
 from datetime import date, datetime, timedelta
@@ -145,6 +151,19 @@ net = own - debt
 deficit = max(0.0, -net)
 
 
+def fixed_paid(txs):
+    """п. 13: множина (id постійного платежу, YYYY-MM), оплачених операціями-витратами з fixed_id."""
+    out = set()
+    for t in txs or []:
+        if t.get('fixed_id') is None or t.get('type') != 'expense':
+            continue
+        out.add((str(t['fixed_id']), str(t.get('date') or t.get('created_at') or '')[:7]))
+    return out
+
+
+PAID = fixed_paid(snap.get('account_tx'))
+
+
 def months_span(start, end):
     """Місяці (y, m) від місяця start до місяця end включно."""
     k, last = start.year * 12 + start.month - 1, end.year * 12 + end.month - 1
@@ -162,6 +181,8 @@ def period_obl(start, end):
         for f in snap['fixed'] or []:
             if f.get('active') is False:
                 continue
+            if f.get('id') is not None and (str(f['id']), f'{y:04d}-{m:02d}') in PAID:
+                continue  # п. 13: оплачено в цьому місяці
             d = date(y, m, min(int(f['day_of_month']), last))
             if start <= d < end:
                 amt = float(f['amount'])
@@ -422,4 +443,5 @@ print('JSON ' + json.dumps({
     'minSpend': min_spend, 'feeNow': fee_now, 'feeNext': fee_next,
     'cashBeforePayout': cash_now, 'daysToPayout': days_left, 'cashBeforeSalary': cash_before_salary,
     'daysToSalary': days_to_salary, 'salaryDate': str(sal[0]) if sal else None, 'minCash': min_cash, 'minCashDate': min_cash_date,
-    'horizon': str(horizon), 'startCash': start_cash, 'timeline': timeline, 'periods': periods}, ensure_ascii=False))
+    'horizon': str(horizon), 'startCash': start_cash, 'timeline': timeline, 'periods': periods,
+    'paidFixed': [list(x) for x in sorted(PAID)]}, ensure_ascii=False))

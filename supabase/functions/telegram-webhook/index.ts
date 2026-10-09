@@ -3,7 +3,7 @@
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { debtBuckets, deriveAccounts, freeToPayout, lastPayout, minSpendStatus, repayDate, unassignedAdj, type AccTx, type Snapshot } from '../_shared/budget.ts';
+import { debtBuckets, deriveAccounts, fixedPaid, freeToPayout, lastPayout, minSpendStatus, repayDate, unassignedAdj, type AccTx, type Snapshot } from '../_shared/budget.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -607,12 +607,47 @@ async function findMonoIncome(amount: number, date: string): Promise<{ amount: n
   return data && data.length ? { amount: Number(data[0].amount), date: data[0].date } : null;
 }
 
+// DESIGN.md п. 13: витрата, в описі якої є назва активного постійного платежу (уся назва або її перше слово
+// від 5 літер; «комуналка», «комунальні» = платіж, що починається з «комунал»), закриває платіж місяця своєї дати,
+// якщо цього місяця він ще не оплачений. Кілька різних збігів: не привʼязуємо (неоднозначно).
+async function matchFixed(desc: string, date: string): Promise<{ id: number; name: string } | null> {
+  const d = String(desc || '').toLowerCase();
+  if (!d.trim()) return null;
+  const { data, error } = await sb.from('fixed_payments').select('id,name,type,active').eq('active', true);
+  if (error) {
+    console.error('fixed lookup error:', error);
+    return null;
+  }
+  const hits = (data || []).filter((f) => {
+    if (f.type === 'income') return false;
+    const n = String(f.name || '').toLowerCase().trim();
+    if (!n) return false;
+    if (d.includes(n)) return true;
+    const w = n.split(/\s+/)[0];
+    if ([...w].length >= 5 && d.includes(w)) return true;
+    return /комунал/.test(d) && n.startsWith('комунал');
+  });
+  if (hits.length !== 1) return null;
+  const f = hits[0];
+  const mo = date.slice(0, 7);
+  const [y, m] = mo.split('-').map(Number);
+  const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const { data: paid, error: pe } = await sb.from('transactions').select('id').eq('fixed_id', f.id).eq('type', 'expense')
+    .gte('date', mo + '-01').lt('date', next).limit(1);
+  if (pe) {
+    console.error('fixed paid lookup error:', pe);
+    return null;
+  }
+  return paid && paid.length ? null : { id: Number(f.id), name: String(f.name) };
+}
+
 // Вставка запису з Telegram і відповідь у чат.
 // Повертає true, якщо запис у базі (вставлено або вже був по source_id)
 async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = false): Promise<boolean> {
   const accs = await activeAccounts();
   // pending, збережений до появи рахунків: дохід іде на рахунок зарплати, витрата без рахунку
   const accountId = p.account_id !== undefined ? p.account_id ?? null : p.type === 'income' ? defaultAccount(accs)?.id ?? null : null;
+  const fx = p.type === 'expense' ? await matchFixed(p.description, p.date) : null;
   const { data: ins, error } = await sb.from('transactions').insert({
     user_id: userId,
     amount: p.amount,
@@ -622,6 +657,7 @@ async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = 
     source_id: p.source_id,
     date: p.date,
     account_id: accountId,
+    fixed_id: fx ? fx.id : null,
   }).select('id').single();
   if (error) {
     if (error.code === '23505') return true; // повтор апдейту встиг пройти isDuplicate: мовчимо
@@ -630,7 +666,8 @@ async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = 
     return false;
   }
   categorizeLater(ins.id);
-  await replyTx(chatId, ins.id, { amount: p.amount, type: p.type, description: p.description }, accountId, { accs, restoreKb });
+  const note = fx ? `зараховано як оплату: ${fx.name} за ${MONTH_ACC[Number(p.date.slice(5, 7)) - 1]}` : undefined;
+  await replyTx(chatId, ins.id, { amount: p.amount, type: p.type, description: p.description }, accountId, { accs, restoreKb, note });
   return true;
 }
 
@@ -755,7 +792,7 @@ async function freeBlock(today: string): Promise<string> {
   const [acc, fix, cred, sal] = await Promise.all([
     sb.from('accounts').select('id,name,kind,balance,debt,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
-    sb.from('fixed_payments').select('name,amount,day_of_month,type,active,credit_ok').eq('active', true),
+    sb.from('fixed_payments').select('id,name,amount,day_of_month,type,active,credit_ok,variable').eq('active', true),
     sb.from('credits').select('name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
     sb.from('salary_config').select('rate,split_day,advance_day,salary_day,savings_pct').order('id').limit(1).maybeSingle(),
   ]);
@@ -798,6 +835,11 @@ async function freeBlock(today: string): Promise<string> {
     .lte('date', today);
   if (txErr) throw new Error('spent lookup failed');
   const spent = (tx || []).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  // п. 13: постійний платіж, оплачений операцією з fixed_id у своєму місяці, з обовʼязкових цього місяця зникає
+  const { data: fp, error: fpErr } = await sb.from('transactions').select('fixed_id,type,amount,created_at,date')
+    .not('fixed_id', 'is', null).gte('date', from.slice(0, 7) + '-01');
+  if (fpErr) throw new Error('fixed paid lookup failed');
+  snap.paid = fixedPaid((fp || []) as AccTx[]);
 
   const r = freeToPayout(snap, today, spent, unassigned, minSpend);
   const kind = r.nextPayout.kind === 'advance' ? 'аванс' : 'зарплата';

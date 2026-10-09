@@ -1,4 +1,4 @@
-// Бюджет періоду, каса по датах і «вільно до виплати» за правилом власника (DESIGN.md, п. 1-12, 08.10.2026).
+// Бюджет періоду, каса по датах і «вільно до виплати» за правилом власника (DESIGN.md, п. 1-13, 08-09.10.2026).
 // Перенесено з scripts/budget_pool.py і scripts/salary_check.py; те саме рахує застосунок (periodBudget).
 // Чисті функції без залежностей: модуль запускається і в Edge Function, і в Node для звірки з Python.
 // Дати: рядки YYYY-MM-DD, обчислення в UTC, щоб часовий пояс не зсував день.
@@ -12,16 +12,25 @@ export type Account = {
 // Операція з привʼязкою до рахунку (для похідного балансу ручних рахунків)
 // source: 'mono' | 'telegram' | 'manual' (потрібен лише для unassignedAdj: операції Monobank без рахунку не рахуємо)
 // date: дата операції (YYYY-MM-DD), потрібна для порогу мінімальних витрат (без неї перші 10 знаків created_at)
-export type AccTx = { account_id: number | null; type: string; amount: number | string; created_at: string; source?: string | null; date?: string | null };
+// fixed_id: операція оплачує постійний платіж (п. 13), див. fixedPaid
+export type AccTx = {
+  account_id: number | null; type: string; amount: number | string; created_at: string; source?: string | null; date?: string | null;
+  fixed_id?: number | string | null;
+};
 // Поріг мінімальних витрат рахунку за календарний місяць (DESIGN.md, п. 11)
 export type MinSpendRow = { accountId: number; month: string; spent: number; min: number; fee: number; left: number; metOn?: string };
-export type Fixed = { name: string; amount: number | string; day_of_month: number; type: string; active?: boolean; credit_ok?: boolean | null };
+// variable: сума змінна, amount = середня оцінка (п. 13; на розрахунок не впливає)
+export type Fixed = {
+  id?: number | string; name: string; amount: number | string; day_of_month: number; type: string; active?: boolean;
+  credit_ok?: boolean | null; variable?: boolean | null;
+};
 export type Credit = {
   name: string; monthly_amount: number | string; payment_day: number;
   start_year: number; start_month: number; total_payments: number; credit_ok?: boolean | null; source?: string | null;
 };
 export type SalaryCfg = { rate: number | string; split_day: number; advance_day: number; salary_day: number; savings_pct?: number | null };
-export type Snapshot = { accounts: Account[]; fixed: Fixed[]; credits: Credit[]; salary: SalaryCfg; savings_pct?: number | null };
+// paid: ключі `${fixed_id}|YYYY-MM` оплачених постійних платежів (п. 13), будує fixedPaid з операцій
+export type Snapshot = { accounts: Account[]; fixed: Fixed[]; credits: Credit[]; salary: SalaryCfg; savings_pct?: number | null; paid?: string[] };
 
 export type Payout = { date: string; kind: 'advance' | 'salary'; amount: number };
 export type Obligation = { date: string; name: string; amount: number; credit_ok: boolean };
@@ -178,6 +187,17 @@ export function lastPayout(cfg: SalaryCfg, today: string): Payout {
   return l[l.length - 1];
 }
 
+// п. 13: оплачені постійні платежі. Операція type = 'expense' з fixed_id і датою (без неї перші 10 знаків created_at)
+// у місяці M закриває платіж місяця M (і раніше дати платежу). Ключі `${fixed_id}|YYYY-MM` для Snapshot.paid.
+export function fixedPaid(txs: AccTx[]): string[] {
+  const out = new Set<string>();
+  for (const t of txs || []) {
+    if (t.fixed_id == null || t.type !== 'expense') continue;
+    out.add(String(t.fixed_id) + '|' + String(t.date || t.created_at || '').slice(0, 7));
+  }
+  return [...out].sort();
+}
+
 // Місяці [y, m] (m: 1..12) від місяця start до місяця end включно
 function monthsSpan(start: string, end: string): [number, number][] {
   const s = parse(start), e = parse(end);
@@ -194,10 +214,13 @@ const byDate = (a: { date: string; name: string }, b: { date: string; name: stri
 // Обовʼязкові у вікні [start; end): постійні (дохід зі знаком мінус) і активні розстрочки, помісячно (п. 12, як period_obl)
 function obligations(snap: Snapshot, start: string, end: string): Obligation[] {
   const out: Obligation[] = [];
+  const paid = new Set(snap.paid || []);
   for (const [y, m] of monthsSpan(start, end)) {
     const ld = lastDay(y, m);
+    const ym = `${y}-${String(m).padStart(2, '0')}`;
     for (const f of snap.fixed || []) {
       if (f.active === false) continue;
+      if (f.id != null && paid.has(String(f.id) + '|' + ym)) continue; // п. 13: оплачено в цьому місяці
       const d = iso(mk(y, m, Math.min(Number(f.day_of_month), ld)));
       if (!(start <= d && d < end)) continue;
       const a = num(f.amount);
