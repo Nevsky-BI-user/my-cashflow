@@ -53,7 +53,7 @@ function categoryContext(fail=false){
     if(operation==='insert'){const row={...payload,id:3};records.push(row);return {data:row,error:null};}
     return {data:records.map(r=>({...r})),error:null};
    }).then(resolve,reject)}};return q;}};
- const context={sb,categoryRow,activeCats:state.cats,allCats:state.cats,budgetLimits:{1:25,2:75},lockedCats:{},budgetSaveLock:{current:false},
+ const context={sb,categoryRow,activeCats:state.cats,wCats:state.cats,allCats:state.cats,budgetLimits:{1:25,2:75},lockedCats:{},budgetSaveLock:{current:false},
   setBudgetBusy:()=>{},setBudgetError:v=>state.error=v,setShowBudgetEdit:v=>state.closed=!v,
   setDbCats:v=>state.cats=typeof v==='function'?v(state.cats):v,
   newCatName:state.name,newCatPct:20,PALETTE:['#888'],session:{user:{id:'synthetic-user'}},

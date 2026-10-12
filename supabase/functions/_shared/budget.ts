@@ -222,13 +222,24 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
       if(actual+assigned<cents(a.min_spend))events.push(make('fee:'+a.id+':'+month,d,'Комісія: '+(a.name||a.id),'fee',cents(a.min_spend_fee),{accountId:a.id,certainty:'conditional'}));
     }
   }
-  const categories=(data.categories||[]).filter(c=>c.active!==false&&c.type==='expense').map(c=>({id:String(c.id),name:c.name||'',weight:Math.max(0,cents(c.budget_limit??c.limit))/100})).sort((a,b)=>cmp(a.id,b.id));
+  // Категорія з limit_abs: сума в гривнях (budget_limit ігнорується), інакше вага budget_limit.
+  const expenseCats=(data.categories||[]).filter(c=>c.active!==false&&c.type==='expense');
+  const categories: {id:string;name:string;weight:number;limitAbsCents?:number}[]=expenseCats.map(c=>c.limit_abs!=null?{id:String(c.id),name:c.name||'',weight:0,limitAbsCents:Math.max(0,cents(c.limit_abs))}:{id:String(c.id),name:c.name||'',weight:Math.max(0,cents(c.budget_limit??c.limit))/100}).sort((a,b)=>cmp(a.id,b.id));
   if(new Set(categories.map(c=>c.id)).size!==categories.length)throw new RangeError('Duplicate category id');
-  if(!categories.some(c=>c.weight>0))categories.splice(0,categories.length,{id:'unallocated',name:'Не розподілено',weight:1});
+  // Черга сум у гривнях: sort_order (null в кінці), при рівності id.
+  const absOrder=expenseCats.filter(c=>c.limit_abs!=null).map(c=>({id:String(c.id),order:c.sort_order==null?null:Number(c.sort_order)})).sort((a,b)=>a.order===b.order?cmp(a.id,b.id):a.order==null?1:b.order==null?-1:a.order-b.order).map(o=>categories.findIndex(c=>c.id===o.id));
+  if(!absOrder.length&&!categories.some(c=>c.weight>0))categories.splice(0,categories.length,{id:'unallocated',name:'Не розподілено',weight:1});
   const allocate=(total: number,weights: number[])=>{if(!total)return weights.map(()=>0);const den=weights.reduce((s,v)=>s+BigInt(v),0n);const rows=weights.map((w,i)=>({i,value:Number(BigInt(total)*BigInt(w)/den),rest:BigInt(total)*BigInt(w)%den}));let left=total-sum(rows.map(r=>r.value));rows.sort((a,b)=>a.rest===b.rest?a.i-b.i:a.rest>b.rest?-1:1);for(let i=0;i<left;i++)rows[i].value++;rows.sort((a,b)=>a.i-b.i);return rows.map(r=>r.value);};
-  const distribution=(target: number,start: string,end: string,available: number)=>{const count=distance(start,end),totals=allocate(count>0?target:0,categories.map(c=>cents(c.weight))),remaining=totals.slice(),schedule=[];let balance=available;
-    for(let i=0;i<count;i++){const spendCents=Math.floor(target/count)+(i<target%count?1:0),amounts=i===count-1?remaining.slice():allocate(spendCents,remaining);amounts.forEach((n,j)=>remaining[j]-=n);balance=safe(balance-spendCents);schedule.push({date:plus(start,i),spendCents,remainingCents:balance,byCategory:categories.map((c,j)=>({id:c.id,name:c.name,amountCents:amounts[j]}))});}
-    return {categories:categories.map((c,i)=>({...c,totalCents:totals[i]})),schedule};
+  // Суми в гривнях по черзі min(ліміт, що лишилось), залишок за вагами; ваг немає: «Не розподілено». caps: ліміти поточного періоду.
+  const split=(total: number,caps?: number[])=>{if(!absOrder.length)return {rows:categories,totals:allocate(total,categories.map(c=>cents(c.weight)))};
+    const totals=categories.map(()=>0),weights=categories.map(c=>c.limitAbsCents!=null?0:cents(c.weight));let left=total;
+    for(const i of absOrder){const n=Math.min(caps?caps[i]:categories[i].limitAbsCents??0,left);totals[i]=n;left-=n;}
+    if(weights.some(w=>w>0)){allocate(left,weights).forEach((n,i)=>totals[i]+=n);return {rows:categories,totals};}
+    return left>0?{rows:[...categories,{id:'unallocated',name:'Не розподілено',weight:1}],totals:[...totals,left]}:{rows:categories,totals};
+  };
+  const distribution=(target: number,start: string,end: string,available: number,caps?: number[])=>{const count=distance(start,end),{rows,totals}=split(count>0?target:0,caps),remaining=totals.slice(),schedule=[];let balance=available;
+    for(let i=0;i<count;i++){const spendCents=Math.floor(target/count)+(i<target%count?1:0),amounts=i===count-1?remaining.slice():allocate(spendCents,remaining);amounts.forEach((n,j)=>remaining[j]-=n);balance=safe(balance-spendCents);schedule.push({date:plus(start,i),spendCents,remainingCents:balance,byCategory:rows.map((c,j)=>({id:c.id,name:c.name,amountCents:amounts[j]}))});}
+    return {categories:rows.map((c,i)=>({...c,totalCents:totals[i]})),schedule};
   };
   const between=(start: string,end: string)=>events.filter(e=>e.date>=start&&e.date<end&&e.kind!=='variable');
   const mandatory=(start: string,end: string)=>sum(between(start,end).filter(e=>e.kind==='mandatory'||e.kind==='fee').map(e=>e.amountCents));
@@ -240,7 +251,8 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     nextPlan={start:nextDate,end:followingDate,days:distance(nextDate,followingDate),nextPayout:next,followingPayout:after,positiveOwnCents,debtCents:creditDebtCents,mandatoryCents,otherIncomeCents:sum(between(nextDate,followingDate).filter(e=>e.kind==='income').map(e=>e.amountCents)),eligibleMandatoryCents:sum(between(nextDate,followingDate).filter(e=>e.kind==='mandatory'&&e.creditEligible).map(e=>e.amountCents)),baseAvailableCents,targetCents,gapCents:Math.max(0,targetCents-baseAvailableCents),averageDailyCents:targetCents/distance(nextDate,followingDate),...distribution(targetCents,nextDate,followingDate,baseAvailableCents)};
     // Поточний період: каса мінус обовʼязкові до виплати; борг карток резервується один раз у nextPlan.
     // Темп щоденних витрат від завтра до дня перед виплатою: більше з 15 000 ₴ на весь період [start; виплата) і untilPayout на дні, що лишились.
-    const start=payoutDates.filter(d=>d<=asof).pop()||asof,actualVariableCents=sum(txs.filter(t=>t.type==='expense'&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start).map(t=>cents(t.amount))),mandatoryCentsNow=mandatory(asof,nextDate),available=safe(cashCents-mandatoryCentsNow),periodDays=distance(start,nextDate),leftDays=Math.max(0,distance(plus(asof,1),nextDate)),floorLeft=periodDays>0?Math.floor(1500000*leftDays/periodDays):0,freeLeft=Math.max(0,untilPayout?untilPayout.cents:0),remaining=leftDays>0?Math.max(floorLeft,freeLeft):0,target=actualVariableCents+remaining,dist=distribution(remaining,plus(asof,1),nextDate,available);
+    // Сума в гривнях на прогноз від завтра: ліміт мінус факт змінних витрат категорії з початку періоду, не нижче 0.
+    const start=payoutDates.filter(d=>d<=asof).pop()||asof,actualVariableCents=sum(txs.filter(t=>t.type==='expense'&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start).map(t=>cents(t.amount))),mandatoryCentsNow=mandatory(asof,nextDate),available=safe(cashCents-mandatoryCentsNow),periodDays=distance(start,nextDate),leftDays=Math.max(0,distance(plus(asof,1),nextDate)),floorLeft=periodDays>0?Math.floor(1500000*leftDays/periodDays):0,freeLeft=Math.max(0,untilPayout?untilPayout.cents:0),remaining=leftDays>0?Math.max(floorLeft,freeLeft):0,target=actualVariableCents+remaining,caps=categories.map(c=>c.limitAbsCents==null?0:Math.max(0,c.limitAbsCents-sum(txs.filter(t=>t.type==='expense'&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start&&t.category_id!=null&&String(t.category_id)===c.id).map(t=>cents(t.amount))))),dist=distribution(remaining,plus(asof,1),nextDate,available,caps);
     currentPeriod={start,end:nextDate,actualVariableCents,targetCents:target,remainingTargetCents:remaining,periodDays,leftDays,dailyCents:leftDays>0?remaining/leftDays:0,futureSchedule:dist.schedule};
     periods.push({start,end:nextDate,basis:'current',openingCashCents:cashCents,payoutCents:0,mandatoryCents:mandatoryCentsNow,debtReserveCents:0,availableCents:available,targetCents:target,gapCents:Math.max(0,remaining-available),...dist});
     // Обчислення періодів послідовне: знак залишку зберігається.
@@ -604,7 +616,7 @@ export function freeToPayout(snap: Snapshot, today: string, spent: number, unass
 export type NextPeriodInput = {
   accounts: Account[]; fixed: Fixed[]; credits: Credit[]; salary?: SalaryCfg | null;
   transactions?: AccTx[]; account_tx?: AccTx[]; profiles?: unknown[];
-  categories: { id: string | number; name?: string; type?: string; active?: boolean; budget_limit?: number | string | null; limit?: number | string | null }[];
+  categories: { id: string | number; name?: string; type?: string; active?: boolean; budget_limit?: number | string | null; limit?: number | string | null; limit_abs?: number | string | null; sort_order?: number | null }[];
 };
 
 // Новий план [найближча виплата строго після asof; наступна виплата).
@@ -650,9 +662,14 @@ export function nextPeriodPlan(data: NextPeriodInput, asof: string) {
   const incoming = sum([positiveOwnCents, cents(next.amount)]), reserved = sum([mandatoryCents, debtCents]);
   const baseAvailableCents = sum([incoming, -reserved]);
   const targetCents = Math.max(1500000, baseAvailableCents), gapCents = sum([targetCents, -baseAvailableCents]);
-  const categories = (data.categories || []).filter(c => c.active !== false && c.type === 'expense').map(c => ({ id: String(c.id), name: c.name ?? '', weight: Math.max(0, cents(c.budget_limit ?? c.limit)) / 100 })).sort((a,b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  // Категорія з limit_abs: сума в гривнях (budget_limit ігнорується), інакше вага budget_limit.
+  const expenseCats = (data.categories || []).filter(c => c.active !== false && c.type === 'expense');
+  const byId = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+  const categories: { id: string; name: string; weight: number; limitAbsCents?: number }[] = expenseCats.map(c => c.limit_abs != null ? { id: String(c.id), name: c.name ?? '', weight: 0, limitAbsCents: Math.max(0, cents(c.limit_abs)) } : { id: String(c.id), name: c.name ?? '', weight: Math.max(0, cents(c.budget_limit ?? c.limit)) / 100 }).sort((a,b) => byId(a.id, b.id));
   if (new Set(categories.map(c => c.id)).size !== categories.length) throw new RangeError('Duplicate category id');
-  if (!categories.some(c => c.weight > 0)) categories.splice(0, categories.length, { id: 'unallocated', name: 'Не розподілено', weight: 1 });
+  // Черга сум у гривнях: sort_order (null в кінці), при рівності id.
+  const absOrder = expenseCats.filter(c => c.limit_abs != null).map(c => ({ id: String(c.id), order: c.sort_order == null ? null : Number(c.sort_order) })).sort((a,b) => a.order === b.order ? byId(a.id, b.id) : a.order == null ? 1 : b.order == null ? -1 : a.order - b.order).map(o => categories.findIndex(c => c.id === o.id));
+  if (!absOrder.length && !categories.some(c => c.weight > 0)) categories.splice(0, categories.length, { id: 'unallocated', name: 'Не розподілено', weight: 1 });
   const allocate = (total: number, units: bigint[]) => {
     const denominator = units.reduce((a,b) => a+b, 0n);
     if (!total) return units.map(() => 0);
@@ -662,7 +679,17 @@ export function nextPeriodPlan(data: NextPeriodInput, asof: string) {
     for (let i=0;i<left;i++) rows[i].value++;
     const result = units.map(() => 0); rows.forEach(r => result[r.i]=r.value); return result;
   };
-  const totals = allocate(targetCents, categories.map(c => BigInt(cents(c.weight))));
+  // Суми в гривнях по черзі min(ліміт, що лишилось), залишок за вагами; ваг немає: «Не розподілено».
+  let totals: number[];
+  if (!absOrder.length) totals = allocate(targetCents, categories.map(c => BigInt(cents(c.weight))));
+  else {
+    totals = categories.map(() => 0);
+    const weights = categories.map(c => c.limitAbsCents != null ? 0n : BigInt(cents(c.weight)));
+    let left = targetCents;
+    for (const i of absOrder) { const n = Math.min(categories[i].limitAbsCents ?? 0, left); totals[i] = n; left -= n; }
+    if (weights.some(w => w > 0n)) allocate(left, weights).forEach((n,i) => totals[i] += n);
+    else if (left > 0) { categories.push({ id: 'unallocated', name: 'Не розподілено', weight: 1 }); totals.push(left); }
+  }
   const remaining = totals.slice(), days = diffDays(next.date, after.date);
   let balance = baseAvailableCents;
   const schedule = Array.from({ length: days }, (_,day) => {

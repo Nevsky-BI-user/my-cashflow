@@ -103,6 +103,10 @@ def calendar_real(page):
     check(c['cards'] == 0, 'у правій колонці лишилась картка «Борги»')
     nd = page.evaluate("[...new Set([...document.querySelectorAll('.ck-cal .cal-cell')].filter(c=>c.querySelector('.cal-ln,.cal-more')).map(c=>c.dataset.date))]")
     dates = set(page.evaluate("[...document.querySelectorAll('.ck-day .cal-ev')].map(e=>e.dataset.date)"))
+    # v144: список від початку поточного періоду до дня перед наступною зарплатою; дати сітки поза ним не порівнюємо
+    from checks.calendar import list_range
+    lo, hi = list_range(finance_ref(page))
+    nd = [d for d in nd if lo <= d <= hi]
     check(set(nd) <= dates, f'у таблиці немає дат з подіями: {sorted(set(nd) - dates)}')
     check(c['ev'] and all(x == 28 for x in c['ev']), f'рядки таблиці не по 28px: {c["ev"]}')
     ref = finance_ref(page)

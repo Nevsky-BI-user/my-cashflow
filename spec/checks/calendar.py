@@ -107,20 +107,24 @@ def table_1920(page, t):
     allowed = pays | {str(t.day)}
     check(withbal and set(withbal) <= allowed, f'каса в клітинці не лише в дні виплат і сьогодні: {withbal}, дозволено {sorted(allowed)}')
     check(str(t.day) in withbal, 'у клітинці «сьогодні» немає каси')
-    evdays = page.evaluate("[...document.querySelectorAll('.ck-cal .cal-cell')].filter(c=>c.querySelector('.cal-ln,.cal-more')).map(c=>Number(c.querySelector('.cal-dn').textContent))")
+    # v144: список від початку поточного періоду до дня перед наступною зарплатою, тому дні сітки до початку періоду в ньому не показуються
+    lo, hi = list_range(finance_ref(page))
+    evdays = page.evaluate("[...document.querySelectorAll('.ck-cal .cal-cell')].filter(c=>c.querySelector('.cal-ln,.cal-more')).map(c=>c.dataset.date)")
     rows = page.evaluate(ROWS)
-    dates = {int(r['d'][8:]) for r in rows}
-    check(set(evdays) <= dates, f'у таблиці немає дат з подіями: {sorted(set(evdays) - dates)}')
-    check(t.day in dates and any('today' in r['c'] for r in rows), 'у таблиці немає підсвіченого рядка «сьогодні»')
+    isos = {r['d'] for r in rows}
+    want = {d for d in evdays if lo <= d <= hi}
+    check(want <= isos, f'у таблиці немає дат з подіями: {sorted(want - isos)}')
+    check(all(lo <= d <= hi for d in isos), f'у таблиці дати поза {lo}..{hi}: {sorted(d for d in isos if not lo <= d <= hi)}')
+    check(t.isoformat() in isos and any('today' in r['c'] for r in rows), 'у таблиці немає підсвіченого рядка «сьогодні»')
     hd = page.evaluate("document.querySelector('.ck-day').innerText")
     for s in ('Дата', 'Подія', 'Сума', 'Баланс після'):
         check(s in hd, f'у таблиці немає колонки «{s}»')
-    for d in sorted(dates):
+    for d in sorted(isos):
         # рядок прогнозу щоденних витрат (cal-ev-var) підсумовує період і балансу не має
-        rr = [r for r in rows if int(r['d'][8:]) == d and 'cal-ev-var' not in r['c']]
+        rr = [r for r in rows if r['d'] == d and 'cal-ev-var' not in r['c']]
         if not rr:
             continue
-        if d >= t.day:
+        if d >= t.isoformat():
             check(rr[-1]['b'] is not None and rr[-1]['a'].strip() != '', f'{d}: немає балансу після на останньому рядку дня')
         else:
             check(all(r['b'] is None and 'past' in r['c'] for r in rr), f'{d}: минулий рядок не приглушений або з балансом')
@@ -130,6 +134,10 @@ def table_1920(page, t):
     days={d['date']:d for d in projection['days']}
     for d in sorted({r['d'] for r in rows if r['d']>=t.isoformat() and 'cal-ev-var' not in r['c']}):
         last=[r for r in rows if r['d']==d and 'cal-ev-var' not in r['c']][-1]
+        if 'cal-ev-end' in last['c']:
+            # v144: підсумковий рядок списку: каса на кінець дня перед зарплатою
+            check(abs(last['b']-days[d]['closingCashCents']/100)<=1, 'каса перед зарплатою не з проєкції '+d)
+            continue
         # «Баланс після» = cashAfterCents останньої незмінної події дня (змінні витрати дня: у розкладі)
         evs=[e for e in projection['events'] if e['date']==d and e['kind']!='variable']
         want=evs[-1]['cashAfterCents']/100 if evs else days[d]['openingCashCents']/100
@@ -160,14 +168,22 @@ def table_1920(page, t):
     page.wait_for_timeout(300)
 
 
+def list_range(p):
+    """v144: межі списку «Події і баланс» поточного місяця: початок поточного періоду і день перед наступною зарплатою."""
+    from datetime import timedelta
+    n = p['nextPlan']
+    sal = n['nextPayout']['date'] if n['nextPayout']['kind'] == 'salary' else n['followingPayout']['date']
+    return p['currentPeriod']['start'], (date.fromisoformat(sal) - timedelta(days=1)).isoformat()
+
+
 def _var_rows(page):
-    """Таблиця «Події і баланс»: один рядок прогнозу на період у межах місяця, сума й діапазон за подіями рушія."""
+    """Таблиця «Події і баланс»: один рядок прогнозу на кожен період у межах списку (до дня перед зарплатою), сума й діапазон за подіями рушія."""
     from collections import OrderedDict
     p = finance_ref(page)
-    month = page.evaluate("document.querySelector('.ck-cal .cal-cell[data-date]').dataset.date.slice(0,7)")
+    lo, hi = list_range(p)
     groups = OrderedDict()
     for e in p['events']:
-        if e['kind'] != 'variable' or e['date'][:7] != month:
+        if e['kind'] != 'variable' or not lo <= e['date'] <= hi:
             continue
         q = next((q for q in p['periods'] if q['start'] <= e['date'] < q['end']), None)
         g = groups.setdefault(q['start'] if q else month, {'from': e['date'], 'to': e['date'], 'c': 0})
@@ -180,7 +196,9 @@ def _var_rows(page):
         want = f"Щоденні витрати, прогноз: {amount} ₴ ({dm(g['from'])}-{dm(g['to'])})"
         check(r['d'] == g['from'] and r['b'] is None, f'рядок прогнозу не на першій даті або з балансом: {r}')
         check(r['n'].replace(' ', ' ') == want, f'рядок прогнозу {r["n"]!r}, очікувано {want!r}')
-    print(f'      рядки прогнозу: {[r["n"] for r in rows]}')
+    last = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(r=>r.dataset.date).sort().pop()")
+    check(last <= hi and rows and max(g['to'] for g in groups.values()) == hi, f'список не доходить до {hi}: останній рядок {last}')
+    print(f'      рядки прогнозу: {[r["n"] for r in rows]}, список {lo}..{hi}')
 
 
 def breakdown(page, t):

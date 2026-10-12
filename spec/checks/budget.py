@@ -5,7 +5,7 @@ import sys
 
 from datetime import date
 
-from helpers import ROOT, SHOTS, SPEC, check, finance_ref, current_ref, demo_snapshot, freeze, go_tab, num, open_payout, shot
+from helpers import ROOT, SHOTS, SPEC, check, finance_ref, current_ref, demo_snapshot, expand_groups, freeze, go_tab, num, open_payout, shot
 
 FIX = SPEC / 'fixtures' / 'snapshot.json'
 # (дата сьогодні, зміна боргу кредитки або None): звичайний день, день самої виплати, дефіцит, бюджет у мінусі
@@ -104,6 +104,9 @@ def desktop(page):
     pd = num(kpi(page, 'bud-day'))
     want = ref['perDay']
     check(abs(pd - want) <= 1, f'«На день лишилось» {pd}, еталон perDay {want:.2f}')
+    # v144: категорії в групах; закриті групи розгортаємо, щоб побачити всі
+    check(page.locator('.bud-grp').count() >= 2, 'немає груп категорій')
+    expand_groups(page)
     rows = page.evaluate("""[...document.querySelectorAll('.bud-cat')].map(e=>({n:e.querySelector('.bud-name').textContent,
 f:e.querySelector('.bud-nums b').textContent,hot:e.classList.contains('hot'),idle:e.classList.contains('idle')}))""")
     check(len(rows) == page.evaluate('BCAT.length'), f'{len(rows)} категорій замість усіх')
@@ -118,21 +121,41 @@ f:e.querySelector('.bud-nums b').textContent,hot:e.classList.contains('hot'),idl
     page.set_viewport_size({'width': 1920, 'height': 1080})
     page.wait_for_timeout(300)
     shot(page, 'budget-1920.jpg')
-    # клік по категорії, що горить: операції за період і «У Потік»
-    # (знімок на весь екран міняє розмір вікна і скидає стан компонентів, тому вікно спершу високе, знімок без full_page)
+    # v144: клік по категорії відкриває бічну панель: операції періоду, фокус у панелі, Esc закриває і повертає фокус
     name = sorted(spend)[0]
-    for w, hh, f in ((1920, 1300, 'budget-cat-1920.jpg'), (1280, 1400, 'budget-cat-1280.jpg')):
+    for w, hh, f in ((1920, 1080, 'budget-cat-1920.jpg'), (1280, 800, 'budget-cat-1280.jpg')):
         page.set_viewport_size({'width': w, 'height': hh})
         page.wait_for_timeout(300)
-        if page.locator('.bud-ops').count() == 0:
-            page.locator('.bud-cat', has_text=name).click()
-            page.wait_for_timeout(300)
-        n = page.locator('.bud-ops .bud-op').count()
-        check(n == min(20, ops.get(name, 0)), f'{name}: {n} операцій у картці, очікували {ops.get(name, 0)}')
+        btn = page.locator('.bud-cat', has_text=name)
+        btn.click()
+        page.wait_for_timeout(350)
+        drw = page.locator('.cat-drw[role=dialog]')
+        check(drw.count() == 1 and name in drw.locator('.cat-drw-n').inner_text(), f'{name}: бічна панель не відкрилась')
+        check(page.evaluate("document.activeElement&&!!document.activeElement.closest('.cat-drw')"), 'фокус не в бічній панелі')
+        n = drw.locator('.cat-op').count()
+        check(n == ops.get(name, 0), f'{name}: {n} операцій у панелі, очікували {ops.get(name, 0)}')
+        check(page.locator('.bud-ops').count() == 0, 'старий блок операцій під правою колонкою лишився')
         SHOTS.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(SHOTS / f), quality=80, type='jpeg')
-    page.locator('.bud-to-flow').click()
+        page.keyboard.press('Escape')
+        page.wait_for_timeout(250)
+        check(page.locator('.cat-drw').count() == 0, 'Esc не закрив панель')
+        check(page.evaluate("document.activeElement&&document.activeElement.classList.contains('bud-cat')"), 'фокус не повернувся на категорію')
+    page.locator('.bud-cat', has_text=name).click()
+    page.wait_for_timeout(300)
+    page.locator('.cat-drw-bg').click(position={'x': 40, 'y': 400})
+    page.wait_for_timeout(250)
+    check(page.locator('.cat-drw').count() == 0, 'клік по тлу не закрив панель')
+    page.locator('.bud-cat', has_text=name).click()
+    page.wait_for_timeout(300)
+    page.locator('.cat-drw .drw-x').click()
+    page.wait_for_timeout(250)
+    check(page.locator('.cat-drw').count() == 0, '× не закрив панель')
+    page.locator('.bud-cat', has_text=name).click()
+    page.wait_for_timeout(300)
+    page.locator('.cat-drw .bud-to-flow').click()
     page.wait_for_timeout(400)
+    check(page.locator('.cat-drw').count() == 0, 'панель лишилась після переходу в Потік')
     check(page.locator('.p-flow.desk').count() == 1, '«У Потік» не перемкнув вкладку')
     on = page.locator('.flow-cats .flow-chip.on').all_inner_texts()
     check(len(on) == 1 and name in on[0], f'фільтр категорій у Потоці {on}, очікували {name}')

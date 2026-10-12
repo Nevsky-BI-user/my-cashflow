@@ -1,6 +1,6 @@
 # Finance contract: independent amounts, full parity, explicit scenarios.
 import json
-from helpers import check, finance_ref, finance_state, freeze, go_tab, num
+from helpers import check, expand_groups, finance_ref, finance_state, freeze, go_tab, num
 
 DAY = '2026-10-10'
 FIXTURE = {
@@ -56,7 +56,7 @@ def scenario(page):
 def weights(page):
     freeze(page,DAY)
     old=finance_ref(page)
-    freeze(page,DAY, [("id:'food',name:'Продукти',limit:15000", "id:'food',name:'Продукти',limit:30000")])
+    freeze(page,DAY, [("id:'food',groupId:1,name:'Продукти',limit:15000", "id:'food',groupId:1,name:'Продукти',limit:30000")])
     r=finance_ref(page,verify_ts=True)
     food=lambda p:next(c['totalCents'] for c in p['nextPlan']['categories'] if c['id']=='food')
     check(food(r)>food(old), 'подвоєна вага не збільшила план категорії')
@@ -66,6 +66,7 @@ def weights(page):
     go_tab(page,1)
     page.locator('.side-arr').nth(1).click()
     page.wait_for_timeout(200)
+    expand_groups(page)
     row=page.locator('.bud-cat',has_text='Продукти')
     check(abs(num(row.locator('.bud-nums').inner_text().split('/')[1])-food(r)/100)<=1, 'екран категорії не оновив план')
 

@@ -20,6 +20,25 @@ def go_tab(page, i):
     else:
         page.locator('.tab-bar .tab-btn').nth(i).click()
     page.wait_for_timeout(350)
+    settle(page)
+
+
+def settle(page, timeout=1500):
+    """Чекає завершення скінченних CSS-анімацій і докруту сум (data-counting), щоб знімки й тексти були сталі."""
+    try:
+        page.wait_for_function("""()=>!document.querySelector('[data-counting]')&&document.getAnimations().every(a=>{const t=a.effect&&a.effect.getComputedTiming&&a.effect.getComputedTiming();return !t||t.iterations===Infinity||a.playState!=='running'})""", timeout=timeout)
+    except Exception:
+        pass
+
+
+def expand_groups(page):
+    """Бюджет v144: розгорнути всі групи категорій (за замовчуванням відкриті лише групи з фактом)."""
+    for _ in range(20):
+        h = page.locator('.bud-grp-h[aria-expanded=false]')
+        if h.count() == 0:
+            return
+        h.first.click()
+        page.wait_for_timeout(60)
 
 
 def dialog(page, label):
@@ -91,6 +110,7 @@ def freeze(page, iso, patch=None):
     page.reload()
     page.wait_for_selector('.side' if page.viewport_size['width'] >= 1024 else '.tab-bar', timeout=20000)
     page.wait_for_timeout(400)
+    settle(page)
 
 
 def _adj(y, m, d):

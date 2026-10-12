@@ -144,3 +144,111 @@ test('current period tempo: max of the 15 000 floor over the whole period and un
  assert.equal(r.currentPeriod.leftDays,0);assert.equal(r.currentPeriod.remainingTargetCents,0);assert.equal(r.currentPeriod.dailyCents,0);
  assert.equal(sumVar(r,'2026-10-20','2026-10-20'),0);
 });
+
+// v144: ліміти категорій у гривнях (limit_abs). Сума в гривнях іде по черзі sort_order (null в кінці, рівність: id),
+// кожна min(ліміт, що лишилось); залишок ділиться за вагами; ваг немає: «Не розподілено». budget_limit ₴-категорії ігнорується.
+const absCat=(id,limit_abs,sort_order=null,extra={})=>({id,name:'Category '+id,type:'expense',budget_limit:99,limit_abs,sort_order,...extra});
+const weightCat=(id,w)=>({id,name:'Category '+id,type:'expense',budget_limit:w});
+const total=(p,id)=>(p.categories.find(c=>c.id===id)||{}).totalCents;
+// Еталон черги: [[id, ліміт у копійках]] уже в порядку sort_order.
+const queue=(T,list)=>{let left=T;return Object.fromEntries(list.map(([id,cap])=>{const n=Math.min(cap,left);left-=n;return [id,n];}).concat([['__left',left]]));};
+// Суми категорій дорівнюють цілі періоду, розклад по днях сходиться з totalCents, порядок рядків за id (unallocated в кінці).
+const checkTotals=r=>{for(const p of r.periods){
+ const T=p.schedule.length?(p.basis==='current'?r.currentPeriod.remainingTargetCents:p.targetCents):0;
+ assert.equal(p.categories.reduce((s,c)=>s+c.totalCents,0),T,p.basis+' totals = target');
+ for(const c of p.categories)assert.equal(p.schedule.reduce((s,d)=>s+d.byCategory.find(x=>x.id===c.id).amountCents,0),c.totalCents,p.basis+' schedule '+c.id);
+ const ids=p.categories.map(c=>c.id).filter(id=>id!=='unallocated');assert.deepEqual(ids,ids.slice().sort());
+ if(p.categories.some(c=>c.id==='unallocated'))assert.equal(p.categories[p.categories.length-1].id,'unallocated');
+}};
+
+test('limit_abs only: each category gets its sum, the rest goes to Не розподілено',()=>{
+ const d=fixture();d.categories=[absCat('1',3000,2),absCat('2',2000,1)];
+ const r=both(d);checkTotals(r);
+ const cur=r.periods.find(p=>p.basis==='current'),head=r.periods.find(p=>p.basis==='headline');
+ assert.deepEqual(cur.categories,[{id:'1',name:'Category 1',weight:0,limitAbsCents:300000,totalCents:300000},{id:'2',name:'Category 2',weight:0,limitAbsCents:200000,totalCents:200000},{id:'unallocated',name:'Не розподілено',weight:1,totalCents:1000000-500000}]);
+ assert.equal(total(head,'1'),300000);assert.equal(total(head,'2'),200000);assert.equal(total(head,'unallocated'),head.targetCents-500000);
+ assert.ok(r.events.some(e=>e.id.endsWith(':unallocated')&&e.kind==='variable'));
+});
+
+test('limit_abs plus weights: the sum first, the rest by weights without loss, no Не розподілено',()=>{
+ const d=fixture();d.categories=[absCat('1',3000),...[20,15,10,10,5].map((w,i)=>weightCat(String(i+2),w))];
+ const r=both(d);checkTotals(r);
+ for(const p of r.periods){const T=p.basis==='current'?r.currentPeriod.remainingTargetCents:p.targetCents,R=T-300000;
+  assert.equal(total(p,'1'),300000);assert.ok(!p.categories.some(c=>c.id==='unallocated'));
+  [20,15,10,10,5].forEach((w,i)=>assert.ok(Math.abs(total(p,String(i+2))-R*w/60)<1,p.basis+' weight share'));}
+});
+
+test('limit_abs above the budget: queue by sort_order (null last, ties by id), partial then zero',()=>{
+ const d=fixture();d.categories=[absCat('1',5000,2),absCat('2',5000,null),absCat('3',8000,1),absCat('4',1000,2),weightCat('5',10)];
+ const r=both(d);checkTotals(r);
+ for(const p of r.periods){const T=p.basis==='current'?r.currentPeriod.remainingTargetCents:p.targetCents;
+  const q=queue(T,[['3',800000],['1',500000],['4',100000],['2',500000]]);
+  for(const id of ['1','2','3','4'])assert.equal(total(p,id),q[id],p.basis+' '+id);
+  assert.equal(total(p,'5'),q.__left);}
+ // поточний період: 10 000 ₴ = 8 000 (sort 1) + 2 000 частково (sort 2, id 1), далі по 0
+ const cur=r.periods.find(p=>p.basis==='current');
+ assert.deepEqual(cur.categories.map(c=>c.totalCents),[200000,0,800000,0,0]);
+});
+
+test('limit_abs = 0 gives zero and keeps the weights for the others',()=>{
+ const d=fixture();d.categories[0]=absCat('1',0,1);
+ const z=fixture();z.categories[0].budget_limit=0;
+ const r=both(d),w=both(z);checkTotals(r);
+ r.periods.forEach((p,i)=>{assert.equal(total(p,'1'),0);assert.deepEqual(p.categories.map(c=>c.totalCents),w.periods[i].categories.map(c=>c.totalCents));});
+});
+
+test('current period: the sum share is the limit minus the category fact since the period start, not below 0',()=>{
+ const d=fixture();d.categories=[absCat('1',3000,1),...[20,15,10,10,5].map((w,i)=>weightCat(String(i+2),w))];
+ d.transactions=[tx(1,'2026-10-08',{amount:1200,category_id:'1'}),
+  tx(2,'2026-10-09',{amount:700,category_id:1}),
+  tx(3,'2026-10-08',{amount:900,category_id:'1',fixed_id:1}),
+  tx(4,'2026-10-08',{amount:800,category_id:'1',credit_id:99}),
+  tx(5,'2026-10-05',{amount:600,category_id:'1'}),
+  tx(6,'2026-10-08',{amount:500,category_id:'2'}),
+  tx(7,'2026-10-08',{amount:400})];
+ let r=both(d);checkTotals(r);
+ const cur=r.periods.find(p=>p.basis==='current');
+ assert.equal(total(cur,'1'),300000-120000-70000);
+ assert.equal(cur.categories.find(c=>c.id==='1').limitAbsCents,300000);
+ for(const p of r.periods.filter(p=>p.basis!=='current'))assert.equal(total(p,'1'),300000);
+ // факт більший за ліміт: частка 0, усе від завтра за вагами
+ d.transactions.push(tx(8,'2026-10-09',{amount:5000,category_id:'1'}));r=both(d);checkTotals(r);
+ assert.equal(total(r.periods.find(p=>p.basis==='current'),'1'),0);
+ assert.equal(total(r.periods.find(p=>p.basis==='headline'),'1'),300000);
+});
+
+test('limit_abs and sort_order as strings from numeric columns: same rounding and order in TS and Python',()=>{
+ const d=fixture();d.categories=[absCat('1','1234.565','2'),absCat('2','99.994','1'),weightCat('3',10)];
+ const r=both(d);checkTotals(r);
+ const head=r.periods.find(p=>p.basis==='headline');
+ assert.equal(head.categories.find(c=>c.id==='1').limitAbsCents,123457);assert.equal(head.categories.find(c=>c.id==='2').limitAbsCents,9999);
+ const cur=r.periods.find(p=>p.basis==='current');
+ assert.deepEqual(cur.categories.map(c=>c.totalCents),[123457,9999,1000000-123457-9999]);
+});
+
+test('null limit_abs and any sort_order: output identical to the weights-only plan',()=>{
+ const d=fixture();d.categories=d.categories.map((c,i)=>({...c,limit_abs:null,sort_order:[3,null,1][i%3]}));
+ assert.deepEqual(both(d),both(fixture()));
+});
+
+test('legacy nextPeriodPlan applies limit_abs the same way (TS/Python parity)',()=>{
+ const plan=d=>{const input=JSON.stringify([{data:d,asof:'2026-10-10'}]);
+  const ts=run(process.execPath,['spec/ts_next_period.mts'],input),py=run(python,['scripts/budget_pool.py','--next-period'],input);
+  assert.deepEqual(ts,py);assert.equal(ts.categories.reduce((s,c)=>s+c.totalCents,0),ts.targetCents);
+  for(const c of ts.categories)assert.equal(ts.schedule.reduce((s,x)=>s+x.byCategory.find(y=>y.id===c.id).amountCents,0),c.totalCents);
+  return ts;};
+ const d=fixture();d.categories=[absCat('1',3000,2),absCat('2',2000,1),...[10,5].map((w,i)=>weightCat(String(i+3),w))];
+ let p=plan(d);
+ assert.equal(p.categories.find(c=>c.id==='1').totalCents,300000);assert.equal(p.categories.find(c=>c.id==='2').totalCents,200000);
+ assert.ok(!p.categories.some(c=>c.id==='unallocated'));
+ // лише суми в гривнях і більше за бюджет: черга sort_order, без ваг залишок у «Не розподілено»
+ const only=fixture();only.categories=[absCat('1',3000,2),absCat('2',2000,1)];p=plan(only);
+ assert.deepEqual(p.categories.map(c=>c.id),['1','2','unallocated']);
+ assert.equal(p.categories[2].totalCents,p.targetCents-500000);
+ const big=fixture();big.categories=[absCat('1',1e6,2),absCat('2',1e6,1)];p=plan(big);
+ const q=queue(p.targetCents,[['2',1e8],['1',1e8]]);
+ assert.deepEqual(p.categories.map(c=>[c.id,c.totalCents]),[['1',q['1']],['2',q['2']]]);
+ // null limit_abs: як раніше
+ const legacy=fixture();legacy.categories=legacy.categories.map(c=>({...c,limit_abs:null,sort_order:1}));
+ assert.deepEqual(plan(legacy),plan(fixture()));
+});

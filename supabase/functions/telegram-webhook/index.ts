@@ -832,7 +832,7 @@ async function freeBlock(today: string): Promise<string> {
     sb.from('fixed_payments').select('id,name,amount,day_of_month,period,weekday,bank,type,active,credit_ok,variable').eq('active', true),
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
     sb.from('salary_config').select('rate,advance_amount,salary_amount,split_day,advance_day,salary_day,savings_pct').order('id').limit(1).maybeSingle(),
-    sb.from('categories').select('id,name,is_income,budget_limit').order('id'),
+    sb.from('categories').select('id,name,is_income,budget_limit,limit_abs,sort_order,group_id').order('id'),
   ]);
   if (acc.error || fix.error || cred.error || sal.error || cats.error) throw new Error('budget data lookup failed');
   const manual = (acc.data || []).filter((a) => !a.mono_account_id && a.balance_updated_at);

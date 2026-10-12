@@ -207,9 +207,13 @@ def next_period_plan(data, asof):
     eligible=total(a for a,ok in entries if a>0 and ok)
     base=total([total([own,nxt['amountCents']]),-total([mandatory,debt])])
     target=max(1500000,base); gap=total([target,-base]); days=(end-start).days
-    categories=sorted([{'id':str(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit',c.get('limit'))))/100} for c in data.get('categories',[]) if c.get('active') is not False and c.get('type')=='expense'],key=lambda c:c['id'])
+    # категорія з limit_abs: сума в гривнях (budget_limit ігнорується), інакше вага budget_limit
+    expense_cats=[c for c in data.get('categories',[]) if c.get('active') is not False and c.get('type')=='expense']
+    categories=sorted([{'id':str(c['id']),'name':c.get('name') or '','weight':0,'limitAbsCents':max(0,cents(c['limit_abs']))} if c.get('limit_abs') is not None else {'id':str(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit',c.get('limit'))))/100} for c in expense_cats],key=lambda c:c['id'])
     if len({c['id'] for c in categories})!=len(categories): raise ValueError('Duplicate category id')
-    if not any(c['weight']>0 for c in categories): categories = [{'id':'unallocated','name':'Не розподілено','weight':1}]
+    # черга сум у гривнях: sort_order (None в кінці), при рівності id
+    abs_order=[next(i for i,x in enumerate(categories) if x['id']==str(c['id'])) for c in sorted([c for c in expense_cats if c.get('limit_abs') is not None],key=lambda c:(c.get('sort_order') is None,float(c['sort_order']) if c.get('sort_order') is not None else 0,str(c['id'])))]
+    if not abs_order and not any(c['weight']>0 for c in categories): categories = [{'id':'unallocated','name':'Не розподілено','weight':1}]
     def allocate(amount,weights):
         if amount==0: return [0]*len(weights)
         denominator=sum(weights)
@@ -217,7 +221,15 @@ def next_period_plan(data, asof):
         order=sorted(range(len(weights)),key=lambda i:(-(amount*weights[i]%denominator),i))
         for i in order[:amount-sum(values)]: values[i]+=1
         return values
-    totals=allocate(target,[cents(c['weight']) for c in categories]); remaining=totals[:]; balance=base; schedule=[]
+    # суми в гривнях по черзі min(ліміт, що лишилось), залишок за вагами; ваг немає: «Не розподілено»
+    if not abs_order: totals=allocate(target,[cents(c['weight']) for c in categories])
+    else:
+        totals=[0]*len(categories); weights=[0 if 'limitAbsCents' in c else cents(c['weight']) for c in categories]; left=target
+        for i in abs_order:
+            n=min(categories[i]['limitAbsCents'],left); totals[i]=n; left-=n
+        if any(w>0 for w in weights): totals=[t+a for t,a in zip(totals,allocate(left,weights))]
+        elif left>0: categories=categories+[{'id':'unallocated','name':'Не розподілено','weight':1}]; totals.append(left)
+    remaining=totals[:]; balance=base; schedule=[]
     for day in range(days):
         spend=target//days+int(day<target%days)
         amounts=remaining[:] if day==days-1 else allocate(spend,remaining)
@@ -398,20 +410,32 @@ def finance_projection(data, options):
             actual=total(cents(t.get('amount')) for t in txs if sid(t.get('account_id'))==sid(a['id']) and t.get('type')=='expense' and txdate(t)[:7]==month)
             assigned=0 if month==asof[:7] else total(e['amountCents'] for e in events if e['kind']=='mandatory' and sid(e.get('accountId'))==sid(a['id']) and e['date'][:7]==month)
             if actual+assigned<cents(a.get('min_spend')): events.append(make('fee:'+sid(a['id'])+':'+month,d,'Комісія: '+str(a.get('name') or a['id']),'fee',cents(a.get('min_spend_fee')),{'accountId':a['id'],'certainty':'conditional'}))
-    categories=sorted([{'id':sid(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit',c.get('limit'))))/100} for c in data.get('categories',[]) if c.get('active') is not False and c.get('type')=='expense'],key=lambda c:c['id'])
+    # категорія з limit_abs: сума в гривнях (budget_limit ігнорується), інакше вага budget_limit
+    expense_cats=[c for c in data.get('categories',[]) if c.get('active') is not False and c.get('type')=='expense']
+    categories=sorted([{'id':sid(c['id']),'name':c.get('name') or '','weight':0,'limitAbsCents':max(0,cents(c['limit_abs']))} if c.get('limit_abs') is not None else {'id':sid(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit',c.get('limit'))))/100} for c in expense_cats],key=lambda c:c['id'])
     if len({c['id'] for c in categories})!=len(categories): raise ValueError('Duplicate category id')
-    if not any(c['weight']>0 for c in categories): categories=[{'id':'unallocated','name':'Не розподілено','weight':1}]
+    # черга сум у гривнях: sort_order (None в кінці), при рівності id
+    abs_order=[next(i for i,x in enumerate(categories) if x['id']==sid(c['id'])) for c in sorted([c for c in expense_cats if c.get('limit_abs') is not None],key=lambda c:(c.get('sort_order') is None,float(c['sort_order']) if c.get('sort_order') is not None else 0,sid(c['id'])))]
+    if not abs_order and not any(c['weight']>0 for c in categories): categories=[{'id':'unallocated','name':'Не розподілено','weight':1}]
     def allocate(amount,weights):
         if not amount: return [0]*len(weights)
         denominator=sum(weights); values=[amount*w//denominator for w in weights]; indices=sorted(range(len(weights)),key=lambda i:(-(amount*weights[i]%denominator),i))
         for i in indices[:amount-sum(values)]: values[i]+=1
         return values
-    def distribution(target,start,end,available):
-        count=distance(start,end); totals=allocate(target if count>0 else 0,[cents(c['weight']) for c in categories]); remaining=totals[:]; schedule=[]; balance=available
+    # суми в гривнях по черзі min(ліміт, що лишилось), залишок за вагами; ваг немає: «Не розподілено»; caps: ліміти поточного періоду
+    def split(amount,caps=None):
+        if not abs_order: return categories,allocate(amount,[cents(c['weight']) for c in categories])
+        totals=[0]*len(categories); weights=[0 if 'limitAbsCents' in c else cents(c['weight']) for c in categories]; left=amount
+        for i in abs_order:
+            n=min(caps[i] if caps is not None else categories[i]['limitAbsCents'],left); totals[i]=n; left-=n
+        if any(w>0 for w in weights): return categories,[t+a for t,a in zip(totals,allocate(left,weights))]
+        return (categories+[{'id':'unallocated','name':'Не розподілено','weight':1}],totals+[left]) if left>0 else (categories,totals)
+    def distribution(target,start,end,available,caps=None):
+        count=distance(start,end); rows,totals=split(target if count>0 else 0,caps); remaining=totals[:]; schedule=[]; balance=available
         for i in range(count):
             spend=target//count+int(i<target%count); amounts=remaining[:] if i==count-1 else allocate(spend,remaining); remaining=[v-a for v,a in zip(remaining,amounts)]; balance=safe(balance-spend)
-            schedule.append({'date':plus(start,i),'spendCents':spend,'remainingCents':balance,'byCategory':[{'id':c['id'],'name':c['name'],'amountCents':a} for c,a in zip(categories,amounts)]})
-        return {'categories':[{**c,'totalCents':a} for c,a in zip(categories,totals)],'schedule':schedule}
+            schedule.append({'date':plus(start,i),'spendCents':spend,'remainingCents':balance,'byCategory':[{'id':c['id'],'name':c['name'],'amountCents':a} for c,a in zip(rows,amounts)]})
+        return {'categories':[{**c,'totalCents':a} for c,a in zip(rows,totals)],'schedule':schedule}
     def between(start,end): return [e for e in events if start<=e['date']<end and e['kind']!='variable']
     def mandatory(start,end): return total(e['amountCents'] for e in between(start,end) if e['kind'] in ('mandatory','fee'))
     # до наступної виплати: власні кошти мінус обовʼязкові й комісії [asof; виплата); борг карток гаситься з виплати
@@ -425,7 +449,10 @@ def finance_projection(data, options):
         next_plan={'start':next_date,'end':following,'days':distance(next_date,following),'nextPayout':nxt,'followingPayout':after,'positiveOwnCents':own,'debtCents':debt,'mandatoryCents':reserved,'otherIncomeCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='income'),'eligibleMandatoryCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='mandatory' and e.get('creditEligible')),'baseAvailableCents':base,'targetCents':target,'gapCents':max(0,target-base),'averageDailyCents':target/distance(next_date,following),**distribution(target,next_date,following,base)}
         # темп щоденних витрат від завтра до дня перед виплатою: більше з 15 000 ₴ на весь період [start; виплата) і untilPayout на дні, що лишились
         start=next((d for d in reversed(payout_dates) if d<=asof),asof); actual=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start); mandatory_now=mandatory(asof,next_date); available=safe(cash-mandatory_now)
-        period_days=distance(start,next_date); left_days=max(0,distance(plus(asof,1),next_date)); floor_left=1500000*left_days//period_days if period_days>0 else 0; free_left=max(0,until_payout['cents'] if until_payout else 0); remaining=max(floor_left,free_left) if left_days>0 else 0; target=actual+remaining; dist=distribution(remaining,plus(asof,1),next_date,available)
+        period_days=distance(start,next_date); left_days=max(0,distance(plus(asof,1),next_date)); floor_left=1500000*left_days//period_days if period_days>0 else 0; free_left=max(0,until_payout['cents'] if until_payout else 0); remaining=max(floor_left,free_left) if left_days>0 else 0; target=actual+remaining
+        # сума в гривнях на прогноз від завтра: ліміт мінус факт змінних витрат категорії з початку періоду, не нижче 0
+        caps=[max(0,c['limitAbsCents']-total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start and t.get('category_id') is not None and sid(t['category_id'])==c['id'])) if 'limitAbsCents' in c else 0 for c in categories]
+        dist=distribution(remaining,plus(asof,1),next_date,available,caps)
         current_period={'start':start,'end':next_date,'actualVariableCents':actual,'targetCents':target,'remainingTargetCents':remaining,'periodDays':period_days,'leftDays':left_days,'dailyCents':remaining/left_days if left_days>0 else 0,'futureSchedule':dist['schedule']}
         periods.append({'start':start,'end':next_date,'basis':'current','openingCashCents':cash,'payoutCents':0,'mandatoryCents':mandatory_now,'debtReserveCents':0,'availableCents':available,'targetCents':target,'gapCents':max(0,remaining-available),**dist})
         future=[d for d in payout_dates if d>asof]

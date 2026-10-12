@@ -31,11 +31,11 @@ def desktop(page):
     check(mono.count() == 1, 'немає картки monobank')
     mt = mono.inner_text().lower()
     check('monobank' in mt and 'дебетова' in mt and 'оновлено' in mt, f'картка monobank: {mt!r}')
-    # DESIGN.md (третя редакція): картки рахунків однакові, біле тло у світлій темі і графітове в темній, без градієнта
+    # v144 (вимога власника «кольори як у монобанку»): градієнт за банком, білий текст, тінь; mono чорна з відблиском, не така, як Ощад
     bg = mono.evaluate("e=>{const s=getComputedStyle(e);return s.backgroundImage+' | '+s.backgroundColor}")
     bg0 = cards.nth(0).evaluate("e=>{const s=getComputedStyle(e);return s.backgroundImage+' | '+s.backgroundColor}")
-    card = page.evaluate("getComputedStyle(document.querySelector('.dv-kpi')).backgroundColor")
-    check(bg == bg0 and 'gradient' in bg and mono.evaluate("e=>getComputedStyle(e).boxShadow") != 'none', f'картка monobank не така, як інші картки й KPI: {bg[:60]} / {bg0[:60]} / {card}')
+    check('gradient' in bg and 'gradient' in bg0 and bg != bg0, f'картки банків без власних градієнтів: {bg[:60]} / {bg0[:60]}')
+    check(mono.evaluate("e=>getComputedStyle(e).boxShadow") != 'none' and mono.evaluate("e=>getComputedStyle(e.querySelector('.bcard-sum')).color") == 'rgb(255, 255, 255)', 'картка monobank без тіні або не білий текст суми')
     upd = page.locator('.dv-acc-head .dv-mono-upd')
     check(upd.count() == 1 and 'Оновити' in upd.inner_text(), 'немає кнопки «Оновити» для monobank')
     upd.click()

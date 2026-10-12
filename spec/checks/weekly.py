@@ -78,17 +78,11 @@ def weekly_pay(page):
     texts = ev.all_inner_texts()
     btns = [ev.nth(i).locator('.pay-done').count() for i in range(ev.count())]
     print(f'      Календар: {len(texts)} рядків, кнопки {btns}')
-    # 05.10 (минулий тиждень, як минулий місячний: план без оплати) і 12.10 (поточний) мають кнопку, 19.10 і 26.10 ні
-    check(btns == [1, 1, 0, 0], f'«Внести оплату» не лише в поточному і минулому тижні: {btns}')
+    # v144: список «Події і баланс» від початку періоду (06.10) до дня перед зарплатою, тож 05.10 у ньому немає; кнопка лише в поточному тижні 12.10
+    check(len(btns) >= 3 and btns[0] == 1 and not any(btns[1:]), f'«Внести оплату» не лише в поточному тижні: {btns}')
     ev.nth(0).locator('.pay-done').click()
     page.wait_for_timeout(400)
     dlg = dialog(page, 'Нова операція')
-    check(dlg.locator('input[type=date]').input_value() == '2026-10-05', 'оплата минулого тижня не датована його днем')
-    check('05.10-11.10' in dlg.locator('.fx-week').inner_text(), 'у формі минулого тижня немає 05.10-11.10')
-    page.keyboard.press('Escape')
-    page.wait_for_timeout(300)
-    ev.nth(1).locator('.pay-done').click()
-    page.wait_for_timeout(400)
     check(dlg.locator('input[type=date]').input_value() == DAY, 'оплата поточного тижня не сьогоднішня')
     check(dlg.count() == 1, '«Внести оплату» не відкрило форму операції')
     check(dlg.locator('select[aria-label="Постійний платіж"]').input_value() == str(fid), 'у формі не вибрано щотижневий платіж')
@@ -102,6 +96,64 @@ def weekly_pay(page):
     check(f'fixed:{fid}:2026-10-12' not in ids and f'fixed:{fid}:2026-10-19' in ids, f'оплата закрила не той тиждень: {ids[:3]}')
     check(after['currentPeriod']['actualVariableCents'] == before['currentPeriod']['actualVariableCents'], 'оплата щотижневого потрапила у змінні витрати')
     check(after['snapshot']['cashCents'] == before['snapshot']['cashCents'] - 50000, 'оплата не зменшила касу на 500')
+
+
+def _day(page, iso):
+    """ПК: вибрати день у сітці Календаря; повертає рядки «Події дня»."""
+    page.locator(f'.ck-cal .cal-cell[data-date="{iso}"]').click()
+    page.wait_for_timeout(300)
+    return page.locator('.ck-day-events .ck-bd-row')
+
+
+def weekly_pay_past(page):
+    """v144 (рішення координатора, варіант c): минулий день у сітці, розклад дня: «Внести оплату» для неоплаченого обовʼязкового; тиждень 05.10-11.10 оплачується датою 05.10 і після факту кнопки немає; місячна Оренда 01.10 теж має кнопку."""
+    weekly_form(page)
+    fid = [f for f in finance_state(page)['data']['fixed'] if f['name'] == NAME][0]['id']
+    go_tab(page, 3)
+    rows = _day(page, '2026-10-05').filter(has_text=NAME)
+    print(f'      05.10: рядків «{NAME}» {rows.count()}, кнопок {rows.locator(".pay-done").count()}')
+    check(rows.count() == 1 and rows.locator('.pay-done').count() == 1, 'у розкладі 05.10 немає «Внести оплату» минулого тижня')
+    rent = _day(page, '2026-10-01').filter(has_text='Оренда')
+    check(rent.locator('.pay-done').count() == 1, 'у розкладі 01.10 немає «Внести оплату» для неоплаченої Оренди')
+    rows = _day(page, '2026-10-05').filter(has_text=NAME)
+    rows.locator('.pay-done').click()
+    page.wait_for_timeout(400)
+    dlg = dialog(page, 'Нова операція')
+    check(dlg.locator('input[type=date]').input_value() == '2026-10-05', 'оплата минулого тижня не датована його днем')
+    check('05.10-11.10' in dlg.locator('.fx-week').inner_text(), 'у формі минулого тижня немає 05.10-11.10')
+    dlg.locator('.acc-seg button[data-acc="l1"]').click()
+    dlg.locator('.tx-save').click()
+    page.wait_for_timeout(600)
+    d = finance_state(page)['data']
+    tx = [t for t in (d.get('transactions') or d.get('tx') or []) if str(t.get('fixed_id', t.get('fixedId'))) == str(fid)]
+    print(f'      ключі даних: {sorted(d.keys())}; операцій з fixed_id: {[(t.get("date"), t.get("amount")) for t in tx]}')
+    check(any(str(t.get('date', ''))[:10] == '2026-10-05' for t in tx), 'оплата 05.10 не записалась операцією з fixed_id')
+    rows = _day(page, '2026-10-05').filter(has_text=NAME)
+    check(rows.locator('.pay-done').count() == 0, 'після оплати тиждень 05.10 досі з кнопкою')
+    btns = page.locator('.cal-ev', has_text=NAME).locator('.pay-done').count()
+    check(btns == 1, f'у списку кнопок «{NAME}» не 1 (поточний тиждень): {btns}')
+
+
+def paid_no_button(page):
+    """v144: на сплаченому «Внести оплату» немає: розстрочка, сплачена за планом (Ланцюжок 11.10), у списку і розкладі дня на ПК і в «Усі платежі місяця» на телефоні."""
+    freeze(page, DAY)
+    go_tab(page, 3)
+    if page.viewport_size['width'] >= 1024:
+        lst = page.locator('.cal-ev', has_text='Ланцюжок')
+        n0 = (lst.count(), lst.locator('.pay-done').count())
+        day = _day(page, '2026-10-11').filter(has_text='Ланцюжок')
+        n = n0 + (day.count(), day.locator('.pay-done').count())
+        print(f'      ПК Ланцюжок: рядків списку {n[0]}, кнопок {n[1]}; розклад 11.10 {n[2]}, кнопок {n[3]}')
+        check(n[0] >= 1 and n[2] >= 1 and n[1] == 0 and n[3] == 0, f'сплачена розстрочка з кнопкою на ПК: {n}')
+    else:
+        page.locator('details.cm-month summary').click()
+        page.wait_for_timeout(200)
+        r = page.locator('details.cm-month .cm-event', has_text='Ланцюжок')
+        txt = r.first.inner_text()
+        print(f'      телефон: {txt!r}')
+        check('сплачено' in txt and r.first.locator('.pay-done').count() == 0, f'сплачена розстрочка з кнопкою на телефоні: {txt!r}')
+        o = page.locator('details.cm-month .cm-event', has_text='Оренда')
+        check(o.first.locator('.pay-done').count() == 1, 'на телефоні зникла кнопка неоплаченої Оренди')
 
 
 def credit_cash(page):
@@ -274,6 +326,9 @@ def until_line(page):
 CHECKS = [
     ('Постійні щотижня: форма, «щопонеділка», подія щопонеділка', 'desktop', weekly_form),
     ('Постійні щотижня: оплата закриває тиждень', 'desktop', weekly_pay),
+    ('Постійні щотижня: оплата минулого тижня 05.10 з розкладу дня', 'desktop', weekly_pay_past),
+    ('Сплачене без «Внести оплату» на ПК', 'desktop', paid_no_button),
+    ('Сплачене без «Внести оплату» на телефоні', 'mobile', paid_no_button),
     ('Розстрочка: банк «Готівка», «Внести оплату» з credit_id', 'desktop', credit_cash),
     ('Рахунок банку «Готівка»: картка, форма операції, власні кошти', 'desktop', cash_account),
     ('Рахунок банку «Готівка» на телефоні: чип, форма операції, власні кошти', 'mobile', cash_account_mobile),
