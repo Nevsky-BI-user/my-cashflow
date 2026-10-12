@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Монета: демо перельоту</title>
+<style>
+  :root {
+    --teal: #14b8a6; --indigo: #4f46e5; --violet: #a21caf;
+    --brand: linear-gradient(135deg, var(--teal), var(--indigo) 55%, var(--violet));
+    --coin: 56px;       /* монета на картці і в польоті */
+    --burst: 72px;      /* монета в кадрі спалаху тоді ~49 px, як у spin при 56 px */
+    --fly-ms: 600ms;
+    --burst-ms: 700ms;  /* 14 кадрів по 50 мс */
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+    background: #e9ebf3; color: #14162a;
+  }
+  header {
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    padding: 16px; max-width: 1080px; margin: 0 auto;
+  }
+  header h1 { font-size: 18px; margin: 0 auto 0 0; }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 12px; padding: 10px 16px;
+    cursor: pointer; color: #fff; background: var(--brand);
+  }
+  button.ghost { background: #fff; color: #14162a; border: 1px solid #c9cde0; }
+  .themes {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px; padding: 0 16px 16px; max-width: 1080px; margin: 0 auto;
+  }
+
+  /* --- тема картки --- */
+  .panel {
+    position: relative; overflow: hidden; border-radius: 24px; padding: 20px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 56px; min-height: 300px; align-content: center;
+  }
+  .panel.light { --bg: #f6f7fb; --card: #fff; --ink: #14162a; --muted: #5b6078; --line: #e3e6f0; background: var(--bg); color: var(--ink); }
+  .panel.dark { --bg: #0d1020; --card: #171b2f; --ink: #eef0fb; --muted: #9aa0bd; --line: #262b45; background: var(--bg); color: var(--ink); }
+  .panel .label { position: absolute; top: 12px; left: 20px; font-size: 12px; color: var(--muted); }
+
+  .card {
+    position: relative; border-radius: 20px; padding: 16px; background: var(--card);
+    border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(20, 22, 42, .08);
+    display: flex; flex-direction: column; gap: 6px; min-height: 150px;
+  }
+  .card.salary { background: var(--brand); color: #fff; border: 0; }
+  .card .title { font-size: 13px; opacity: .85; }
+  .card .sum { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; align-self: flex-start; }
+  .card.salary .step { color: rgba(255, 255, 255, .82); }
+  .card .step { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  .card .step .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+  .card.done .step .dot { background: var(--teal); }
+  .card.done .step { color: var(--teal); }
+  .card .slot { margin-top: auto; height: var(--coin); display: flex; align-items: center; }
+  .card.target .slot { justify-content: flex-end; }
+  .card.got { animation: got 600ms ease-out; }
+  @keyframes got {
+    0% { box-shadow: 0 0 0 0 rgba(20, 184, 166, .55); }
+    100% { box-shadow: 0 0 0 18px rgba(20, 184, 166, 0); }
+  }
+
+  /* --- монета --- */
+  .coin-idle { width: var(--coin); height: var(--coin); transition: opacity 150ms; }
+  .coin-idle.away { opacity: 0; }
+  .coin-fly {
+    position: absolute; left: 0; top: 0; width: var(--coin); height: var(--coin);
+    pointer-events: none; will-change: transform; z-index: 3;
+    filter: drop-shadow(0 10px 8px rgba(0, 0, 0, .28));
+  }
+  .coin-burst {
+    position: absolute; left: 0; top: 0; width: var(--burst); height: var(--burst);
+    pointer-events: none; z-index: 4;
+    background: url("../assets/coin/coin-burst-sprite.png") 0 0 / calc(var(--burst) * 14) 100% no-repeat;
+    animation: coin-burst var(--burst-ms) steps(14) forwards;
+  }
+  @keyframes coin-burst { to { background-position-x: calc(var(--burst) * -14); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .coin-fly, .coin-burst { display: none; }
+    .card.got { animation: none; }
+  }
+  footer { max-width: 1080px; margin: 0 auto; padding: 0 16px 24px; font-size: 13px; color: #5b6078; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Розподіл зарплати 21-го: монета</h1>
+  <button id="go" type="button">Ощад · житло: переказати 12 000 ₴</button>
+  <button id="reset" class="ghost" type="button">Скинути</button>
+</header>
+
+<main class="themes">
+  <section class="panel light" data-panel>
+    <span class="label">Світла тема</span>
+    <div class="card salary" data-from>
+      <span class="title">Зарплата 21-го</span>
+      <span class="sum" data-sum="salary">48 500 ₴</span>
+      <span class="step">залишок до розподілу</span>
+      <div class="slot"><img class="coin-idle" alt="" width="160" height="160" src="../assets/coin/coin-spin.webp"></div>
+    </div>
+    <div class="card target" data-to>
+      <span class="title">Ощад · житло</span>
+      <span class="sum" data-sum="target">3 200 ₴</span>
+      <span class="step"><span class="dot"></span><span data-step>крок 1 з 6</span></span>
+      <div class="slot"></div>
+    </div>
+  </section>
+
+  <section class="panel dark" data-panel>
+    <span class="label">Темна тема</span>
+    <div class="card salary" data-from>
+      <span class="title">Зарплата 21-го</span>
+      <span class="sum" data-sum="salary">48 500 ₴</span>
+      <span class="step">залишок до розподілу</span>
+      <div class="slot"><img class="coin-idle" alt="" width="160" height="160" src="../assets/coin/coin-spin.webp"></div>
+    </div>
+    <div class="card target" data-to>
+      <span class="title">Ощад · житло</span>
+      <span class="sum" data-sum="target">3 200 ₴</span>
+      <span class="step"><span class="dot"></span><span data-step>крок 1 з 6</span></span>
+      <div class="slot"></div>
+    </div>
+  </section>
+</main>
+<footer>Переліт: coin-flip.webp по дузі, 600 мс, ease-out (Web Animations API). Кінець: спрайт coin-burst, 14 кадрів, 700 мс. Із prefers-reduced-motion одразу кінцевий стан.</footer>
+
+<script>
+(function () {
+  'use strict';
+  var SALARY = 48500, TARGET = 3200, AMOUNT = 12000, FLY_MS = 600, BURST_MS = 700;
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+  var fmt = function (n) { return Math.round(n).toLocaleString('uk-UA').replace(/ /g, ' ') + ' ₴'; };
+  var EASE = 'ease-out';
+  var demo = window.coinDemo = { anims: [], busy: false };
+
+  function center(el, box) {
+    var r = el.getBoundingClientRect();
+    return { x: r.left - box.left + r.width / 2, y: r.top - box.top + r.height / 2 };
+  }
+
+  // Ключові кадри по квадратичній дузі Безьє між центрами карток
+  function arcFrames(a, b, size) {
+    var dist = Math.hypot(b.x - a.x, b.y - a.y);
+    var c = { x: (a.x + b.x) / 2, y: Math.min(a.y, b.y) - (0.35 * dist + 30) };
+    var out = [], N = 16;
+    for (var i = 0; i <= N; i++) {
+      var t = i / N, u = 1 - t;
+      var x = u * u * a.x + 2 * u * t * c.x + t * t * b.x - size / 2;
+      var y = u * u * a.y + 2 * u * t * c.y + t * t * b.y - size / 2;
+      var s = 1 + 0.18 * Math.sin(Math.PI * t);   // ближче до глядача на вершині дуги
+      out.push({ transform: 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) scale(' + s.toFixed(3) + ')' });
+    }
+    return out;
+  }
+
+  // Точка приземлення: праворуч від суми, на її висоті. Резерв під спалах (--burst),
+  // щоб ні монета, ні іскри не закрили число; не вміщається, тоді правий верхній кут.
+  function landing(panel, to, box) {
+    var card = to.getBoundingClientRect();
+    var sum = to.querySelector('[data-sum]').getBoundingClientRect();
+    var half = parseFloat(getComputedStyle(panel).getPropertyValue('--burst')) / 2;
+    var x = card.right - box.left - 12 - half;
+    var y = sum.top - box.top + sum.height / 2;
+    if (x - half < sum.right - box.left + 6) {
+      y = card.top - box.top + 8 + half * 0.7;
+    }
+    return { x: x, y: y };
+  }
+
+  function setFinal(panel) {
+    panel.querySelector('[data-sum="salary"]').textContent = fmt(SALARY - AMOUNT);
+    panel.querySelector('[data-sum="target"]').textContent = fmt(TARGET + AMOUNT);
+    var to = panel.querySelector('[data-to]');
+    to.classList.add('done');
+    to.querySelector('[data-step]').textContent = 'зроблено';
+  }
+
+  function runPanel(panel) {
+    var box = panel.getBoundingClientRect();
+    var idle = panel.querySelector('.coin-idle');
+    var to = panel.querySelector('[data-to]');
+    var size = idle.getBoundingClientRect().width;
+    var a = center(idle, box);
+    var b = landing(panel, to, box);
+
+    var coin = document.createElement('img');
+    coin.className = 'coin-fly';
+    coin.alt = '';
+    coin.src = '../assets/coin/coin-flip.webp';
+    panel.appendChild(coin);
+    idle.classList.add('away');
+
+    var anim = coin.animate(arcFrames(a, b, size), { duration: FLY_MS, easing: EASE, fill: 'forwards' });
+    demo.anims.push(anim);
+
+    var sSum = panel.querySelector('[data-sum="salary"]');
+    var tSum = panel.querySelector('[data-sum="target"]');
+    (function tick() {
+      // прогрес уже з ease-out переліту: число докручується синхронно з монетою
+      var k = anim.effect.getComputedTiming().progress;
+      if (k == null) k = anim.playState === 'finished' ? 1 : 0;
+      sSum.textContent = fmt(SALARY - AMOUNT * k);
+      tSum.textContent = fmt(TARGET + AMOUNT * k);
+      if (anim.playState !== 'finished') requestAnimationFrame(tick);
+    })();
+
+    return anim.finished.then(function () {
+      coin.remove();
+      setFinal(panel);
+      to.classList.add('got');
+      var burst = document.createElement('div');
+      burst.className = 'coin-burst';
+      var bs = parseFloat(getComputedStyle(panel).getPropertyValue('--burst'));
+      burst.style.transform = 'translate(' + (b.x - bs / 2) + 'px,' + (b.y - bs / 2) + 'px)';
+      panel.appendChild(burst);
+      return new Promise(function (done) {
+        burst.addEventListener('animationend', function () { burst.remove(); done(); }, { once: true });
+      });
+    });
+  }
+
+  function reset() {
+    demo.anims.forEach(function (a) { a.cancel(); });
+    demo.anims = [];
+    demo.busy = false;
+    document.querySelectorAll('.coin-fly, .coin-burst').forEach(function (n) { n.remove(); });
+    document.querySelectorAll('[data-panel]').forEach(function (panel) {
+      panel.querySelector('[data-sum="salary"]').textContent = fmt(SALARY);
+      panel.querySelector('[data-sum="target"]').textContent = fmt(TARGET);
+      var to = panel.querySelector('[data-to]');
+      to.classList.remove('done', 'got');
+      to.querySelector('[data-step]').textContent = 'крок 1 з 6';
+      var idle = panel.querySelector('.coin-idle');
+      idle.classList.remove('away');
+      idle.src = reduce.matches ? '../assets/coin/coin-still.webp' : '../assets/coin/coin-spin.webp';
+    });
+  }
+
+  document.getElementById('go').addEventListener('click', function () {
+    if (demo.busy) return;
+    var panels = document.querySelectorAll('[data-panel]');
+    if (reduce.matches) {   // без руху: одразу кінцевий стан
+      panels.forEach(setFinal);
+      return;
+    }
+    demo.busy = true;
+    demo.done = Promise.all(Array.prototype.map.call(panels, runPanel)).then(function () { demo.busy = false; });
+  });
+  document.getElementById('reset').addEventListener('click', reset);
+  reset();
+})();
+</script>
+</body>
+</html>
