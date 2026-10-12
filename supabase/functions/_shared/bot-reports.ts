@@ -54,7 +54,7 @@ export const isKyivHour = (now: Date, hour: number) => kyivNow(now).hour === hou
 // Майбутнє: каса мінус борг на кінець дня рушія плюс зсув positiveOwnCents мінус cashCents.
 export type Point = { date: string; cents: number };
 export type BalanceSeries = {
-  from: string; to: string; today: Point; past: Point[]; future: Point[]; min: Point;
+  from: string; to: string; today: Point; past: Point[]; future: Point[]; min: Point; max: Point;
   payouts: (Point & { kind: string })[]; afterPayout: Point | null;
 };
 
@@ -99,8 +99,9 @@ export function balanceSeries(pr: P, txs: Tx[], accounts: P[], today: string, op
     .map((d: P) => ({ date: d.date, cents: d.closingCashCents - d.debtCents + shift }));
   const todayPt = { date: today, cents: nowCents };
   // Мінімум за весь видимий відрізок (минуле і прогноз), як «мін.» на графіку застосунку; за рівності перша дата
-  let min = past[0] || todayPt;
-  for (const p of [...past, ...future]) if (p.cents < min.cents) min = p;
+  let min: Point = past[0] || todayPt;
+  let max = min;
+  for (const p of [...past, ...future]) { if (p.cents < min.cents) min = p; if (p.cents > max.cents) max = p; }
   const at = (date: string) => past.find((p: Point) => p.date === date) || future.find((p: Point) => p.date === date) || null;
   const payouts: (Point & { kind: string })[] = [];
   // минулі виплати за конфігурацією зарплати (той самий зсув вихідних), майбутні з подій рушія
@@ -123,7 +124,7 @@ export function balanceSeries(pr: P, txs: Tx[], accounts: P[], today: string, op
   const next = pr.untilPayout?.end || null;
   const nd = next ? (pr.days || []).find((d: P) => d.date === next) : null;
   const afterPayout = nd ? { date: next, cents: nd.closingCashCents - nd.debtCents + shift } : null;
-  return { from, to, today: todayPt, past, future, min, payouts, afterPayout };
+  return { from, to, today: todayPt, past, future, min, max, payouts, afterPayout };
 }
 
 export function chartCaption(s: BalanceSeries): string {
@@ -185,6 +186,7 @@ export function formatBudget(m: BudgetModel | null): string {
 export type WeekModel = {
   from: string; to: string; events: { date: string; name: string; kind: string; cents: number; conditional: boolean }[];
   variableCents: number; endBalanceCents: number | null; endCashCents: number | null; gap: { date: string; cents: number } | null;
+  days?: { date: string; spendCents: number; balanceCents: number }[];
 };
 const KINDS = ['payout', 'income', 'mandatory', 'fee', 'repay'];
 
@@ -202,20 +204,39 @@ export function weekModel(pr: P, today: string): WeekModel {
     from: today, to, events, variableCents: days.reduce((n: number, d: P) => n + (d.variableCents || 0), 0),
     endBalanceCents: last ? last.closingCashCents - last.debtCents + shift : null, endCashCents: last ? last.closingCashCents : null,
     gap: neg ? { date: neg.date, cents: -neg.minCashCents } : null,
+    // Кожен день: щоденні витрати за бюджетом і баланс на кінець дня (сьогодні поточний, далі прогноз) за формулою застосунку
+    days: days.map((d: P) => ({ date: d.date, spendCents: d.variableCents || 0, balanceCents: d.closingCashCents - d.debtCents + shift })),
   };
 }
 
 const signed = (c: number) => (c > 0 ? '+' : c < 0 ? '-' : '') + money(Math.abs(c));
 
+const WD = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// Гривні без копійок для таблиці; пробіл тисяч звичайний, щоб моноширинні колонки рівнялись
+const uah = (c: number) => (c < 0 ? '-' : '') + String(Math.round(Math.abs(c) / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
+// Таблиця дня у <pre>: день тижня і дата, щоденні витрати, баланс на кінець дня; сьогодні позначене ▸
+export function weekTable(m: WeekModel): string {
+  const rows = (m.days || []).map((d) => {
+    const wd = WD[new Date(d.date + 'T00:00:00Z').getUTCDay()];
+    return `${d.date === m.from ? '▸' : ' '}${wd} ${day(d.date)} ${uah(d.spendCents).padStart(7)} ${uah(d.balanceCents).padStart(9)}`;
+  });
+  if (!rows.length) return '';
+  return '<pre>' + [' День     Витрати    Баланс', ...rows].join('\n') + '</pre>';
+}
+
+// HTML (parse_mode HTML): таблиця днів, далі події тижня
 export function formatWeek(m: WeekModel): string {
   const lines = [`📅 Тиждень ${day(m.from)}-${day(m.to)}`];
+  const table = weekTable(m);
+  if (table) lines.push('', 'Баланс на кінець дня: сьогодні поточний, далі прогноз, ₴', table);
   if (m.events.length) {
     lines.push('');
-    for (const e of m.events) lines.push(`${day(e.date)} · ${e.name}: ${signed(e.cents)}${e.conditional ? ' (умовно)' : ''}`);
+    for (const e of m.events) lines.push(`${day(e.date)} · ${esc(e.name)}: ${signed(e.cents)}${e.conditional ? ' (умовно)' : ''}`);
   } else lines.push('', 'Обовʼязкових платежів, погашень і виплат немає.');
   if (m.variableCents > 0) lines.push('', `Щоденні витрати за бюджетом: ${money(m.variableCents)} за тиждень`);
   if (m.endBalanceCents != null) lines.push(`Баланс на кінець ${day(m.to)}: ${money(m.endBalanceCents)}`);
-  if (m.gap) lines.push('', `⚠️ Каса піде в мінус ${day(m.gap.date)} на ${money(m.gap.cents)}`);
   return lines.join('\n');
 }
 

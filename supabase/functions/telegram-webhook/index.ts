@@ -79,12 +79,12 @@ const HELP =
 const BTN = { ...KB_BTN, last: '📋 Останні', income: '➕ Дохід', help: '❓ Допомога', yes: '✅ Так, додати', no: '✖ Скасувати' };
 const CONFIRM_KB = { keyboard: [[{ text: BTN.yes }, { text: BTN.no }]], resize_keyboard: true, one_time_keyboard: true };
 
-async function reply(chatId: number, text: string, keyboard: unknown = MAIN_KB) {
+async function reply(chatId: number, text: string, keyboard: unknown = MAIN_KB, html = false) {
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, reply_markup: keyboard }),
+      body: JSON.stringify({ chat_id: chatId, text, reply_markup: keyboard, ...(html ? { parse_mode: 'HTML' } : {}) }),
     });
   } catch (e) {
     console.error('sendMessage failed:', e);
@@ -1113,7 +1113,7 @@ Deno.serve(async (req) => {
   if (/^\/balance$/i.test(text) || text === BTN.balance) await balance(chatId);
   else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, chartReport);
   else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, budgetReport);
-  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today))));
+  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), MAIN_KB, true));
   else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today))));
   else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId);
   else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP);

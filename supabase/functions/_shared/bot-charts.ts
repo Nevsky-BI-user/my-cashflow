@@ -7,7 +7,7 @@ export const FONT = 'Inter';
 const W = 1080, H = 720;
 const C = {
   bg: '#f6f7fb', card: '#ffffff', grid: '#e6e8f0', axis: '#c9cdda', text: '#1f2333', muted: '#6b7083',
-  fact: '#5b5bd6', forecast: '#12a594', neg: '#e5484d', negBg: '#fdeeee', pay: '#30a46c', today: '#5b5bd6',
+  fact: '#5b5bd6', forecast: '#12a594', neg: '#e5484d', negBg: '#fdeeee', pay: '#30a46c', today: '#5b5bd6', max: '#1f8a5b',
 };
 const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -30,7 +30,7 @@ function niceStep(span: number): number {
   return 10 * p;
 }
 
-export type ChartModel = { svg: string; todayXY: [number, number]; minXY: [number, number]; yZero: number | null };
+export type ChartModel = { svg: string; todayXY: [number, number]; minXY: [number, number]; maxXY: [number, number]; yZero: number | null };
 
 export function balanceChartSvg(s: BalanceSeries): ChartModel {
   const L = 130, R = 40, T = 140, B = 92, pw = W - L - R, ph = H - T - B;
@@ -88,7 +88,7 @@ export function balanceChartSvg(s: BalanceSeries): ChartModel {
   if (s.future.length) out.push(`<path d="${path([s.today, ...s.future])}" fill="none" stroke="${C.forecast}" stroke-width="5" stroke-dasharray="14 10" stroke-linejoin="round"/>`);
   // виплати
   for (const p of s.payouts) out.push(`<circle cx="${r1(X(p.date))}" cy="${r1(Y(p.cents))}" r="9" fill="${C.pay}" stroke="#fff" stroke-width="3"/>`);
-  // мінімум і сьогодні з підписами; підпис мінімуму під точкою, сьогодні над нею
+  // мінімум, максимум і сьогодні; мін і макс лише числом, сьогодні виділене підписом
   const todayXY: [number, number] = [tx, Y(s.today.cents)];
   const minXY: [number, number] = [X(s.min.date), Y(s.min.cents)];
   const clampX = (x: number, w: number) => Math.min(L + pw - w / 2, Math.max(L + w / 2, x));
@@ -98,7 +98,12 @@ export function balanceChartSvg(s: BalanceSeries): ChartModel {
     const mx = clampX(minXY[0], 230), below = minXY[1] + 78 < T + ph + 4;
     const my = below ? minXY[1] + 42 : minXY[1] - 52;
     out.push(text(mx, my, money(s.min.cents), { size: 28, weight: 600, fill: C.neg, anchor: 'middle', halo: true }));
-    out.push(text(mx, my + 30, `мінімум ${day(s.min.date)}`, { size: 22, fill: C.muted, anchor: 'middle', halo: true }));
+  }
+  const maxXY: [number, number] = [X(s.max.date), Y(s.max.cents)];
+  if (s.max.date !== s.today.date && s.max.date !== s.min.date) {
+    out.push(`<circle cx="${r1(maxXY[0])}" cy="${r1(maxXY[1])}" r="10" fill="${C.max}" stroke="#fff" stroke-width="3"/>`);
+    const ax = clampX(maxXY[0], 230), up = maxXY[1] - 40 > T - 10;
+    out.push(text(ax, up ? maxXY[1] - 24 : maxXY[1] + 42, money(s.max.cents), { size: 28, weight: 600, fill: C.max, anchor: 'middle', halo: true }));
   }
   out.push(`<circle cx="${r1(todayXY[0])}" cy="${r1(todayXY[1])}" r="12" fill="${sameAsToday ? C.neg : C.today}" stroke="#fff" stroke-width="4"/>`);
   const tX = clampX(todayXY[0], 240), above = todayXY[1] - 76 > T - 10;
@@ -106,7 +111,7 @@ export function balanceChartSvg(s: BalanceSeries): ChartModel {
   out.push(text(tX, tY, sameAsToday ? 'Сьогодні, мінімум' : 'Сьогодні', { size: 22, fill: C.muted, anchor: 'middle', halo: true }));
   out.push(text(tX, tY + 30, money(s.today.cents), { size: 30, weight: 600, fill: s.today.cents < 0 ? C.neg : C.text, anchor: 'middle', halo: true }));
   out.push('</svg>');
-  return { svg: out.join(''), todayXY, minXY, yZero };
+  return { svg: out.join(''), todayXY, minXY, maxXY, yZero };
 }
 
 // ---------- Кільце категорій ----------

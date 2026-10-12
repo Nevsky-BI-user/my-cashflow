@@ -69,7 +69,16 @@ test('Тиждень: події 7 днів, баланс на кінець за
  const t=norm(rep.formatWeek(w));
  assert.ok(t.startsWith('📅 Тиждень 12.10-18.10\n'),t);
  for(const l of['12.10 · Прибирання: -500 ₴','13.10 · Інтернет: -300 ₴','13.10 · Телефон (розстрочка): -1 500 ₴',
-  'Щоденні витрати за бюджетом: 6 000 ₴ за тиждень','Баланс на кінець 18.10: -41 728 ₴','⚠️ Каса піде в мінус 15.10 на 401 ₴'])assert.ok(t.includes(l),l+'\n'+t);
+  'Щоденні витрати за бюджетом: 6 000 ₴ за тиждень','Баланс на кінець 18.10: -41 728 ₴'])assert.ok(t.includes(l),l+'\n'+t);
+ assert.ok(!t.includes('Каса'),'рядка про касу немає\n'+t);
+ // Таблиця: 7 днів з днем тижня, сьогодні ▸, баланс кінця дня за формулою застосунку
+ const pre=t.slice(t.indexOf('<pre>')+5,t.indexOf('</pre>')).split('\n');
+ assert.equal(pre.length,8,t);
+ assert.ok(pre[1].startsWith('▸Пн 12.10'),pre[1]);
+ assert.ok(pre[7].startsWith(' Нд 18.10'),pre[7]);
+ assert.equal(w.days.length,7);
+ for(const d of w.days){const x=pr.days.find(q=>q.date===d.date);assert.equal(d.balanceCents,x.closingCashCents-x.debtCents+pr.snapshot.positiveOwnCents-pr.snapshot.cashCents);assert.equal(d.spendCents,x.variableCents||0)}
+ assert.equal(w.days[6].balanceCents,w.endBalanceCents);
  const empty=norm(rep.formatWeek({from:'2026-10-12',to:'2026-10-18',events:[],variableCents:0,endBalanceCents:100,endCashCents:100,gap:null}));
  assert.ok(empty.includes('Обовʼязкових платежів, погашень і виплат немає.'));
  assert.ok(!empty.includes('мінус'));
@@ -119,7 +128,9 @@ test('Графік: точка «сьогодні» = власні мінус б
  assert.ok(s.payouts.length>=2,'виплати в межах графіка');
  const c=ch.balanceChartSvg(s);
  assert.match(c.svg,/^<svg [^>]*width="1080" height="720"/);
- assert.ok(c.svg.includes('>мінімум '+fm.day(s.min.date)+'<'),'підпис мінімуму з датою');
+ assert.ok(!c.svg.includes('>мінімум '+fm.day(s.min.date)+'<'),'мінімум лише числом');
+ const all2=[...s.past,...s.future];assert.equal(s.max.cents,Math.max(...all2.map(p=>p.cents)));
+ if(s.max.date!==s.today.date&&s.max.date!==s.min.date)assert.ok(c.svg.includes('>'+fm.money(s.max.cents)+'<'),'максимум числом');
  assert.ok(norm(c.svg).includes(norm(fm.money(s.today.cents))),'сума сьогодні на графіку');
  assert.ok(c.svg.includes(`cx="${Math.round(c.todayXY[0]*10)/10}" cy="${Math.round(c.todayXY[1]*10)/10}" r="12"`),'точка сьогодні');
  assert.ok(c.svg.includes('stroke-dasharray'),'прогноз пунктиром');
