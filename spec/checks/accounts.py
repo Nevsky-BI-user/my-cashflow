@@ -109,11 +109,11 @@ def mobile(page):
         check(row.evaluate('e=>e.scrollLeft') > 0, 'ряд рахунків не прокрутився')
         row.evaluate('e=>e.scrollLeft=0')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол сторінки на 375')
-    # головна сума v142 на початку екрана: «Доступно після виплати» з періодом (раніше герой «Вільно до виплати», .o-free)
+    # v145: на початку екрана плитки KPI; «Бюджет періоду» з періодом DD.MM-DD.MM і рядком «Доступно до» (раніше «Доступно після виплати», .dv-free)
     first = page.evaluate("(document.querySelector('.p-overview')||{}).firstElementChild?.className||''")
     check('projection-summary' in first, f'першим на Огляді не підсумок доступних коштів: {first!r}')
-    free = page.locator('.p-overview .projection-summary .dv-free').inner_text().lower()  # підпис у верхньому регістрі (text-transform)
-    check('доступно після виплати' in free and '₴' in free and 'дн.' in free, f'головна сума «Доступно після виплати» з періодом не знайдена: {free!r}')
+    free = page.locator('.p-overview .projection-summary .kpi-budget').inner_text().lower()  # підпис у верхньому регістрі (text-transform)
+    check('бюджет періоду' in free and '₴' in free and _re.search(r'\d\d\.\d\d-\d\d\.\d\d', free) and 'дн.' in free, f'«Бюджет періоду» з періодом не знайдено: {free!r}')
     shot(page, 'ov-375.jpg')
 
 

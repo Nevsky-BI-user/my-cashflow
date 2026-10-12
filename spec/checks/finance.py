@@ -1,5 +1,6 @@
 # Finance contract: independent amounts, full parity, explicit scenarios.
 import json
+import re
 from helpers import check, expand_groups, finance_ref, finance_state, freeze, go_tab, num
 
 DAY = '2026-10-10'
@@ -15,6 +16,12 @@ def fixture(page, data=None):
     # Патч лише локальної демо-відповіді; файли та база не змінюються.
     freeze(page, DAY, [('const baseProjection=financeProjection(financeInput,', 'Object.assign(financeInput,'+json.dumps(data or FIXTURE, ensure_ascii=False)+');const baseProjection=financeProjection(financeInput,')])
 
+def _budget_tip(page):
+    """v145: відкриває підказку плитки «Бюджет періоду» кнопкою «i» (як на телефоні), повертає її текст."""
+    page.locator('.kpi-budget .kpi-i').click()
+    page.wait_for_selector('.kpi-tip[data-k=budget]')
+    return page.inner_text('.kpi-tip[data-k=budget]')
+
 def contract(page):
     fixture(page)
     r=finance_ref(page, verify_ts=True)
@@ -23,8 +30,11 @@ def contract(page):
     check([c['totalCents'] for c in n['categories']]==[600000,300000,225000,150000,150000,75000], 'category allocation differs from 40/20/15/10/10/5')
     check(not any(e['funding']=='credit' for e in r['events']), 'base projection automatically used credit')
     check(any(d['closingCashCents']<0 for d in r['days']), 'signed cash shortfall was hidden')
-    check(num(page.inner_text('.dv-free .dv-kpi-v'))==8800, 'overview does not show8800')
-    page.get_by_role('button',name='Як пораховано',exact=True).click()
+    # v145: «доступно після виплати» живе в підказці плитки «Бюджет періоду»; кнопки там же
+    tip=_budget_tip(page)
+    m=re.search(r'= ([\d\s  ]+(?:,\d+)?) ₴ \(власні', tip)
+    check(m and num(m.group(1))==8800, f'overview does not show8800: {tip!r}')
+    page.locator('.kpi-tip[data-k=budget]').get_by_role('button',name='Як пораховано',exact=True).click()
     check('28' in page.locator('dialog[open]').inner_text(), 'explanation omits mandatory28000')
     page.locator('dialog[open]').get_by_role('button',name='Закрити',exact=True).click()
 
@@ -33,7 +43,8 @@ def scenario(page):
     before=finance_state(page)['data']
     writes=[]
     page.on('request',lambda q:writes.append(q.url) if q.method not in ('GET','HEAD','OPTIONS') else None)
-    page.get_by_role('button',name='Сценарій кредитки',exact=True).click()
+    _budget_tip(page)
+    page.locator('.kpi-tip[data-k=budget]').get_by_role('button',name='Сценарій кредитки',exact=True).click()
     d=page.locator('dialog[open]')
     d.get_by_label('Дозволений платіж').select_option('fixed:1:2026-10')
     d.get_by_label('Кредитний рахунок').select_option('2')
@@ -44,7 +55,7 @@ def scenario(page):
         s=r['scenario']
         check((s['newDebtCents'],s['cashPlanCents'],s['gapCents'])==(amount*100,plan,gap), 'scenario debt/plan/gap mismatch')
         check(s['repayments'][0]['date']=='2026-11-24' and not s['errors'], 'scenario repayment date or errors mismatch')
-        check(num(page.inner_text('.dv-free .dv-kpi-v'))==8800, 'scenario replaced base headline')
+        check(r['nextPlan']['baseAvailableCents']==880000, 'scenario replaced base headline')
     d.get_by_label('Сума перенесення',exact=True).fill('21000')
     d.get_by_role('button',name='Переглянути сценарій').click()
     r=finance_ref(page)
@@ -73,7 +84,8 @@ def weights(page):
 def unavailable(page):
     data=json.loads(json.dumps(FIXTURE));data['fixed'][0]['credit_ok']=False;del data['accounts'][1]['credit_limit']
     fixture(page,data)
-    page.get_by_role('button',name='Сценарій кредитки',exact=True).click()
+    _budget_tip(page)
+    page.locator('.kpi-tip[data-k=budget]').get_by_role('button',name='Сценарій кредитки',exact=True).click()
     d=page.locator('dialog[open]')
     check(d.get_by_label('Дозволений платіж').locator('option').count()==1, 'непридатний платіж доступний')
     check(d.get_by_label('Кредитний рахунок').locator('option').count()==1, 'невідомий ліміт доступний')

@@ -35,7 +35,8 @@ def fit(page):
     freeze(page, DAY)
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(400)
-    for i, name, kmax in ((0, 'Огляд', 128), (3, 'Календар', 90), (4, 'Цілі', 90)):
+    # v145: плитки KPI Огляду з рядками розкладу (готівка, карти, кредитні, «Доступно до»): до 176px, сторінка все одно без прокрутки
+    for i, name, kmax in ((0, 'Огляд', 176), (3, 'Календар', 90), (4, 'Цілі', 90)):
         go_tab(page, i)
         page.wait_for_timeout(300)
         m = page.evaluate(FIT)

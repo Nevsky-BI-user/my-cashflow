@@ -133,6 +133,14 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
         else{const own=Math.min(Math.max(0,balance),amount);balance-=own;const borrowed=amount-own;const m=txDate(t).slice(0,7);buckets[m]=(buckets[m]||0)+borrowed;debt=safe(debt+borrowed);}
       }
     }
+    // v145: кошики за FIFO. Погашення гасять найстаріші кошики, тож залишок боргу складають найновіші витрати рахунку:
+    // борг, не більший за витрати поточного місяця, увесь у поточному місяці; частина понад відомі витрати лишається
+    // в найстаршому збереженому кошику (debt_month), якщо він старший за найранішу витрату.
+    if(a.kind==='credit'&&debt>0){const spent: Record<string,number>={};for(const t of txs)if(String(t.account_id)===String(a.id)&&t.type!=='income'){const m=txDate(t).slice(0,7);spent[m]=(spent[m]||0)+Math.max(0,cents(t.amount));}
+      const ms=Object.keys(spent).filter(m=>spent[m]>0).sort().reverse();
+      if(ms.length){const old=Object.keys(buckets).filter(m=>buckets[m]>0).sort()[0]||month;for(const m of Object.keys(buckets))delete buckets[m];let left=debt;
+        for(const m of ms){if(left<=0)break;const n=Math.min(left,spent[m]);buckets[m]=n;left-=n;}
+        if(left>0){const first=ms[ms.length-1],m=old<first?old:first;buckets[m]=(buckets[m]||0)+left;}}}
     return {...a,balance:balance/100,debt:debt/100,balanceCents:balance,debtCents:debt,debt_months:Object.keys(buckets).sort().filter(m=>buckets[m]>0).map(m=>[m,buckets[m]/100])};
   });
   const stamps=accounts.filter(a=>!a.mono_account_id).map(a=>Date.parse(a.balance_updated_at||'')).filter(Number.isFinite);

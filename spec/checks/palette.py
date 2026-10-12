@@ -1,5 +1,5 @@
 # Кольори категорій і платежів: палітра CAT_PALETTE, унікальність у списку, контраст маркера від 3:1 в обох темах
-from helpers import check, dialog, freeze, go_tab, shot
+from helpers import check, dialog, expand_groups, freeze, go_tab, shot
 
 DAY = '2026-10-08'
 
@@ -74,6 +74,7 @@ def categories(page):
     _contrast(page, pal, 'палітра')
     # Бюджет: тло значка категорії (колір категорії з прозорістю) і смуга (крім перевитрати й неактивних) у кольорі категорії
     go_tab(page, 1)
+    expand_groups(page)  # v145: групи за замовчуванням згорнуті
     rows = page.locator('.bud-cat').evaluate_all(
         "els=>els.map(e=>{const b=e.querySelector('.bud-bar span');return{n:e.querySelector('.bud-name').textContent.trim(),hot:e.classList.contains('hot'),idle:e.classList.contains('idle'),"
         "ico:getComputedStyle(e.querySelector('.bud-ico')).backgroundColor,bar:b?getComputedStyle(b).backgroundColor:null}})")

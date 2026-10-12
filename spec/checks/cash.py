@@ -1,4 +1,4 @@
-# v139 (DESIGN.md п. 12, каса по датах): Огляд з блоком «Баланс» і KPI «Залишок до виплати», Потік «сума, баланс після» з сірим прогнозом,
+# v139 (DESIGN.md п. 12, каса по датах), v145: Огляд з плиткою «Баланс» (власні мінус борг карток), Потік «сума, каса після» з сірим прогнозом,
 # картка кредитного рахунку (мінус борг, доступно, закрити до 24.MM), режим «Календарний місяць» з памʼяттю в localStorage,
 # жодного «до 25.MM» в інтерфейсі. Числа звіряються з еталоном scripts/budget_pool.py (допуск 1 ₴).
 import re
@@ -34,30 +34,31 @@ def _bal_at(ref, iso):
     return rows[-1]['closingCashCents']/100 if rows else ref['startCash']
 
 
+def _kpi_balance(page, ref):
+    """v145: плитка «Баланс» = власні мінус борг кредитних карток (як у боті), рядки «Власні» і «Мінусові», червона при мінусі."""
+    t = page.locator('.kpi-balance')
+    check(t.count() == 1, 'немає плитки «Баланс»')
+    val = num(t.locator('.dv-kpi-v').inner_text())
+    want = ref['ownDebit'] - ref['debt']
+    own = num(t.locator('[data-r=own] .kpi-rv').inner_text())
+    minus = num(t.locator('[data-r=minus] .kpi-rv').inner_text())
+    print(f'      Баланс {val} = власні {own} - борг {abs(minus)}; еталон {want:.2f}')
+    check(abs(val - want) <= 1, f'Баланс {val}, еталон власні {ref["ownDebit"]:.2f} - борг {ref["debt"]:.2f} = {want:.2f}')
+    check(abs(own - ref['ownDebit']) <= 1 and abs(abs(minus) - ref['debt']) <= 1, f'рядки плитки: власні {own}, мінусові {minus}')
+    red = t.locator('.dv-kpi-v').evaluate("e=>e.style.color")
+    check((want < 0) == ('red' in red), f'колір Балансу {red!r} при {want:.2f}')
+
+
 def overview(page):
-    """Огляд 1920x1080: KPI «Залишок до виплати» = каса напередодні виплати, блок «Баланс» (власні, борг до 24.MM, доступно, розстрочки, нетто);
-    сторінка не довша за екран"""
+    """Огляд 1920x1080 (v145): чотири плитки KPI, «Баланс» = власні мінус борг карток за еталоном; сторінка не довша за екран"""
     page.set_viewport_size({'width': 1920, 'height': 1080})
     freeze(page, DAY)
     ref = _ref(page)
     go_tab(page, 0)
-    k = page.locator('.dv-kpi.dv-free')
-    check(k.count() == 1, 'немає головного плану')
-    check('доступно після виплати' in k.inner_text().lower(), 'неправильна назва головної суми')
-    check(abs(num(k.locator('.dv-kpi-v').inner_text())-ref['nextPlan']['baseAvailableCents']/100)<=1, 'головна сума не відповідає проєкції')
-    check(page.locator('.dv-kpi').count() == 4, 'не чотири KPI')
-    bal = page.evaluate("Object.fromEntries([...document.querySelectorAll('.dv-bal [data-b]')].map(e=>[e.dataset.b,e.innerText]))")
-    print(f'      Баланс: {bal}')
-    for key in ('own', 'debt', 'avail', 'rem', 'net'):
-        check(key in bal, f'у блоці «Баланс» немає {key}')
-    own, debt = num(bal['own']), num(bal['debt'].split('\n')[-1])
-    check(abs(own - (ref['ownDebit'] + ref['unassigned'])) <= 1, f'власні {own}, еталон {ref["ownDebit"] + ref["unassigned"]:.2f}')
-    check(abs(abs(debt) - ref['debt']) <= 1, f'борг {debt}, еталон {ref["debt"]:.2f}')
-    check(ref['debt'] <= 0 or 'до 24.' in bal['debt'], f'борг без «до 24.MM»: {bal["debt"]!r}')
-    rem = money(bal['rem'])
-    net = money(bal['net'])
-    print(f'      нетто {net} = власні {own} - борг {abs(debt)} - розстрочки {abs(rem)} -> {own - abs(debt) - abs(rem)}')
-    check(abs(net - (own - abs(debt) - abs(rem))) <= 2, f'нетто {net} != власні {own} - борг {abs(debt)} - розстрочки {abs(rem)}')
+    tiles = page.evaluate("[...document.querySelectorAll('.dv-kpis .kpi-t')].map(e=>e.dataset.k)")
+    check(tiles == ['funds', 'budget', 'balance', 'inst'], f'плитки KPI: {tiles}')
+    _kpi_balance(page, ref)
+    check(page.locator('.dv-bal,.o-bal').count() == 0, 'лишився прибраний блок «Баланс»')
     sh = page.evaluate('document.documentElement.scrollHeight')
     check(sh <= 1080, f'Огляд на 1920x1080 довший за екран: {sh}')
     page.mouse.move(2, 2)
@@ -65,20 +66,16 @@ def overview(page):
 
 
 def overview_mobile(page):
+    """Телефон (v145): ті самі чотири плитки на початку Огляду, «Баланс» за еталоном, блоку «Баланс» немає"""
     freeze(page, DAY)
     ref = _ref(page)
     go_tab(page, 0)
-    b = page.locator('.p-overview .o-bal')
-    check(b.count() == 1, 'на телефоні немає блоку «Баланс»')
     order = page.evaluate("[...document.querySelector('.p-overview').children].map(e=>String(e.className))")
-    ia = next((i for i, c in enumerate(order) if 'o-accs' in c), -1)
-    ib = next((i for i, c in enumerate(order) if 'o-bal' in c), -1)
-    check(ia >= 0 and next((i for i, c in enumerate(order) if 'o-next' in c), -1) == ia + 1 and ib > ia + 1, f'«Баланс» не після найближчих платежів: {order}')
-    cash = page.inner_text('.o-bal [data-b="cash"]')
-    print(f'      телефон: {cash!r}')
-    check('Залишок до виплати' in cash, f'рядок каси: {cash!r}')
-    v = num(page.inner_text('.o-bal [data-b="cash"] .bal-v'))
-    check(abs(v - ref['cashBeforePayout']) <= 1, f'каса до виплати {cash!r}, еталон {ref["cashBeforePayout"]:.2f}')
+    check(order and 'projection-summary' in order[0], f'плитки KPI не першим блоком: {order}')
+    tiles = page.evaluate("[...document.querySelectorAll('.p-overview .projection-summary .kpi-t')].map(e=>e.dataset.k)")
+    check(tiles == ['funds', 'budget', 'balance', 'inst'], f'плитки KPI на телефоні: {tiles}')
+    _kpi_balance(page, ref)
+    check(page.locator('.o-bal').count() == 0, 'на телефоні лишився прибраний блок «Баланс»')
     page.mouse.move(2, 2)
     shot(page, 'v139-ov-375.jpg')
 
@@ -89,13 +86,13 @@ return {day:p?p.innerText.split(String.fromCharCode(10))[0]:'',bal:b.innerText,c
 
 
 def flow(page):
-    """Потік 1920: колонка «Сума», потім «Баланс після»; майбутні планові рядки: сірий «прогноз X» = каса на кінець дня за еталоном"""
+    """Потік 1920: колонка «Сума», потім «Каса після» (v145: «баланс» лише власні мінус борг); майбутні планові рядки: сірий «прогноз X» = каса на кінець дня за еталоном"""
     page.set_viewport_size({'width': 1920, 'height': 1080})
     freeze(page, DAY)
     ref = _ref(page)
     go_tab(page, 2)
     hd = [x.strip().upper() for x in page.inner_text('.p-flow.desk .flow-head').split('\n') if x.strip()]
-    check('СУМА' in hd and 'БАЛАНС ПІСЛЯ' in hd and hd.index('СУМА') + 1 == hd.index('БАЛАНС ПІСЛЯ'), f'порядок колонок: {hd}')
+    check('СУМА' in hd and 'КАСА ПІСЛЯ' in hd and hd.index('СУМА') + 1 == hd.index('КАСА ПІСЛЯ'), f'порядок колонок: {hd}')
     rows = page.evaluate(FLOW_ROWS)
     check(rows, 'у Потоці немає майбутніх планових рядків')
     tx = page.evaluate("(()=>{const b=document.querySelector('.p-flow.desk .flow-row.tx .flow-bal');return b?getComputedStyle(b).color:null})()")
@@ -196,9 +193,9 @@ def month_mode(page):
 
 
 CHECKS = [
-    ('Огляд: наступний план і фактичний баланс за проєкцією, 1920x1080', 'desktop', overview),
-    ('Огляд на телефоні: блок «Баланс» після рахунків', 'mobile', overview_mobile),
-    ('Потік: «Сума», потім «Баланс після», сірий прогноз за еталоном', 'desktop', flow),
+    ('Огляд: плитки KPI, «Баланс» за еталоном, 1920x1080', 'desktop', overview),
+    ('Огляд на телефоні: плитки KPI, «Баланс» за еталоном', 'mobile', overview_mobile),
+    ('Потік: «Сума», потім «Каса після», сірий прогноз за еталоном', 'desktop', flow),
     ('Картка кредитки: мінус борг, доступно, закрити до 24-го', 'desktop', credit_card),
     ('Жодного «до 25.MM» на вкладках', 'desktop', no_25),
     ('Режим «Календарний місяць»: localStorage, факт + план днів місяця', 'desktop', month_mode),

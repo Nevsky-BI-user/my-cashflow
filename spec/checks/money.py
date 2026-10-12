@@ -1,5 +1,6 @@
 # Гроші по рахунках (DESIGN.md, третя редакція 08.10.2026): паритет cashCore з еталоном scripts/budget_pool.py,
 # поріг мінімальних витрат Ощаду (п. 11), обовʼязковий рахунок у формі операції, чип «Без рахунку», обмежений готівкою бюджет, підписи прогнозу без накладань.
+import re
 from helpers import check, finance_ref, finance_state, dialog, freeze, go_tab, num, shot
 
 DAY = '2026-10-08'
@@ -14,7 +15,12 @@ def parity(page):
     r=finance_ref(page,verify_ts=True)
     check(len(finance_state(page)['data']['transactions'])>=4, 'немає фікстурних операцій')
     check(r['snapshot']['unassignedAdjustmentCents']==-20000, 'без рахунку: 100-300=-200')
-    check(abs(num(page.inner_text('.dv-free .dv-kpi-v'))-r['nextPlan']['baseAvailableCents']/100)<=1, 'головна сума не збігається з проєкцією')
+    # v145: «доступно після виплати» у підказці плитки «Бюджет періоду»
+    page.locator('.kpi-budget .kpi-i').click()
+    tip=page.inner_text('.kpi-tip[data-k=budget]')
+    m=re.search(r'= (−?[\d\s  ]+(?:,\d+)?) ₴ \(власні', tip)
+    check(m and abs(num(m.group(1))-r['nextPlan']['baseAvailableCents']/100)<=1, f'головна сума не збігається з проєкцією: {[x for x in tip.split(chr(10)) if "Доступно після" in x]!r}')
+    page.keyboard.press('Escape')
     check(len({e['id'] for e in r['events']})==len(r['events']), 'події дублюються')
     shot(page,'money-parity-1920.jpg',full=False)
 
@@ -98,11 +104,11 @@ def budget_capped(page):
 
 
 def forecast_labels(page):
-    """Графік прогнозу на ПК: щонайменше два підписи мін./макс., без накладань один на одного."""
+    """Графік «Гроші в часі» на ПК (v145): підписи «Сьогодні» і «мін.», без накладань один на одного."""
     page.set_viewport_size({'width': 1920, 'height': 900})
     freeze(page, DAY)
-    bb = page.evaluate("[...document.querySelectorAll('.fc-lbl')].map(e=>{const r=e.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom,e.textContent]})")
-    check(len(bb) >= 2, f'підписів мін./макс. {len(bb)}')
+    bb = page.evaluate("[...document.querySelectorAll('.dv-fc .fc-today,.dv-fc .fc-min-l')].map(e=>{const r=e.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom,e.textContent]})")
+    check(len(bb) >= 2, f'підписів сьогодні/мін. {len(bb)}')
     check(any('мін.' in b[4] for b in bb), f'немає підпису глобального мінімуму «мін.»: {[b[4] for b in bb]}')
     for i in range(len(bb)):
         for j in range(i + 1, len(bb)):

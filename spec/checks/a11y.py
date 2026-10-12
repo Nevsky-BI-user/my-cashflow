@@ -89,9 +89,10 @@ def _contrast_desktop(page, theme):
     page.evaluate(f"document.documentElement.setAttribute('data-theme','{theme}')")
     page.wait_for_timeout(150)
     print(f'      тема {theme}')
-    lbl = page.evaluate_handle("[...document.querySelectorAll('.dv-kpi div')].find(e=>/доступно після виплати/i.test(e.innerText)&&!e.children.length)")
+    # v145: плитка «Бюджет періоду» замість «Доступно після виплати»
+    lbl = page.evaluate_handle("[...document.querySelectorAll('.kpi-budget .kpi-head *')].find(e=>/бюджет періоду/i.test(e.innerText)&&!e.children.length)")
     fut = page.evaluate_handle("[...document.querySelectorAll('.dv-near .dv-ev span span')].find(e=>/^через /.test(e.innerText))")
-    _pairs(page, [('підпис KPI', lbl), ('«через N дн.»', fut), ('доступно після виплати', '.dv-free .dv-kpi-v')])
+    _pairs(page, [('підпис KPI', lbl), ('«через N дн.»', fut), ('бюджет періоду', '.kpi-budget .dv-kpi-v')])
     go_tab(page, 2)
     _pairs(page, [('баланс після операції', '.flow-bal'), ('сума витрати', ".flow-row.tx[data-type=out] .flow-amt")])
     _pairs(page, [('фактичне надходження', '.flow-row.tx[data-type=in] .flow-amt')])

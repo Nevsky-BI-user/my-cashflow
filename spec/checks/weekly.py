@@ -268,13 +268,16 @@ def debt_minus(page):
     freeze(page, DAY)
     go_tab(page, 0)
     near = page.evaluate("[...document.querySelectorAll('.dv-near .dv-ev')].filter(e=>e.textContent.includes('Погашення')).map(e=>e.lastElementChild.textContent)")
-    rng = page.locator('.dv-fc input.fc-range')
+    # v145: день прогнозу: бокс перехрестя графіка «Гроші в часі» на даті погашення (клавіатура від сьогодні)
+    import datetime
     fc = []
-    for i in range(60):
-        rng.evaluate(SETR, i)
-        if page.locator('.fc-day .fc-debt').count():
-            fc = page.evaluate("[...document.querySelectorAll('.fc-day .fc-debt')].map(e=>e.lastElementChild.textContent)")
-            break
+    rep0 = next((e for e in finance_ref(page)['events'] if e['kind'] == 'repay' and e['date'] > DAY), None)
+    if rep0:
+        page.locator('.dv-fc .fc-plot').focus()
+        for _ in range((datetime.date.fromisoformat(rep0['date']) - datetime.date.fromisoformat(DAY)).days):
+            page.keyboard.press('ArrowRight')
+        fc = page.evaluate("[...document.querySelectorAll('.dv-fc .fc-box .fc-tip-ev')].filter(e=>e.textContent.includes('Погашення')).map(e=>e.lastElementChild.textContent)")
+        page.keyboard.press('Escape')
     go_tab(page, 3)
     repay = [e for e in finance_ref(page)['events'] if e['kind'] == 'repay' and e['date'][:7] == DAY[:7]]
     check(repay, 'немає погашення в поточному місяці')
@@ -306,14 +309,13 @@ def _until_text(u):
 
 
 def until_line(page):
-    """Огляд: рядок «Доступно до» з untilPayout у блоці Баланс, текст як у боті."""
-    desk = page.viewport_size['width'] >= 1024
+    """Огляд: рядок «Доступно до» з untilPayout у плитці «Бюджет періоду» (v145), текст як у боті."""
     freeze(page, DAY)
     go_tab(page, 0)
     u = finance_ref(page)['untilPayout']
     check(u and u['days'] > 0, 'немає untilPayout у демо')
     want = _until_text(u)
-    sel = '.dv-bal [data-b=until]' if desk else '.o-bal [data-b=until]'
+    sel = '.kpi-budget [data-r=until]'
     loc = page.locator(sel)
     check(loc.count() == 1, f'немає рядка «Доступно до» ({sel})')
     norm = lambda x: x.replace(' ', ' ').strip()

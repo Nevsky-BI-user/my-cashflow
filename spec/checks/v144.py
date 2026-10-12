@@ -17,6 +17,7 @@ def drawer_desktop(page):
     freeze(page, DAY)
     go_tab(page, 1)
     check(page.locator('.bud-ops').count() == 0, 'лишився блок «операції за період» унизу правої колонки')
+    expand_groups(page)  # v145: групи за замовчуванням згорнуті
     btn = page.locator('.bud-grp.open .bud-cat').first
     name = btn.locator('.bud-name').inner_text()
     btn.click()
@@ -55,6 +56,7 @@ def drawer_mobile(page):
     """Телефон: рядок категорії відкриває панель знизу на всю ширину; × і Esc закривають."""
     freeze(page, DAY)
     go_tab(page, 1)
+    expand_groups(page)  # v145: групи за замовчуванням згорнуті
     row = page.locator('.bud-mrow').first
     check(row.count() == 1, 'на телефоні немає рядків категорій у групах')
     row.click()
@@ -81,7 +83,8 @@ def drawer_mobile(page):
 
 
 def groups(page):
-    """Групи за sort_order; відкриті лише групи з фактом; сума групи = сума її категорій; без group_id: «Інше»."""
+    """Групи за sort_order; v145: усі згорнуті за замовчуванням, рядок групи розгортає (клік, Enter, Space), стан памʼятається;
+    сума групи = сума її категорій; без group_id: «Інше»."""
     freeze(page, DAY)
     go_tab(page, 1)
     gs = page.evaluate("""[...document.querySelectorAll('.bud-grp')].map(g=>({id:g.dataset.g,open:g.querySelector('.bud-grp-h').getAttribute('aria-expanded')==='true',
@@ -89,10 +92,26 @@ n:g.querySelector('.bud-grp-n').firstChild.textContent,s:g.querySelector('.bud-g
     order = page.evaluate("BGROUPS.slice().sort((a,b)=>a.sort_order-b.sort_order).map(g=>String(g.id))")
     ids = [g['id'] for g in gs]
     check(ids == [i for i in order if i in ids], f'порядок груп {ids}, очікували за sort_order {order}')
-    check(any(g['open'] for g in gs) and any(not g['open'] for g in gs), 'немає ні відкритих, ні закритих груп за замовчуванням')
-    for g in gs:
-        fact = num(g['s'].split('/')[0])
-        check(g['open'] == (fact > 0), f'група {g["n"]}: відкрита {g["open"]} при факті {fact}')
+    check(gs and not any(g['open'] for g in gs), f'групи не згорнуті за замовчуванням: {[g["n"] for g in gs if g["open"]]}')
+    check(page.locator('.bud-grp .bud-cat:visible').count() == 0, 'у згорнутих групах видно категорії')
+    h0 = page.locator('.bud-grp-h').first
+    rot = lambda: page.evaluate("getComputedStyle(document.querySelector('.bud-grp .bud-grp-chev')).transform")
+    r0 = rot()
+    h0.click()
+    page.wait_for_timeout(300)
+    check(h0.get_attribute('aria-expanded') == 'true' and page.locator('.bud-grp').first.locator('.bud-cat:visible').count() > 0, 'клік не розгорнув групу')
+    check(rot() != r0, f'шеврон не обернувся: {r0} -> {rot()}')
+    h0.focus()
+    page.keyboard.press('Enter')
+    page.wait_for_timeout(200)
+    check(h0.get_attribute('aria-expanded') == 'false', 'Enter не згорнув групу')
+    page.keyboard.press('Space')
+    page.wait_for_timeout(200)
+    check(h0.get_attribute('aria-expanded') == 'true', 'Space не розгорнув групу')
+    page.reload()
+    page.wait_for_timeout(600)
+    go_tab(page, 1)
+    check(page.locator('.bud-grp-h').first.get_attribute('aria-expanded') == 'true', 'розгорнута група не запамʼяталась після перезавантаження')
     expand_groups(page)
     rows = page.evaluate("""[...document.querySelectorAll('.bud-grp')].map(g=>({n:g.querySelector('.bud-grp-n').firstChild.textContent,s:g.querySelector('.bud-grp-s').textContent,
 c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').textContent,v:c.querySelector('.bud-nums').textContent}))}))""")
@@ -247,11 +266,11 @@ def motion(page):
     """Поява блоків і докрут сум завершуються; при prefers-reduced-motion анімацій і докруту немає."""
     freeze(page, DAY)
     check(page.locator('[data-counting]').count() == 0, 'докрут сум не завершився')
-    v1 = page.inner_text('.dv-free .dv-kpi-v')
+    v1 = page.inner_text('.kpi-budget .dv-kpi-v')
     go_tab(page, 1)
     go_tab(page, 0)
     page.wait_for_timeout(50)
-    check(page.locator('[data-counting]').count() == 0 and page.inner_text('.dv-free .dv-kpi-v') == v1, 'докрут повторився при поверненні на вкладку')
+    check(page.locator('[data-counting]').count() == 0 and page.inner_text('.kpi-budget .dv-kpi-v') == v1, 'докрут повторився при поверненні на вкладку')
     page.emulate_media(reduced_motion='reduce')
     page.reload()
     page.wait_for_selector('.side', timeout=20000)

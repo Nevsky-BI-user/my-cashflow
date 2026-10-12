@@ -252,3 +252,14 @@ test('legacy nextPeriodPlan applies limit_abs the same way (TS/Python parity)',(
  const legacy=fixture();legacy.categories=legacy.categories.map(c=>({...c,limit_abs:null,sort_order:1}));
  assert.deepEqual(plan(legacy),plan(fixture()));
 });
+
+// v145: budget_limit null при заданому limit: Python бере limit, як TS (budget_limit ?? limit), в обох режимах
+test('budget_limit null falls back to limit in TS and Python (finance and next period)',()=>{
+ const d=fixture();d.categories=d.categories.map((c,i)=>i<3?{id:c.id,name:c.name,type:c.type,budget_limit:null,limit:c.budget_limit}:c);
+ const r=both(d),ref=both(fixture());
+ assert.deepEqual(r.currentPeriod,ref.currentPeriod);assert.deepEqual(r.nextPlan,ref.nextPlan);
+ const input=JSON.stringify([{data:d,asof:'2026-10-10'}]);
+ const ts=run(process.execPath,['spec/ts_next_period.mts'],input),py=run(python,['scripts/budget_pool.py','--next-period'],input);
+ assert.deepEqual(ts,py);
+ assert.ok(ts.categories.filter(c=>['1','2','3'].includes(c.id)).every(c=>c.totalCents>0));
+});

@@ -6,7 +6,8 @@ from helpers import check, dialog, finance_ref, current_ref, demo_snapshot, free
 
 TODAY = '2026-10-08'
 # o-ms-list: поріг мінімальних витрат рахунку (п. 11), у демо в Ощаду він є
-ORDER = ['projection-summary', 'o-accs', 'o-next', 'dv-fc', 'o-bal', 'o-ms-list', 'o-budget', 'o-recent', 'o-weeks', 'o-strip', 'o-ccy']
+# v145: блок «Баланс» (o-bal) прибрано, баланс у плитці KPI
+ORDER = ['projection-summary', 'o-accs', 'o-next', 'dv-fc', 'o-ms-list', 'o-budget', 'o-recent', 'o-weeks', 'o-strip', 'o-ccy']
 
 
 def _spent(page, start, today):
@@ -38,11 +39,13 @@ def mobile_today(page):
     shown = len(chips)
     ref = finance_ref(page)
     n = ref['nextPlan']
-    hero = num(page.inner_text('.dv-free .dv-kpi-v'))
-    check(abs(hero-n['baseAvailableCents']/100)<=1, 'герой не дорівнює плану наступного періоду')
-    check('доступно після виплати' in page.inner_text('.projection-summary').lower(), 'немає назви плану')
-    fs = page.evaluate("getComputedStyle(document.querySelector('.dv-free .dv-kpi-v')).fontSize")
-    check(float(fs.removesuffix('px')) >= 28, f'кегль героя {fs}')
+    # v145: плитка «Бюджет періоду» = план змінних витрат поточного періоду мінус витрачено (cashCore), як у Бюджеті
+    core = page.evaluate("(()=>{const c=window.__cashCore;return [c.varPoolCur,c.spent]})()")
+    hero = num(page.inner_text('.kpi-budget .dv-kpi-v'))
+    check(abs(hero-(core[0]-core[1]))<=1, f'«Бюджет періоду» {hero}, а план {core[0]} мінус витрачено {core[1]}')
+    check('бюджет періоду' in page.inner_text('.projection-summary').lower(), 'немає назви «Бюджет періоду»')
+    fs = page.evaluate("getComputedStyle(document.querySelector('.kpi-budget .dv-kpi-v')).fontSize")
+    check(float(fs.removesuffix('px')) >= 18, f'кегль суми плитки {fs}')
     lbl = page.evaluate("[...document.querySelectorAll('.o-strip div')].filter(e=>/^(Дохід|Витрати|Залишок)$/i.test(e.innerText.trim())).map(e=>getComputedStyle(e).fontSize)")
     check(len(lbl) == 3 and all(x == '11px' for x in lbl), f'підписи стрічки періоду: {lbl}')
     nxt = page.locator('.o-next .o-next-row')
@@ -62,9 +65,9 @@ def recent_to_flow(page):
 
 
 def pay_period(page):
-    # період у «Доступно після виплати» є кнопкою «Налаштувати зарплату»: працює з клавіатури, відкриває форму зарплати
-    b = page.locator('.p-overview .dv-free .ps-period')
-    check(b.count() == 1, 'період «Доступно після виплати» не кнопка')
+    # період у плитці «Бюджет періоду» (v145) є кнопкою «Налаштувати зарплату»: працює з клавіатури, відкриває форму зарплати
+    b = page.locator('.p-overview .kpi-budget .ps-period')
+    check(b.count() == 1, 'період «Бюджет періоду» не кнопка')
     check(b.get_attribute('title') == 'Налаштувати зарплату', f'підказка кнопки періоду: {b.get_attribute("title")!r}')
     lbl = b.get_attribute('aria-label') or ''
     check(b.inner_text() in lbl and 'налаштувати зарплату' in lbl.lower(), f'aria-label кнопки періоду: {lbl!r}')

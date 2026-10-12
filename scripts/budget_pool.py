@@ -209,7 +209,7 @@ def next_period_plan(data, asof):
     target=max(1500000,base); gap=total([target,-base]); days=(end-start).days
     # категорія з limit_abs: сума в гривнях (budget_limit ігнорується), інакше вага budget_limit
     expense_cats=[c for c in data.get('categories',[]) if c.get('active') is not False and c.get('type')=='expense']
-    categories=sorted([{'id':str(c['id']),'name':c.get('name') or '','weight':0,'limitAbsCents':max(0,cents(c['limit_abs']))} if c.get('limit_abs') is not None else {'id':str(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit',c.get('limit'))))/100} for c in expense_cats],key=lambda c:c['id'])
+    categories=sorted([{'id':str(c['id']),'name':c.get('name') or '','weight':0,'limitAbsCents':max(0,cents(c['limit_abs']))} if c.get('limit_abs') is not None else {'id':str(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit') if c.get('budget_limit') is not None else c.get('limit')))/100} for c in expense_cats],key=lambda c:c['id'])
     if len({c['id'] for c in categories})!=len(categories): raise ValueError('Duplicate category id')
     # черга сум у гривнях: sort_order (None в кінці), при рівності id
     abs_order=[next(i for i,x in enumerate(categories) if x['id']==str(c['id'])) for c in sorted([c for c in expense_cats if c.get('limit_abs') is not None],key=lambda c:(c.get('sort_order') is None,float(c['sort_order']) if c.get('sort_order') is not None else 0,str(c['id'])))]
@@ -297,6 +297,21 @@ def finance_projection(data, options):
                     else:
                         own=min(max(0,balance),amount); balance-=own; borrowed=amount-own; m=txdate(t)[:7]
                         buckets[m]=buckets.get(m,0)+borrowed; debt=safe(debt+borrowed)
+        # v145: кошики за FIFO, як у budget.ts: залишок боргу складають найновіші витрати рахунку, частина понад відомі
+        # витрати лишається в найстаршому збереженому кошику, якщо він старший за найранішу витрату
+        if a.get('kind')=='credit' and debt>0:
+            spent={}
+            for t in txs:
+                if sid(t.get('account_id'))==sid(a['id']) and t.get('type')!='income':
+                    m=txdate(t)[:7]; spent[m]=spent.get(m,0)+max(0,cents(t.get('amount')))
+            ms=sorted((m for m in spent if spent[m]>0),reverse=True)
+            if ms:
+                old=(sorted(m for m in buckets if buckets[m]>0) or [month])[0]; buckets={}; left=debt
+                for m in ms:
+                    if left<=0: break
+                    n=min(left,spent[m]); buckets[m]=n; left-=n
+                if left>0:
+                    m=old if old<ms[-1] else ms[-1]; buckets[m]=buckets.get(m,0)+left
         a.update(balance=balance/100,debt=debt/100,balanceCents=balance,debtCents=debt,debt_months=[[m,buckets[m]/100] for m in sorted(buckets) if buckets[m]>0]); accounts.append(a)
     stamps=[]
     for a in accounts:
@@ -412,7 +427,7 @@ def finance_projection(data, options):
             if actual+assigned<cents(a.get('min_spend')): events.append(make('fee:'+sid(a['id'])+':'+month,d,'Комісія: '+str(a.get('name') or a['id']),'fee',cents(a.get('min_spend_fee')),{'accountId':a['id'],'certainty':'conditional'}))
     # категорія з limit_abs: сума в гривнях (budget_limit ігнорується), інакше вага budget_limit
     expense_cats=[c for c in data.get('categories',[]) if c.get('active') is not False and c.get('type')=='expense']
-    categories=sorted([{'id':sid(c['id']),'name':c.get('name') or '','weight':0,'limitAbsCents':max(0,cents(c['limit_abs']))} if c.get('limit_abs') is not None else {'id':sid(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit',c.get('limit'))))/100} for c in expense_cats],key=lambda c:c['id'])
+    categories=sorted([{'id':sid(c['id']),'name':c.get('name') or '','weight':0,'limitAbsCents':max(0,cents(c['limit_abs']))} if c.get('limit_abs') is not None else {'id':sid(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit') if c.get('budget_limit') is not None else c.get('limit')))/100} for c in expense_cats],key=lambda c:c['id'])
     if len({c['id'] for c in categories})!=len(categories): raise ValueError('Duplicate category id')
     # черга сум у гривнях: sort_order (None в кінці), при рівності id
     abs_order=[next(i for i,x in enumerate(categories) if x['id']==sid(c['id'])) for c in sorted([c for c in expense_cats if c.get('limit_abs') is not None],key=lambda c:(c.get('sort_order') is None,float(c['sort_order']) if c.get('sort_order') is not None else 0,sid(c['id'])))]

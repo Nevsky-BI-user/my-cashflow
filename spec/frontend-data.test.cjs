@@ -97,3 +97,45 @@ test('deliberate account adjustment saves both displayed balances with a fresh r
  assert.equal(out.payload.balance,0);assert.equal(out.payload.debt,3200);assert.equal(out.payload.debt_month,'2026-09-01');
  assert.ok(Date.parse(out.payload.balance_updated_at)>Date.parse(raw.balance_updated_at));
 });
+// v145: «Гроші в часі»: минула крива власних = власні сьогодні мінус підписані операції власних рахунків після дня
+const pastLine=html.split(/\r?\n/).find(line=>line.startsWith('function pastOwnSeries('));
+const pastOwnSeries=new Function(pastLine+'\nreturn pastOwnSeries;')();
+test('past own curve: today is the anchor, later operations are reversed day by day',()=>{
+ const txs=[
+  {id:1,account_id:1,type:'expense',amount:100,date:'2026-10-12'},
+  {id:2,account_id:1,type:'income',amount:1000,date:'2026-10-11'},
+  {id:3,account_id:2,type:'expense',amount:50.5,date:'2026-10-11'},
+  {id:4,account_id:9,type:'expense',amount:700,date:'2026-10-11'},
+  {id:5,account_id:null,type:'expense',amount:30,date:'2026-10-10'},
+  {id:6,account_id:1,type:'expense',amount:999,date:'2026-10-09'},
+  {id:7,account_id:1,type:'expense',amount:5,date:'2026-10-13'},
+ ];
+ const r=pastOwnSeries(txs,['1','2',''],251900,'2026-10-09','2026-10-12');
+ assert.deepEqual(r.map(x=>x.date),['2026-10-09','2026-10-10','2026-10-11','2026-10-12']);
+ // 12.10: якір; 11.10: мінус сьогоднішня витрата 100 повертається (+100); 10.10: мінус дохід 1000 і плюс витрата 50,50 (рахунок 9 кредитний, не власний); 09.10: плюс 30 без рахунку
+ assert.deepEqual(r.map(x=>x.cents),[251900-100000+5050+10000+3000,251900-100000+5050+10000,251900+10000,251900]);
+ // операція в перший день діапазону і після сьогодні не впливає
+ assert.equal(r[0].cents,r[1].cents+3000);
+});
+test('past own curve: without unassigned key operations without account are ignored; empty range',()=>{
+ const txs=[{id:1,account_id:null,type:'expense',amount:30,date:'2026-10-12'},{id:2,account_id:'a',type:'expense',amount:10,date:'2026-10-12'}];
+ assert.deepEqual(pastOwnSeries(txs,['a'],0,'2026-10-11','2026-10-12').map(x=>x.cents),[1000,0]);
+ assert.deepEqual(pastOwnSeries(txs,['a'],0,'2026-10-13','2026-10-12'),[]);
+ assert.equal(pastOwnSeries([],['a'],5,'2024-01-01','2026-10-12').length,1016);
+});
+// v145: кільце бюджету: частки менше 3 % (дві й більше) в «Інші», відсотки разом 100, перевищення плану
+const donutLine=html.split(/\r?\n/).find(line=>line.startsWith('function budDonutData('));
+const budDonutData=new Function(donutLine+'\nreturn budDonutData;')();
+test('budget donut: small shares merge into Others, percents sum to 100, over-plan flags',()=>{
+ const rows=[{id:'a',name:'A',fact:600,plan:500},{id:'b',name:'B',fact:333.33,plan:400},{id:'c',name:'C',fact:20,plan:10},{id:'d',name:'D',fact:15,plan:50},{id:'e',name:'E',fact:0,plan:100},{id:'n',name:'Без категорії',fact:31.67,plan:0,noPlan:true}];
+ const d=budDonutData(rows);
+ assert.equal(Math.round(d.total*100),100000);
+ assert.deepEqual(d.segs.map(s=>s.id),['a','b','n','__other']);
+ assert.deepEqual(d.segs.find(s=>s.id==='__other').members.map(m=>m.id),['c','d']);
+ assert.equal(d.segs.reduce((s,x)=>s+x.pct,0),100);
+ assert.deepEqual(d.segs.map(s=>s.pct),[60,33,3,4]);
+ assert.deepEqual(d.segs.map(s=>s.over),[true,false,false,true]);
+ // одна мала частка не зливається
+ assert.deepEqual(budDonutData([{id:'a',fact:98,plan:0},{id:'b',fact:2,plan:5}]).segs.map(s=>[s.id,s.pct]),[['a',98],['b',2]]);
+ assert.deepEqual(budDonutData([{id:'a',fact:0,plan:5}]).segs,[]);
+});

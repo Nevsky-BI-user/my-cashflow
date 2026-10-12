@@ -117,7 +117,7 @@ def table_1920(page, t):
     check(all(lo <= d <= hi for d in isos), f'у таблиці дати поза {lo}..{hi}: {sorted(d for d in isos if not lo <= d <= hi)}')
     check(t.isoformat() in isos and any('today' in r['c'] for r in rows), 'у таблиці немає підсвіченого рядка «сьогодні»')
     hd = page.evaluate("document.querySelector('.ck-day').innerText")
-    for s in ('Дата', 'Подія', 'Сума', 'Баланс після'):
+    for s in ('Дата', 'Подія', 'Сума', 'Каса після'):  # v145: «баланс» лише власні мінус борг
         check(s in hd, f'у таблиці немає колонки «{s}»')
     for d in sorted(isos):
         # рядок прогнозу щоденних витрат (cal-ev-var) підсумовує період і балансу не має
@@ -138,7 +138,7 @@ def table_1920(page, t):
             # v144: підсумковий рядок списку: каса на кінець дня перед зарплатою
             check(abs(last['b']-days[d]['closingCashCents']/100)<=1, 'каса перед зарплатою не з проєкції '+d)
             continue
-        # «Баланс після» = cashAfterCents останньої незмінної події дня (змінні витрати дня: у розкладі)
+        # «Каса після» = cashAfterCents останньої незмінної події дня (змінні витрати дня: у розкладі)
         evs=[e for e in projection['events'] if e['date']==d and e['kind']!='variable']
         want=evs[-1]['cashAfterCents']/100 if evs else days[d]['openingCashCents']/100
         check(abs(last['b']-want)<=1, 'баланс календаря не з єдиної проєкції '+d)
@@ -214,7 +214,7 @@ def breakdown(page, t):
     page.wait_for_timeout(250)
     check(cal.locator('.cal-cell.sel').count() == 1, 'клік не виділив день')
     side = page.inner_text('.ck-day')
-    check(f'РОЗКЛАД БАЛАНСУ · {int(iso[8:])} ' in side.upper(), f'шапка розкладу: {side[:60]!r}')
+    check(f'РОЗКЛАД КАСИ · {int(iso[8:])} ' in side.upper(), f'шапка розкладу: {side[:60]!r}')
     st = page.locator('.ck-bd-st').inner_text()
     check('Стартова каса' in st, f'немає стартової каси: {st!r}')
     tot = page.locator('.ck-bd-tot').inner_text()
