@@ -236,7 +236,6 @@ export function formatWeek(m: WeekModel): string {
     for (const e of m.events) lines.push(`${day(e.date)} · ${esc(e.name)}: ${signed(e.cents)}${e.conditional ? ' (умовно)' : ''}`);
   } else lines.push('', 'Обовʼязкових платежів, погашень і виплат немає.');
   if (m.variableCents > 0) lines.push('', `Щоденні витрати за бюджетом: ${money(m.variableCents)} за тиждень`);
-  if (m.endBalanceCents != null) lines.push(`Баланс на кінець ${day(m.to)}: ${money(m.endBalanceCents)}`);
   return lines.join('\n');
 }
 
