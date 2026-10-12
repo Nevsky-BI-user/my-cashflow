@@ -73,8 +73,9 @@ def chart(page):
     vis = _visible(info['first'], t)
     check(chips == [[r, names[r]] for r in vis], f'чипи діапазону: {chips}, а не {vis}')
     check(info['pressed'] == ['q'], f'за замовчуванням не «±3 міс.»: {info["pressed"]}')
-    # постійна мітка «Сьогодні: власні · баланс» (баланс = власні мінус борг кредиток)
-    exp = 'Сьогодні: ' + _money(snap['positiveOwnCents']) + ' · баланс ' + _money(snap['positiveOwnCents'] - snap['creditDebtCents'])
+    # v148: крива в балансі (власні мінус борг кредиток), постійна мітка лише «Сьогодні: баланс»
+    bal, shift = snap['positiveOwnCents'] - snap['creditDebtCents'], snap['positiveOwnCents'] - snap['cashCents']
+    exp = 'Сьогодні: ' + _money(bal)
     check(info['today'] == exp, f'мітка сьогодні {info["today"]!r}, а не {exp!r}')
     payouts = sorted({e['date'] for e in ref['events'] if e['kind'] == 'payout'})
     for r in vis:
@@ -93,7 +94,7 @@ def chart(page):
         pays = [d for d in (payouts if info['to'] <= ref['days'][-1]['date'] else _payouts_through(page, info['to'])) if _iso(t) < d <= info['to']]
         check(info['pays'] == len(pays), f'{r}: маркерів виплат {info["pays"]}, а не {len(pays)}')
         # мінімум у підсумку = червона точка; не вище каси прогнозу в діапазоні
-        mins = [d['closingCashCents'] for d in ref['days'] if _iso(t) < d['date'] <= info['to']] + [snap['positiveOwnCents']]  # v146: точка сьогодні = власні
+        mins = [d['netCents'] + shift for d in ref['days'] if _iso(t) < d['date'] <= info['to']] + [bal]  # v148: баланс, точка сьогодні = плитка «Баланс»
         check(info['minV'] <= min(mins), f'{r}: мінімум {info["minV"]} вище мінімуму прогнозу {min(mins)}')
         s = info['sum']
         check(re.match(r'^мін\. [−+][\d ]+ ₴ \d\d\.\d\d · макс\. [−+][\d ]+ ₴ \d\d\.\d\d · сьогодні −?[\d ]+ ₴', s), f'{r}: рядок підсумку {s!r}')
@@ -122,6 +123,7 @@ def chart(page):
     rows = page.evaluate("[...document.querySelectorAll('.dv-near .dv-ev')].map(e=>({t:e.innerText,f:e.classList.contains('future'),o:getComputedStyle(e).opacity}))")
     want = 5 if page.viewport_size['width'] < 1400 or page.viewport_size['height'] < 860 else 8  # compactNear: 5, інакше 8
     check(len(rows) == want, f'у «Найближче» {len(rows)} подій, а не {want}')
+    check('Щоденні витрати' not in page.inner_text('.dv-near'), 'у «Найближче» лишився рядок «Щоденні витрати, прогноз» (v148: прибрано)')
     for r in rows:
         fut = 'через' in r['t']
         check(fut == r['f'], f'клас .future не відповідає даті: {r}')
@@ -165,11 +167,12 @@ def hover(page):
     box = page.locator('.dv-fc .fc-box')
     check(box.count() == 1 and page.locator('.dv-fc .fc-cross').count() == 1, 'наведення не показало перехрестя з боксом')
     tt = box.inner_text()
-    check(re.search(r'^(Пн|Вт|Ср|Чт|Пт|Сб|Нд) \d\d\.\d\d', tt) and 'власні ≈' in tt and 'факт' in tt, f'бокс минулого дня: {tt!r}')
+    split = lambda s: 'Баланс ' in s and 'Власні ' in s and 'Кредитні ' in s  # v148: баланс, власні й кредитні лише в підказці
+    check(re.search(r'^(Пн|Вт|Ср|Чт|Пт|Сб|Нд) \d\d\.\d\d', tt) and split(tt) and 'факт' in tt, f'бокс минулого дня: {tt!r}')
     page.mouse.move(b['x'] + b['width'] - 20, y)
     page.wait_for_timeout(60)
     tt = box.inner_text()
-    check('прогноз' in tt and 'власні ≈' in tt, f'бокс майбутнього дня: {tt!r}')
+    check('прогноз' in tt and split(tt), f'бокс майбутнього дня: {tt!r}')
     shot(page, 'ov-hover-1920.jpg', full=False)
     page.mouse.move(2, 2)
     page.wait_for_timeout(60)

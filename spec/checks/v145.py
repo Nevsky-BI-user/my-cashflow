@@ -128,6 +128,8 @@ def donut_desktop(page):
         freeze(page, DAY)
         go_tab(page, 0)
         segs = _donut(page, '.dv-main', '.dv-main .dv-bud-v')
+        # v148: нижче 840px Огляд ПК прокручується сторінкою, тож кільце спершу в поле зору
+        page.locator('.dv-main .bd-ring').scroll_into_view_if_needed()
         k = next(i for i, s in enumerate(segs) if not s['id'].startswith('__'))
         _hover_seg(page, '.dv-main', segs, k)
         tip = _norm(page.inner_text('.bd-tip .bd-tip-h')) if page.locator('.bd-tip').count() else ''

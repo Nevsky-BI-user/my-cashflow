@@ -42,7 +42,7 @@ test('failed second page never publishes partial savings or financial transactio
 
 const functionCode=name=>html.split(/\r?\n/).find(line=>line.startsWith('const '+name+'=')).slice(('const '+name+'=').length,-1);
 const categoryRow=new Function('return '+functionCode('categoryRow'))();
-function categoryContext(fail=false){
+function categoryContext(fail=false,absLims={}){
  const records=[{id:1,name:'A',budget_limit:40},{id:2,name:'B',budget_limit:60}];
  const state={cats:records.map(categoryRow),limits:{1:40,2:60},error:'',closed:false,name:'Leisure'};
  const sb={from(table){assert.equal(table,'categories');let operation='select',payload,which;
@@ -53,7 +53,7 @@ function categoryContext(fail=false){
     if(operation==='insert'){const row={...payload,id:3};records.push(row);return {data:row,error:null};}
     return {data:records.map(r=>({...r})),error:null};
    }).then(resolve,reject)}};return q;}};
- const context={sb,categoryRow,activeCats:state.cats,wCats:state.cats,allCats:state.cats,budgetLimits:{1:25,2:75},lockedCats:{},budgetSaveLock:{current:false},
+ const context={sb,categoryRow,activeCats:state.cats,wCats:state.cats,allCats:state.cats,budgetLimits:{1:25,2:75},lockedCats:{},absLims,budgetSaveLock:{current:false},
   setBudgetBusy:()=>{},setBudgetError:v=>state.error=v,setShowBudgetEdit:v=>state.closed=!v,
   setDbCats:v=>state.cats=typeof v==='function'?v(state.cats):v,
   newCatName:state.name,newCatPct:20,PALETTE:['#888'],session:{user:{id:'synthetic-user'}},
@@ -63,6 +63,10 @@ function categoryContext(fail=false){
 test('weight save persists refreshed values and stays open on partial server failure',async()=>{
  let x=categoryContext();await x.run('saveBudgetWeights');assert.equal(x.state.closed,true);assert.deepEqual(x.state.cats.map(c=>c.limit),[25,75]);assert.equal(x.context.budgetSaveLock.current,false);
  x=categoryContext(true);await x.run('saveBudgetWeights');assert.equal(x.state.closed,false);assert.ok(x.state.error);assert.deepEqual(x.state.cats.map(c=>c.limit),[25,60]);assert.equal(x.context.budgetSaveLock.current,false);
+});
+test('v148: a category switched to UAH saves limit_abs with zero weight, a percent category clears limit_abs',async()=>{
+ const x=categoryContext(false,{2:8000});await x.run('saveBudgetWeights');assert.equal(x.state.closed,true);
+ assert.deepEqual(x.state.cats.map(c=>[c.limit,c.limitAbs]),[[25,null],[0,8000]]);
 });
 test('category creation writes the requested relative weight and retains the draft on error',async()=>{
  let x=categoryContext();await x.run('createBudgetCategory');assert.equal(x.records.length,3);assert.equal(x.records[2].budget_limit,25);assert.equal(x.records[2].user_id,'synthetic-user');assert.equal(x.state.cats[2].name,'Leisure');assert.equal(x.state.name,'');assert.equal(Object.values(x.state.limits).reduce((a,b)=>a+b,0),100);

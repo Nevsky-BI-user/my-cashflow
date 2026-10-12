@@ -309,6 +309,14 @@ def _until_text(u):
 
 
 def until_line(page):
+    """v148 (п. 5): рядок «Доступно до» з плитки «Бюджет періоду» прибрано; untilPayout лишається в рушії й боті."""
+    freeze(page, DAY)
+    go_tab(page, 0)
+    check(page.locator('.kpi-budget [data-r=until]').count() == 0, 'у плитці лишився рядок «Доступно до»')
+    check(finance_ref(page)['untilPayout'], 'немає untilPayout у рушії')
+
+
+def until_line_v145(page):
     """Огляд: рядок «Доступно до» з untilPayout у плитці «Бюджет періоду» (v145), текст як у боті."""
     freeze(page, DAY)
     go_tab(page, 0)
@@ -335,6 +343,6 @@ CHECKS = [
     ('Рахунок банку «Готівка»: картка, форма операції, власні кошти', 'desktop', cash_account),
     ('Рахунок банку «Готівка» на телефоні: чип, форма операції, власні кошти', 'mobile', cash_account_mobile),
     ('Погашення кредитки з мінусом у всіх списках', 'desktop', debt_minus),
-    ('Огляд ПК: «Доступно до» з untilPayout як у боті', 'desktop', until_line),
-    ('Огляд телефона: «Доступно до» з untilPayout як у боті', 'mobile', until_line),
+    ('Огляд ПК: «Доступно до» прибрано з плитки бюджету (v148)', 'desktop', until_line),
+    ('Огляд телефона: «Доступно до» прибрано з плитки бюджету (v148)', 'mobile', until_line),
 ]

@@ -89,7 +89,8 @@ def chart_trim(page):
 
 
 def chart_today_own(page):
-    """Каса не дорівнює власним (monobank у мінусі): мітка, підсумок, точка «сьогодні» і кінець кривої минулого = власні з плиток."""
+    """Каса не дорівнює власним (monobank у мінусі). v148: мітка, підсумок, точка «сьогодні» і кінець кривої минулого = плитка «Баланс»
+    (власні мінус борг кредиток); власні й кредитні лише в підказці точки."""
     page.set_viewport_size({'width': 1920, 'height': 900})
     freeze(page, DAY, NEG_MONO)
     ref = finance_ref(page)
@@ -98,11 +99,16 @@ def chart_today_own(page):
     print(f'      власні {own / 100:.2f}, каса {cash / 100:.2f}')
     check(own != cash, f'фікстура: каса {cash} дорівнює власним {own}')
     info = page.evaluate(INFO)
-    exp = 'Сьогодні: ' + _money(own) + ' · баланс ' + _money(own - snap['creditDebtCents'])
+    bal = own - snap['creditDebtCents']
+    exp = 'Сьогодні: ' + _money(bal)
     check(_norm(info['today']) == exp, f'мітка {info["today"]!r}, а не {exp!r}')
-    check(_norm(info['sum']).rstrip().endswith('сьогодні ' + _money(own)), f'підсумок {info["sum"]!r} без «сьогодні {_money(own)}»')
+    check(page.locator('.dv-fc .fc-today-bal').count() == 0, 'лишився окремий підпис «баланс» біля мітки')
+    check(_norm(info['sum']).rstrip().endswith('сьогодні ' + _money(bal)), f'підсумок {info["sum"]!r} без «сьогодні {_money(bal)}»')
     sr = _today_point(page)
-    check('факт' in sr and sr.endswith('власні ' + _money(own)), f'точка сьогодні {sr!r}, а не власні {_money(own)}')
+    want = 'баланс ' + _money(bal) + ', власні ' + _money(own) + ', кредитні ' + _money(-snap['creditDebtCents'])
+    check('факт' in sr and sr.endswith(want), f'точка сьогодні {sr!r}, а не {want!r}')
+    tile = num(page.locator('.kpi-balance .dv-kpi-v').inner_text())
+    check(abs(tile - bal / 100) <= 1, f'плитка «Баланс» {tile}, а графік {bal / 100:.2f}')
     kpi = num(page.locator('.kpi-funds [data-r=cards] .kpi-rv').inner_text()) + num(page.locator('.kpi-funds [data-r=cash] .kpi-rv').inner_text())
     check(abs(kpi - own / 100) <= 1, f'плитка: готівка + карти {kpi}, а власні {own / 100:.2f}')
 

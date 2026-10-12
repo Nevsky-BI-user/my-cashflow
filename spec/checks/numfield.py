@@ -81,9 +81,33 @@ def budget(page):
     check(total() == 100, f'після вводу 10 розподілено {total()}%')
     check(abs(sum(vals()) - 100) < 0.6, f'сума повзунків після вводу {sum(vals())}')
 
+def unlock_all(page):
+    """v148: категорії за замовчуванням розблоковані (кнопки «Розблокувати всі» немає); замок лишається,
+    а якщо хоч одна заблокована, кнопка «Розблокувати всі» вгорі вікна знімає всі замки."""
+    go_tab(page, 1)
+    page.click('.dact')
+    page.wait_for_timeout(500)
+    sh = page.locator('.sheet').last
+    locks = sh.locator('button[aria-label="Розблокувати"]')
+    check(locks.count() == 0, f'на старті заблоковано {locks.count()} категорій')
+    check(sh.locator('.bud-unlock-all').count() == 0, 'кнопка «Розблокувати всі» без жодного замка')
+    sh.locator('button[aria-label="Заблокувати"]').nth(0).click()
+    sh.locator('button[aria-label="Заблокувати"]').nth(0).click()
+    page.wait_for_timeout(150)
+    check(locks.count() == 2, f'після двох кліків заблоковано {locks.count()}')
+    btn = sh.locator('.bud-unlock-all button', has_text='Розблокувати всі')
+    check(btn.count() == 1, 'немає кнопки «Розблокувати всі» при заблокованих категоріях')
+    top = sh.locator('.bud-unlock-all').bounding_box()['y']
+    first = sh.locator('button[aria-label="Заблокувати"], button[aria-label="Розблокувати"]').first.bounding_box()['y']
+    check(top < first, 'кнопка «Розблокувати всі» не вгорі вікна')
+    btn.click()
+    page.wait_for_timeout(150)
+    check(locks.count() == 0 and sh.locator('.bud-unlock-all').count() == 0, f'після «Розблокувати всі» заблоковано {locks.count()}')
+
 
 CHECKS = [
     ('Зарплата: повзунок і ввід ставки', 'desktop', salary),
     ('Зарплата: повзунок і ввід ставки', 'mobile', salary),
     ('Розподіл бюджету тримає 100%', 'desktop', budget),
+    ('v148: Розподіл бюджету: «Розблокувати всі»', 'desktop', unlock_all),
 ]

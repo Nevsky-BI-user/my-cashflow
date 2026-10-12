@@ -113,7 +113,8 @@ def mobile(page):
     first = page.evaluate("(document.querySelector('.p-overview')||{}).firstElementChild?.className||''")
     check('projection-summary' in first, f'першим на Огляді не підсумок доступних коштів: {first!r}')
     free = page.locator('.p-overview .projection-summary .kpi-budget').inner_text().lower()  # підпис у верхньому регістрі (text-transform)
-    check('бюджет періоду' in free and '₴' in free and _re.search(r'\d\d\.\d\d-\d\d\.\d\d', free) and 'дн.' in free, f'«Бюджет періоду» з періодом не знайдено: {free!r}')
+    # v148: без дат періоду; рядки «Доступно» і «Щоденні витрати ... /день»
+    check('бюджет періоду' in free and '₴' in free and 'доступно' in free and '/день' in free and not _re.search(r'\d\d\.\d\d-\d\d\.\d\d', free), f'«Бюджет періоду» без рядків «Доступно» і «/день»: {free!r}')
     shot(page, 'ov-375.jpg')
 
 

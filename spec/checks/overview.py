@@ -1,5 +1,6 @@
 # Мобільний Огляд за DESIGN.md «Огляд, телефон» (третя редакція): порядок блоків, рахунки чипами, герой «Вільно до виплати» проти еталона
 # «Вільно» = змінний бюджет періоду (scripts/budget_pool.py на демо-знімку) мінус витрати періоду від виплати до сьогодні.
+import re
 from datetime import date
 
 from helpers import check, dialog, finance_ref, current_ref, demo_snapshot, freeze, num, open_payout, shot
@@ -39,10 +40,14 @@ def mobile_today(page):
     shown = len(chips)
     ref = finance_ref(page)
     n = ref['nextPlan']
-    # v145: плитка «Бюджет періоду» = план змінних витрат поточного періоду мінус витрачено (cashCore), як у Бюджеті
-    core = page.evaluate("(()=>{const c=window.__cashCore;return [c.varPoolCur,c.spent]})()")
+    # v148: плитка «Бюджет періоду» = бюджет на старт періоду після виплати (не нижче 15 000), рядки «Доступно» = бюджет мінус змінні витрати і «Щоденні витрати» = бюджет / днів
+    pb = page.evaluate("window.__periodBudget")
     hero = num(page.inner_text('.kpi-budget .dv-kpi-v'))
-    check(abs(hero-(core[0]-core[1]))<=1, f'«Бюджет періоду» {hero}, а план {core[0]} мінус витрачено {core[1]}')
+    check(pb and abs(hero - pb['budget'] / 100) <= 1 and pb['budget'] >= 1500000, f'«Бюджет періоду» {hero}, а бюджет на старт {pb}')
+    check(abs(num(page.inner_text('.kpi-budget [data-r=avail] .kpi-rv')) - pb['avail'] / 100) <= 1, '«Доступно» не бюджет мінус змінні витрати')
+    check(abs(num(page.inner_text('.kpi-budget [data-r=daily] .kpi-rv')) - pb['daily'] / 100) <= 1, '«Щоденні витрати» не бюджет / днів')
+    txt = page.inner_text('.kpi-budget')
+    check(not re.search(r'\d\d\.\d\d-\d\d\.\d\d', txt) and 'Доступно до' not in txt and 'Готівка' not in txt, f'у плитці лишились дати, «Доступно до» чи покриття: {txt!r}')
     check('бюджет періоду' in page.inner_text('.projection-summary').lower(), 'немає назви «Бюджет періоду»')
     fs = page.evaluate("getComputedStyle(document.querySelector('.kpi-budget .dv-kpi-v')).fontSize")
     check(float(fs.removesuffix('px')) >= 18, f'кегль суми плитки {fs}')
@@ -50,6 +55,8 @@ def mobile_today(page):
     check(len(lbl) == 3 and all(x == '11px' for x in lbl), f'підписи стрічки періоду: {lbl}')
     nxt = page.locator('.o-next .o-next-row')
     check(nxt.count() == 3, f'у «Найближче» {nxt.count()} подій, а не 3')
+    # v148 (власник: «прибери це»): рядка «Щоденні витрати, прогноз» у «Найближче» немає, у Потоці й календарі він лишається
+    check('Щоденні витрати' not in page.inner_text('.o-next'), 'у «Найближче» лишився рядок «Щоденні витрати, прогноз»')
     check(page.locator('.o-recent .o-to-flow').count() == 1, 'немає переходу «Усі операції в Потоці»')
     shot(page, 'ov-375-final.jpg')
     page.evaluate("document.documentElement.setAttribute('data-theme','dark')")
@@ -65,16 +72,12 @@ def recent_to_flow(page):
 
 
 def pay_period(page):
-    # період у плитці «Бюджет періоду» (v145) є кнопкою «Налаштувати зарплату»: працює з клавіатури, відкриває форму зарплати
-    b = page.locator('.p-overview .kpi-budget .ps-period')
-    check(b.count() == 1, 'період «Бюджет періоду» не кнопка')
-    check(b.get_attribute('title') == 'Налаштувати зарплату', f'підказка кнопки періоду: {b.get_attribute("title")!r}')
-    lbl = b.get_attribute('aria-label') or ''
-    check(b.inner_text() in lbl and 'налаштувати зарплату' in lbl.lower(), f'aria-label кнопки періоду: {lbl!r}')
-    # виглядає як підпис періоду, а не як системна кнопка: блок під сумою, прозоре тло, ціль натиску на телефоні не менша за 24px
-    st = b.evaluate("e=>{const c=getComputedStyle(e);return [c.display,c.backgroundColor,Math.round(e.getBoundingClientRect().height)]}")
-    check(st[0] == 'block' and st[1] in ('rgba(0, 0, 0, 0)', 'transparent'), f'кнопка періоду зі стилем системної кнопки: {st}')
-    check(page.viewport_size['width'] >= 1024 or st[2] >= 24, f'кнопка періоду на телефоні нижча за 24px: {st}')
+    # v148: дат періоду в плитці «Бюджет періоду» немає; «Налаштувати зарплату» у підказці «i» плитки, працює з клавіатури
+    check(page.locator('.p-overview .kpi-budget .ps-period').count() == 0, 'у плитці лишились дати періоду')
+    page.locator('.p-overview .kpi-budget .kpi-i').click()
+    page.wait_for_selector('.kpi-tip[data-k=budget]')
+    b = page.locator('.kpi-tip[data-k=budget] .kpi-pay')
+    check(b.count() == 1 and b.inner_text() == 'Налаштувати зарплату', 'у підказці бюджету немає «Налаштувати зарплату»')
     b.focus()
     page.keyboard.press('Enter')
     page.wait_for_timeout(400)
