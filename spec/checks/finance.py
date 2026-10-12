@@ -5,7 +5,7 @@ from helpers import check, expand_groups, finance_ref, finance_state, freeze, go
 
 DAY = '2026-10-10'
 FIXTURE = {
- 'accounts':[{'id':1,'kind':'debit','balance':2800,'debt':0}, {'id':2,'name':'Кредитка','kind':'credit','balance':0,'debt':16000,'credit_limit':20000}],
+ 'accounts':[{'id':1,'kind':'debit','balance':2800,'debt':0}, {'id':2,'name':'Кредитка','kind':'credit','balance':0,'debt':16000,'credit_limit':20000,'debt_month':'2026-09-01'}],  # v146: борг вересня гаситься 21.10, як і раніше
  'fixed':[{'id':1,'name':'Платіж','type':'expense','amount':28000,'day_of_month':25,'credit_ok':True}],
  'credits':[], 'transactions':[],
  'salary':{'rate':0,'advance_day':21,'salary_day':6,'split_day':15,'advance_amount':50000,'salary_amount':50000},

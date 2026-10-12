@@ -104,7 +104,7 @@ test('creditDebtCents sums every account debt and a debit card with debt is repa
  assert.equal(r.snapshot.creditDebtCents,r.snapshot.accounts.reduce((s,a)=>s+a.debtCents,0));
  assert.equal(r.snapshot.creditDebtCents,1650000);
  const repay=r.events.filter(e=>e.kind==='repay'&&e.accountId===3);
- assert.equal(repay.length,1);assert.equal(repay[0].amountCents,50000);assert.equal(repay[0].date,'2026-10-21');
+ assert.equal(repay.length,1);assert.equal(repay[0].amountCents,50000);/* v146: борг жовтня гаситься з виплати 21.11 (субота, виплата 20.11) */assert.equal(repay[0].date,'2026-11-20');
  assert.equal(r.days[r.days.length-1].debtCents,0);
  assert.equal(r.nextPlan.debtCents,1650000);
 });

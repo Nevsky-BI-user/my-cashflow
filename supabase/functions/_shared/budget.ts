@@ -137,8 +137,10 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     // борг, не більший за витрати поточного місяця, увесь у поточному місяці; частина понад відомі витрати лишається
     // в найстаршому збереженому кошику (debt_month), якщо він старший за найранішу витрату.
     if(a.kind==='credit'&&debt>0){const spent: Record<string,number>={};for(const t of txs)if(String(t.account_id)===String(a.id)&&t.type!=='income'){const m=txDate(t).slice(0,7);spent[m]=(spent[m]||0)+Math.max(0,cents(t.amount));}
-      const ms=Object.keys(spent).filter(m=>spent[m]>0).sort().reverse();
-      if(ms.length){const old=Object.keys(buckets).filter(m=>buckets[m]>0).sort()[0]||month;for(const m of Object.keys(buckets))delete buckets[m];let left=debt;
+      // v146: збережений debt_month задає найстарший місяць боргу: витрати раніших місяців уже погашені, борг на них не відкочується.
+      const old=Object.keys(buckets).filter(m=>buckets[m]>0).sort()[0]||month,floor=a.debt_month?old:'';
+      const ms=Object.keys(spent).filter(m=>spent[m]>0&&m>=floor).sort().reverse();
+      if(ms.length){for(const m of Object.keys(buckets))delete buckets[m];let left=debt;
         for(const m of ms){if(left<=0)break;const n=Math.min(left,spent[m]);buckets[m]=n;left-=n;}
         if(left>0){const first=ms[ms.length-1],m=old<first?old:first;buckets[m]=(buckets[m]||0)+left;}}}
     return {...a,balance:balance/100,debt:debt/100,balanceCents:balance,debtCents:debt,debt_months:Object.keys(buckets).sort().filter(m=>buckets[m]>0).map(m=>[m,buckets[m]/100])};
@@ -192,7 +194,11 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     for(let d=plus(asof,(w-isoDay(asof)+7)%7);d<=endGeneration;d=plus(d,7)){if(f.id!=null&&paid.has(String(f.id)+'|W'+monday(d)))continue;events.push(make('fixed:'+String(f.id??i)+':'+d,d,f.name,f.type==='income'?'income':'mandatory',Math.max(0,cents(f.amount)),{creditEligible:f.type!=='income'&&f.credit_ok===true}));}
   });
   const dueFor=(m: string)=>{const [y,n]=ym(monthIndex(m+'-01')+1);return date(y,n,24);};
-  for(const a of accounts)for(const [month,amount] of a.debt_months){const due=dueFor(month),planned=due<asof?asof:nextDate&&nextDate<due?nextDate:due;events.push(make('repay:'+String(a.id)+':'+month,planned,a.name||'Погашення кредитки','repay',cents(amount),{accountId:a.id,debtDeltaCents:-cents(amount),contractualDueDate:due,plannedRepaymentDate:planned}));}
+  // v146 (рішення власника 12.10.2026): борг, що виник у місяці M, гаситься з виплати 21-го числа в місяці M+1, як би її не названо
+  // в налаштуваннях; субота й неділя зсуваються, як сама виплата. Минула дата: «зараз». Без виплати 21-го: перша виплата до 24-го M+1.
+  const repayKind=valid?['advance','salary'].find(k=>Number(cfg![k+'_day'])===21):undefined;
+  const repayFor=(m: string)=>{if(!repayKind)return '';const [y,n]=ym(monthIndex(m+'-01')+1);const d=date(y,n,21),w=day(d).getUTCDay();return plus(d,w===6?-1:w===0?1:0);};
+  for(const a of accounts)for(const [month,amount] of a.debt_months){const due=dueFor(month),pay=repayFor(month),planned=due<asof?asof:pay?(pay<asof?asof:pay):nextDate&&nextDate<due?nextDate:due;events.push(make('repay:'+String(a.id)+':'+month,planned,a.name||'Погашення кредитки','repay',cents(amount),{accountId:a.id,debtDeltaCents:-cents(amount),contractualDueDate:due,plannedRepaymentDate:planned}));}
   const minSpend: Record<string,any>[]=[];
   for(const a of accounts){if(a.id==null||cents(a.min_spend)<=0)continue;let spent=0,metOn;
     for(const t of txs.filter(t=>String(t.account_id)===String(a.id)&&t.type==='expense'&&txDate(t).slice(0,7)===asof.slice(0,7)).sort((a,b)=>cmp(txDate(a),txDate(b))||cmp(String(a.created_at),String(b.created_at))||cents(a.amount)-cents(b.amount))){spent+=cents(t.amount);if(metOn==null&&spent>=cents(a.min_spend))metOn=txDate(t);}

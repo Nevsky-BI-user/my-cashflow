@@ -3,7 +3,8 @@ const assert=require('node:assert/strict');
 const {spawnSync}=require('node:child_process');
 const path=require('node:path');
 const root=path.resolve(__dirname,'..');
-const fixture=()=>({accounts:[{id:1,kind:'debit',balance:2800,debt:0},{id:2,kind:'credit',balance:0,debt:16000,credit_limit:20000}],fixed:[{id:1,name:'Payment',type:'expense',amount:28000,day_of_month:25,credit_ok:true}],credits:[],salary:{rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:50000,salary_amount:50000},categories:[40,20,15,10,10,5].map((w,i)=>({id:String(i+1),name:'Category '+i,type:'expense',budget_limit:w})),transactions:[]});
+/* v146: борг місяця M гаситься з виплати 21-го в M+1; борг вересня, тож погашення 21.10, як і раніше */
+const fixture=()=>({accounts:[{id:1,kind:'debit',balance:2800,debt:0},{id:2,kind:'credit',balance:0,debt:16000,credit_limit:20000,debt_month:'2026-09-01'}],fixed:[{id:1,name:'Payment',type:'expense',amount:28000,day_of_month:25,credit_ok:true}],credits:[],salary:{rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:50000,salary_amount:50000},categories:[40,20,15,10,10,5].map((w,i)=>({id:String(i+1),name:'Category '+i,type:'expense',budget_limit:w})),transactions:[]});
 function both(data,opts={}){
  const input=JSON.stringify([{data,asof:'2026-10-10',through:'2026-12-01',...opts}]);
  const run=(exe,args)=>{const p=spawnSync(exe,args,{cwd:root,input,encoding:'utf8',timeout:30000});assert.equal(p.status,0,p.stderr);return JSON.parse(p.stdout)[0];};

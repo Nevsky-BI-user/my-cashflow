@@ -15,7 +15,9 @@ INFO = """(()=>{const s=document.querySelector('.dv-fc .fc-svg');const t=e=>e?e.
  pressed:[...document.querySelectorAll('.dv-fc .fc-chips button[aria-pressed=true]')].map(b=>b.dataset.r),today:t(document.querySelector('.dv-fc .fc-today')),
  sum:t(document.querySelector('.dv-fc .fc-sum')),minV:+document.querySelector('.dv-fc .fc-min').dataset.v,pays:document.querySelectorAll('.dv-fc .fc-pay').length,
  circles:[...document.querySelectorAll('.dv-fc svg circle')].map(c=>c.getAttribute('class')).filter(c=>!/^fc-(pay|min|today-dot)$/.test(c||'')),
- first:(window.__financeInput.transactions||[]).map(x=>String(x.date).slice(0,10)).filter(d=>d.length===10).sort()[0]}})()"""
+ first:(()=>{const fi=window.__financeInput,own=new Set(fi.accounts.filter(a=>a.active!==false&&a.kind!=='credit').map(a=>String(a.id)));
+  const st=fi.accounts.filter(a=>!a.mono_account_id&&a.balance_updated_at).map(a=>Date.parse(a.balance_updated_at)).filter(Number.isFinite),stamp=st.length?Math.min(...st):null;
+  return (fi.transactions||[]).filter(x=>x.account_id!=null?own.has(String(x.account_id)):stamp!=null&&x.source!=='mono'&&Date.parse(x.created_at)>stamp).map(x=>String(x.date).slice(0,10)).filter(d=>d.length===10).sort()[0]})()}})()"""
 BOXES = """[...document.querySelectorAll('.dv-fc .fc-today,.dv-fc .fc-min-l,.dv-fc .fc-ax,.dv-fc .fc-xl')].map(e=>{const r=e.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom,e.getAttribute('class')+':'+e.textContent]})"""
 
 
@@ -34,6 +36,16 @@ def _no_overlap(page, tag):
             a, b = bb[i], bb[j]
             hit = a[0] < b[2] - 1 and b[0] < a[2] - 1 and a[1] < b[3] - 1 and b[1] < a[3] - 1
             check(not hit, f'{tag}: підписи графіка накладаються: {a[4]!r} і {b[4]!r}')
+
+
+def _visible(first, t):
+    """v146: чипи після обрізання лівої межі до першої операції на власних рахунках; дубль вужчого чипа прихований."""
+    key = lambda r: (max(first, _iso(t + timedelta(days=RANGES[r][0]))) if RANGES[r][0] is not None else first, RANGES[r][1])
+    out = []
+    for r in RANGES:
+        if all(key(q) != key(r) for q in out):
+            out.append(r)
+    return out
 
 
 def _payouts_through(page, iso):
@@ -55,19 +67,23 @@ def chart(page):
     check(page.inner_text('.dv-fc .fc-title') == 'Гроші в часі', 'заголовок картки не «Гроші в часі»')
     check(page.locator('.dv-fc input[type=range]').count() == 0 and page.locator('.fc-readout,.fc-day').count() == 0, 'лишились повзунок або панель дня')
     chips = page.evaluate("[...document.querySelectorAll('.dv-fc .fc-chips button')].map(b=>[b.dataset.r,b.textContent])")
-    check(chips == [['m', 'Місяць'], ['q', '±3 міс.'], ['y', 'Рік'], ['all', 'Уся історія']], f'чипи діапазону: {chips}')
     info = page.evaluate(INFO)
+    # v146: «Уся історія» видно, лише коли історія довша за «±3 міс.»
+    names = {'m': 'Місяць', 'q': '±3 міс.', 'y': 'Рік', 'all': 'Уся історія'}
+    vis = _visible(info['first'], t)
+    check(chips == [[r, names[r]] for r in vis], f'чипи діапазону: {chips}, а не {vis}')
     check(info['pressed'] == ['q'], f'за замовчуванням не «±3 міс.»: {info["pressed"]}')
     # постійна мітка «Сьогодні: власні · баланс» (баланс = власні мінус борг кредиток)
     exp = 'Сьогодні: ' + _money(snap['positiveOwnCents']) + ' · баланс ' + _money(snap['positiveOwnCents'] - snap['creditDebtCents'])
     check(info['today'] == exp, f'мітка сьогодні {info["today"]!r}, а не {exp!r}')
     payouts = sorted({e['date'] for e in ref['events'] if e['kind'] == 'payout'})
-    for r, (lo, hi) in RANGES.items():
+    for r in vis:
+        lo, hi = RANGES[r]
         page.locator(f'.dv-fc .fc-chips button[data-r={r}]').click()
         page.wait_for_timeout(250)
         info = page.evaluate(INFO)
         check(info['pressed'] == [r], f'чип {r} не натиснутий: {info["pressed"]}')
-        frm = info['first'] if lo is None else _iso(t + timedelta(days=lo))
+        frm = info['first'] if lo is None else max(info['first'], _iso(t + timedelta(days=lo)))  # v146: не раніше першої операції
         check(info['from'] == frm and info['to'] == _iso(t + timedelta(days=hi)), f'{r}: діапазон {info["from"]}..{info["to"]}, а не {frm}..{_iso(t + timedelta(days=hi))}')
         past = (t - max(date.fromisoformat(frm), date.fromisoformat(info['first']))).days + 1
         check(info['past'] == past and info['n'] == past + hi, f'{r}: точок факту {info["past"]} з {info["n"]}, а не {past} з {past + hi}')
@@ -77,19 +93,19 @@ def chart(page):
         pays = [d for d in (payouts if info['to'] <= ref['days'][-1]['date'] else _payouts_through(page, info['to'])) if _iso(t) < d <= info['to']]
         check(info['pays'] == len(pays), f'{r}: маркерів виплат {info["pays"]}, а не {len(pays)}')
         # мінімум у підсумку = червона точка; не вище каси прогнозу в діапазоні
-        mins = [d['closingCashCents'] for d in ref['days'] if _iso(t) < d['date'] <= info['to']] + [snap['cashCents']]
+        mins = [d['closingCashCents'] for d in ref['days'] if _iso(t) < d['date'] <= info['to']] + [snap['positiveOwnCents']]  # v146: точка сьогодні = власні
         check(info['minV'] <= min(mins), f'{r}: мінімум {info["minV"]} вище мінімуму прогнозу {min(mins)}')
         s = info['sum']
         check(re.match(r'^мін\. [−+][\d ]+ ₴ \d\d\.\d\d · макс\. [−+][\d ]+ ₴ \d\d\.\d\d · сьогодні −?[\d ]+ ₴', s), f'{r}: рядок підсумку {s!r}')
         check(round(num(s.split('·')[0]) * 100) == info['minV'], f'{r}: мінімум у підсумку {s!r} не дорівнює точці {info["minV"]}')
         _no_overlap(page, r)
-    # «Уся історія»: минуле від першої операції, кілька днів факту
-    check(info['past'] >= 2, f'«Уся історія» без кривої минулого: {info["past"]} точок')
+    # найширший видимий чип: минуле від першої операції, кілька днів факту
+    check(info['past'] >= 2, f'«{names[vis[-1]]}» без кривої минулого: {info["past"]} точок')
     # вибір памʼятається
-    check(page.evaluate("localStorage.getItem('fc_range')") == 'all', 'вибір діапазону не збережено')
+    check(page.evaluate("localStorage.getItem('fc_range')") == vis[-1], 'вибір діапазону не збережено')
     page.reload()
     page.wait_for_selector('.dv-fc .fc-svg')
-    check(page.evaluate(INFO)['pressed'] == ['all'], 'після перезавантаження діапазон не відновлено')
+    check(page.evaluate(INFO)['pressed'] == [vis[-1]], 'після перезавантаження діапазон не відновлено')
     page.locator('.dv-fc .fc-chips button[data-r=q]').click()
     page.wait_for_timeout(200)
     # погашення кредитки: подія в боксі дня на плановій даті (клавіатура від сьогодні)

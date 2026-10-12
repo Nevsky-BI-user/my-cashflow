@@ -304,9 +304,11 @@ def finance_projection(data, options):
             for t in txs:
                 if sid(t.get('account_id'))==sid(a['id']) and t.get('type')!='income':
                     m=txdate(t)[:7]; spent[m]=spent.get(m,0)+max(0,cents(t.get('amount')))
-            ms=sorted((m for m in spent if spent[m]>0),reverse=True)
+            # v146: збережений debt_month задає найстарший місяць боргу, раніші витрати вже погашені
+            old=(sorted(m for m in buckets if buckets[m]>0) or [month])[0]; floor=old if a.get('debt_month') else ''
+            ms=sorted((m for m in spent if spent[m]>0 and m>=floor),reverse=True)
             if ms:
-                old=(sorted(m for m in buckets if buckets[m]>0) or [month])[0]; buckets={}; left=debt
+                buckets={}; left=debt
                 for m in ms:
                     if left<=0: break
                     n=min(left,spent[m]); buckets[m]=n; left-=n
@@ -380,9 +382,16 @@ def finance_projection(data, options):
     def due_for(m):
         y,n=ym(mi(m+'-01')+1)
         return dt(y,n,24)
+    # v146: борг місяця M гаситься з виплати 21-го числа в M+1 (будь-яка назва; вихідні зсуваються, як сама виплата)
+    repay_kind=next((k for k in ('advance','salary') if valid and int(float(cfg[k+'_day']))==21),None)
+    def repay_for(m):
+        if not repay_kind: return ''
+        y,n=ym(mi(m+'-01')+1); d=dt(y,n,21); w=date.fromisoformat(d).weekday()
+        return plus(d,-1 if w==5 else 1 if w==6 else 0)
     for a in accounts:
         for month,amount in a['debt_months']:
-            due=due_for(month); planned=asof if due<asof else next_date if next_date and next_date<due else due
+            due=due_for(month); pay=repay_for(month)
+            planned=asof if due<asof else (asof if pay<asof else pay) if pay else next_date if next_date and next_date<due else due
             extra={'debtDeltaCents':-cents(amount),'contractualDueDate':due,'plannedRepaymentDate':planned}
             if 'id' in a: extra['accountId']=a['id']
             events.append(make('repay:'+('undefined' if a.get('id') is None else sid(a['id']))+':'+month,planned,a.get('name') or 'Погашення кредитки','repay',cents(amount),extra))
