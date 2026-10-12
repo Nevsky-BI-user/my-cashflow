@@ -33,3 +33,11 @@ test('unallocated Ukrainian name and duplicate fallback id',()=>{const d=base();
 test('salary days 29-31 follow existing calendar rollover and weekend rules',()=>{const d=base();d.salary.advance_day=31;d.salary.salary_day=15;let p=both(d,'2026-10-16');assert.equal(p.start,'2026-10-30');assert.equal(p.end,'2026-11-16');p=both(d,'2026-02-16');assert.equal(p.start,'2026-03-03');assert.equal(p.end,'2026-03-16');});
 test('credit eligibility requires explicit flag regardless of installment source',()=>{const d=base();d.fixed=[];d.credits=[{name:'Installment',monthly_amount:1234,payment_day:25,start_year:2026,start_month:9,total_payments:3,source:'privat'}];const p=both(d);assert.equal(p.mandatoryCents,123400);assert.equal(p.eligibleMandatoryCents,0);});
 test('previous month payout rolling into current month remains the nearest',()=>{const d=base();d.salary.advance_day=31;d.salary.salary_day=15;const p=both(d,'2026-03-01');assert.equal(p.start,'2026-03-03');assert.equal(p.end,'2026-03-16');});
+// v149 (міграція 29): обовʼязкові й інші доходи нового періоду без подій після end_date (включно), щомісяця і щотижня
+test('fixed end_date excludes obligations and income after the last date',()=>{
+ const d=base();d.fixed=[{id:3,name:'Fixed',type:'expense',amount:3000,day_of_month:25,end_date:'2026-10-24'},{id:4,name:'Extra',type:'income',amount:900,day_of_month:26,end_date:'2026-10-26'},{id:5,name:'Weekly',type:'expense',amount:100,day_of_month:1,period:'week',weekday:1,end_date:'2026-10-27'}];
+ const p=both(d);
+ assert.equal(p.mandatoryCents,10000,'Fixed ended before 25th; Weekly only 26.10 (Monday) in [21.10; 06.11)');
+ assert.equal(p.otherIncomeCents,90000,'Extra on its last date 26.10 counts');
+ d.fixed[1].end_date='2026-10-25';assert.equal(both(d).otherIncomeCents,0);
+});

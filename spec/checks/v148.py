@@ -10,14 +10,14 @@ HEALTH_ABS = [("{id:'health',groupId:4,name:'Здоровʼя',limit:2000,", "{i
 
 
 def _open(page):
-    """ПК: кнопка «Розподіл бюджету» на вкладці Бюджет (аркуш); телефон: шестерня, рядок «Розподіл бюджету»."""
+    """ПК: кнопка «Розподіл бюджету» на вкладці Бюджет (аркуш); телефон: вкладка «Налаштування» (v149), рядок «Розподіл бюджету»."""
     if page.viewport_size['width'] >= 1024:
         go_tab(page, 1)
         page.click('.dact')
     else:
-        page.click('.hdr-gear')
+        page.locator('.tab-bar .tab-btn').nth(5).click()
         page.wait_for_timeout(400)
-        dialog(page, 'Налаштування').locator('button', has_text='Розподіл бюджету').first.click()
+        page.locator('.set-mpage button', has_text='Розподіл бюджету').first.click()
     page.wait_for_timeout(500)
     sh = dialog(page, 'Розподіл бюджету')
     check(sh.count() == 1, 'аркуш «Розподіл бюджету» не відкрився')
@@ -92,7 +92,7 @@ def unlock_all_phone(page):
 
 
 # v148, кільце бюджету: пастельні сегменти без обводок, число в центрі всередині внутрішнього кола, підказка в межах вʼюпорту, легенда з контрастом AA
-RING = """scope=>{const ring=document.querySelector(scope+' .bd-ring');if(!ring)return null;const r0=+ring.dataset.r0,c=ring.getBoundingClientRect(),cx=c.left+c.width/2,cy=c.top+c.height/2;
+RING = r"""scope=>{const ring=document.querySelector(scope+' .bd-ring');if(!ring)return null;const r0=+ring.dataset.r0,c=ring.getBoundingClientRect(),cx=c.left+c.width/2,cy=c.top+c.height/2;
 const out=[...ring.querySelectorAll('.bd-c b,.bd-c span')].map(e=>{const r=e.getBoundingClientRect(),dx=Math.max(Math.abs(r.left-cx),Math.abs(r.right-cx)),dy=Math.max(Math.abs(r.top-cy),Math.abs(r.bottom-cy));return [e.textContent,Math.round(Math.hypot(dx,dy)*10)/10,r0,parseFloat(getComputedStyle(e).fontSize),e.scrollWidth<=e.clientWidth+1]});
 const rgb=s=>{const n=(s.match(/[\d.]+/g)||[]).map(Number);return /^color\(/.test(s)?n.map((v,i)=>i<3?v*255:v):n};const lum=a=>{const f=v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4)};return 0.2126*f(a[0])+0.7152*f(a[1])+0.0722*f(a[2])};
 const bgOf=e=>{const base=rgb(getComputedStyle(document.documentElement).backgroundColor);let n=e;while(n&&n!==document.documentElement){const b=rgb(getComputedStyle(n).backgroundColor);if(b.length>=3&&(b.length<4||b[3]>0)){const a=b.length>3?b[3]:1;return [0,1,2].map(i=>b[i]*a+(base[i]||0)*(1-a))}n=n.parentElement}return base};

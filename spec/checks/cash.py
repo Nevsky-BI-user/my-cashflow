@@ -29,9 +29,10 @@ def money(text):
 
 
 def _bal_at(ref, iso):
-    """Каса на кінець дня iso за еталоном: баланс останньої події не пізніше дати, інакше стартова каса."""
+    """v149: баланс на кінець дня iso за еталоном (власні мінус борг): netCents дня плюс зсув positiveOwn − cash; до першого дня: баланс сьогодні."""
     rows = [d for d in ref['days'] if d['date'] <= iso]
-    return rows[-1]['closingCashCents']/100 if rows else ref['startCash']
+    sh = ref['snapshot']['positiveOwnCents'] - ref['snapshot']['cashCents']
+    return (rows[-1]['netCents'] + sh)/100 if rows else (ref['snapshot']['positiveOwnCents'] - ref['snapshot']['creditDebtCents'])/100
 
 
 def _kpi_balance(page, ref):
@@ -86,13 +87,13 @@ return {day:p?p.innerText.split(String.fromCharCode(10))[0]:'',bal:b.innerText,c
 
 
 def flow(page):
-    """Потік 1920: колонка «Сума», потім «Каса після» (v145: «баланс» лише власні мінус борг); майбутні планові рядки: сірий «прогноз X» = каса на кінець дня за еталоном"""
+    """Потік 1920: колонка «Сума», потім «Баланс після» (v149) (v145: «баланс» лише власні мінус борг); майбутні планові рядки: сірий «прогноз X» = каса на кінець дня за еталоном"""
     page.set_viewport_size({'width': 1920, 'height': 1080})
     freeze(page, DAY)
     ref = _ref(page)
     go_tab(page, 2)
     hd = [x.strip().upper() for x in page.inner_text('.p-flow.desk .flow-head').split('\n') if x.strip()]
-    check('СУМА' in hd and 'КАСА ПІСЛЯ' in hd and hd.index('СУМА') + 1 == hd.index('КАСА ПІСЛЯ'), f'порядок колонок: {hd}')
+    check('СУМА' in hd and 'БАЛАНС ПІСЛЯ' in hd and hd.index('СУМА') + 1 == hd.index('БАЛАНС ПІСЛЯ'), f'порядок колонок: {hd}')
     rows = page.evaluate(FLOW_ROWS)
     check(rows, 'у Потоці немає майбутніх планових рядків')
     tx = page.evaluate("(()=>{const b=document.querySelector('.p-flow.desk .flow-row.tx .flow-bal');return b?getComputedStyle(b).color:null})()")
@@ -105,7 +106,7 @@ def flow(page):
             check(m and m.group(2) in MON, f'не розібрано дату дня: {r["day"]!r}')
             iso = f'{date.fromisoformat(DAY).year}-{MON[m.group(2)]:02d}-{int(m.group(1)):02d}'
             want = _bal_at(ref, iso)
-            check(abs(num(r['bal']) - want) <= 1, f'{iso}: {r["bal"]!r}, еталон каси на кінець дня {want:.2f}')
+            check(abs(num(r['bal']) - want) <= 1, f'{iso}: {r["bal"]!r}, еталон балансу на кінець дня {want:.2f}')
             n += 1
         else:
             check(r['bal'] == 'план', f'плановий рядок: {r["bal"]!r}')
@@ -131,7 +132,7 @@ def credit_card(page):
             heads = [x for x in t.split('\n') if x.strip().startswith('−')]
             check(heads and abs(num(heads[0]) + a['debt']) <= 1, f'картка без мінус боргу: {t!r}')
             want = page.evaluate("n=>{const a=ACCOUNTS_DEMO.find(x=>x.name===n);const q=debtDue(a,new Date());return q?pbDm(q.date):''}", a['name'])
-            check(want and want[:2] in ('20', '21', '22') and ('закрити до ' + want) in t, f'картка без «закрити до {want}»: {t!r}')
+            check(want and want[:2] in ('20', '21', '22') and ('план погашення ' + want) in t, f'картка без «план погашення {want}» (v149): {t!r}')
         av = card.locator('.bcard-avail').inner_text()
         if a['lim'] > 0:
             check(abs(num(av) - (a['lim'] - a['debt'])) <= 1, f'доступно {av!r}, очікували {a["lim"] - a["debt"]}')
@@ -197,7 +198,7 @@ def month_mode(page):
 CHECKS = [
     ('Огляд: плитки KPI, «Баланс» за еталоном, 1920x1080', 'desktop', overview),
     ('Огляд на телефоні: плитки KPI, «Баланс» за еталоном', 'mobile', overview_mobile),
-    ('Потік: «Сума», потім «Каса після», сірий прогноз за еталоном', 'desktop', flow),
+    ('Потік: «Сума», потім «Баланс після», сірий прогноз за еталоном', 'desktop', flow),
     ('Картка кредитки: мінус борг, доступно, закрити до дати погашення', 'desktop', credit_card),
     ('Жодного «до 25.MM» на вкладках', 'desktop', no_25),
     ('Режим «Календарний місяць»: localStorage, факт + план днів місяця', 'desktop', month_mode),

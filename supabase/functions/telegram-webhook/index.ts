@@ -853,7 +853,7 @@ async function freeBlock(today: string): Promise<string> {
   const [acc, fix, cred, sal, cats] = await Promise.all([
     sb.from('accounts').select('id,name,kind,balance,debt,credit_limit,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
-    sb.from('fixed_payments').select('id,name,amount,day_of_month,period,weekday,bank,type,active,credit_ok,variable').eq('active', true),
+    sb.from('fixed_payments').select('id,name,amount,day_of_month,period,weekday,bank,type,active,credit_ok,variable,end_date').eq('active', true),
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
     sb.from('salary_config').select('rate,advance_amount,salary_amount,split_day,advance_day,salary_day,savings_pct').order('id').limit(1).maybeSingle(),
     sb.from('categories').select('id,name,is_income,budget_limit,limit_abs,sort_order,group_id').order('id'),

@@ -12,15 +12,15 @@ def desktop(page):
     check(num(page.locator('.goals-kpis strong').first.inner_text())==0, 'без внесків збережений баланс не нуль')
     check('Автоматичних накопичень і прогнозу дати немає' in page.inner_text('.goals-kpis'), 'немає пояснення явних внесків')
     check(page.locator('.goals-wi-row').count()==0, 'старі ETA показуються без плану внесків')
-    # шапка: сегмент ₴/$, ⚙ і «+ Ціль» ліворуч від головної кнопки; пунктирної плитки на дошці немає
+    # шапка: сегмент ₴/$, «Налаштувати» (v149 замість шестерні) і «+ Ціль» ліворуч від головної кнопки; пунктирної плитки на дошці немає
     head = page.locator('.dtitle')
     check(head.locator('.gh-ccy button').all_inner_texts() == ['₴', '$'], 'у шапці немає сегмента ₴ / $')
-    check(head.locator('.goals-cfg[aria-label]').count() == 1 and head.locator('.goals-cfg').inner_text().strip() == '⚙', 'у шапці немає кнопки ⚙')
+    check(head.locator('.goals-cfg').count() == 1 and head.locator('.goals-cfg').inner_text().strip() == 'Налаштувати', 'у шапці немає кнопки «Налаштувати»')
     check(head.locator('.goals-add', has_text='+ Ціль').count() == 1, 'у шапці немає «+ Ціль»')
     check(page.locator('.gtile-add').count() == 0, 'пунктирна плитка «+ Ціль» лишилась на дошці')
     hb = [head.locator(sel).bounding_box() for sel in ('.gh-ccy', '.goals-cfg', '.goals-add', '.dact')]
-    check(all(hb) and hb[0]['x'] < hb[1]['x'] < hb[2]['x'] < hb[3]['x'], 'порядок у шапці не ₴/$, ⚙, «+ Ціль», «+ Поповнення»')
-    check(hb[0]['height'] <= 28.5 and hb[1]['height'] <= 28.5, f'сегмент або ⚙ вищі за 28px: {hb[0]["height"]}, {hb[1]["height"]}')
+    check(all(hb) and hb[0]['x'] < hb[1]['x'] < hb[2]['x'] < hb[3]['x'], 'порядок у шапці не ₴/$, «Налаштувати», «+ Ціль», «+ Поповнення»')
+    check(hb[0]['height'] <= 28.5 and hb[1]['height'] <= 28.5, f'сегмент або «Налаштувати» вищі за 28px: {hb[0]["height"]}, {hb[1]["height"]}')
     # сегмент валюти міняє суму «Зібрано» на $
     head.locator('.gh-ccy button', has_text='$').click()
     page.wait_for_timeout(250)
@@ -31,7 +31,8 @@ def desktop(page):
     shot(page, 'goals-full-1280.jpg')
     page.locator('.dtitle .goals-cfg').click()
     page.wait_for_timeout(300)
-    check(page.locator('[role=dialog]').count()>=1, 'налаштування не відкрились')
+    act = page.locator('.set-page nav [aria-current=page]')
+    check(act.count() == 1 and 'Накопичення' in act.inner_text(), '«Налаштувати» не відкрило розділ «Накопичення» сторінки налаштувань')
 
 
 SAV = ','.join("{id:'s%d',date:'2026-10-0%d',amount:%d,currency:'UAH',description:'Запис %d'}" % (i, i + 1, 1000 * (i + 1), i) for i in range(7))

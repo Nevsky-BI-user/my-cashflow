@@ -6,7 +6,22 @@ from datetime import date, timedelta
 from helpers import check, dialog, finance_ref, freeze, num, settle
 
 DAY = '2026-10-12'
-RANGES = {'m': (-7, 30), 'q': (-90, 90), 'y': (-180, 180), 'all': (None, 90)}
+# v149: ± календарних місяців від сьогодні (назад, уперед); «Уся історія» від першої операції і 3 місяці вперед
+RANGES = {'m': (1, 1), 'm2': (2, 2), 'q': (3, 3), 'y': (12, 12), 'all': (None, 3)}
+
+
+def _mon(t, n):
+    # без модуля calendar: у spec/checks є власний calendar.py
+    y, m = divmod(t.month - 1 + n, 12)
+    y += t.year
+    nxt = date(y + 1, 1, 1) if m == 11 else date(y, m + 2, 1)
+    return date(y, m + 1, min(t.day, (nxt - date(y, m + 1, 1)).days))
+
+
+def _days(t, r):
+    """Дні від t до меж діапазону r: (назад або None, уперед)."""
+    a, b = RANGES[r]
+    return (None if a is None else (_mon(t, -a) - t).days, (_mon(t, b) - t).days)
 # демо лише з даними поточного місяця: 01.10-12.10, тобто останні два тижні
 ONLY_RECENT = [('if(k>cur||k<cur-1)return[];', 'if(k>cur||k<cur)return[];')]
 # monobank у мінусі: каса (сума балансів) менша за власні кошти (лише додатні баланси)
@@ -43,8 +58,8 @@ def _today_point(page):
 
 
 def chart_trim(page):
-    """Дані лише за останні два тижні: вісь і крива минулого від першої операції на власних рахунках, «Уся історія» = «±3 міс.»
-    і прихована, збережений вибір «Уся історія» показує «±3 міс.»; мін., макс. і сьогодні в підсумку лише з видимого відрізка."""
+    """Дані лише за останні два тижні: вісь і крива минулого від першої операції на власних рахунках, «Уся історія» = «3 міс.»
+    і прихована, збережений вибір «Уся історія» показує «3 міс.»; мін., макс. і сьогодні в підсумку лише з видимого відрізка."""
     page.set_viewport_size({'width': 1920, 'height': 900})
     freeze(page, DAY, ONLY_RECENT)
     t = date.fromisoformat(DAY)
@@ -52,12 +67,12 @@ def chart_trim(page):
     first = info['first']
     check(first is not None and first >= (t - timedelta(days=14)).isoformat(), f'фікстура: перша операція {first}, а не в межах двох тижнів')
     print(f'      перша операція на власних рахунках {first}; чипи {info["chips"]}')
-    check(info['chips'] == ['m', 'q', 'y'], f'чип-дубль «Уся історія» не прихований: {info["chips"]}')
+    check(info['chips'] == ['m', 'm2', 'q', 'y'], f'чип-дубль «Уся історія» не прихований: {info["chips"]}')
     for r in info['chips']:
         page.locator(f'.dv-fc .fc-chips button[data-r={r}]').click()
         page.wait_for_timeout(250)
         info = page.evaluate(INFO)
-        lo, hi = RANGES[r]
+        lo, hi = _days(t, r)
         frm = max(first, (t + timedelta(days=lo)).isoformat())
         check(info['pressed'] == [r], f'{r}: натиснутий {info["pressed"]}')
         check(info['from'] == frm and info['to'] == (t + timedelta(days=hi)).isoformat(), f'{r}: вісь {info["from"]}..{info["to"]}, а не {frm}..')
@@ -80,7 +95,7 @@ def chart_trim(page):
     # історія довша за три місяці (стара операція 04.05 на власному рахунку): «Уся історія» видно, вісь від першої операції
     freeze(page, DAY, OLD_TX)
     info = page.evaluate(INFO)
-    check(info['first'] == '2026-05-04' and info['chips'] == ['m', 'q', 'y', 'all'], f'довга історія: перша {info["first"]}, чипи {info["chips"]}')
+    check(info['first'] == '2026-05-04' and info['chips'] == ['m', 'm2', 'q', 'y', 'all'], f'довга історія: перша {info["first"]}, чипи {info["chips"]}')
     page.locator('.dv-fc .fc-chips button[data-r=all]').click()
     page.wait_for_timeout(250)
     info = page.evaluate(INFO)
@@ -125,7 +140,7 @@ def repay_chip(page):
         print(f'      {a.get("name")}: кошики {a["debt_months"]}, погашення {ev["date"]}, договірний строк {ev["contractualDueDate"]}')
         check(ev['date'][8:10] in ('20', '21', '22') or ev['date'] == DAY, f'{a.get("name")}: погашення {ev["date"]} не з виплати 21-го')
         if a.get('kind') == 'credit':
-            exp.append('до ' + ev['date'][8:10] + '.' + ev['date'][5:7])
+            exp.append('план погашення ' + ev['date'][8:10] + '.' + ev['date'][5:7])  # v149: замість «до»
     got = sorted(_norm(x) for x in page.locator('.o-accs .o-acc-chip .chip-due').all_inner_texts())
     check(got == sorted(exp), f'дати на чипах кредиток {got}, а не {sorted(exp)}')
 

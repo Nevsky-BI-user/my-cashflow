@@ -81,7 +81,7 @@ def current_overview(page):
         # v148: нижче 840px Огляд прокручується сторінкою; нижня картка досяжна прокруткою, без внутрішньої
         check(height < 840 or page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight'), 'Нижня картка обрізана')
         check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= 239.5, f'Today/{width}/{height}: графік нижчий за 240px')
-        check(page.locator('.dv-near .dv-ev').count() == (5 if width < 1400 or height < 860 else 8), 'Неправильна кількість найближчих подій')
+        check(page.locator('.dv-near .dv-ev').count() == (5 if width < 1400 or height < 1000 else 8), 'Неправильна кількість найближчих подій')
         if width == 1280 and height == 800:
             page.screenshot(path=str(OUT / 'shots/redesign-v4-today-1280-overview.png'))
         page.locator('.dv-all-payments').click()
@@ -116,9 +116,11 @@ def calendar_geometry(page):
             grouped=sum(e['kind']!='variable' for e in events)  # v143: змінні витрати в клітинках не показуються
             check(visible==1 and visible+more==grouped, f'лічильник {visible}+{more}, згрупованих подій {grouped}')
             hidden.click()
-            check(page.locator('.ck-day-events .ck-bd-row').count()==len(events), 'деталі не містять усіх канонічних подій вибраного дня')
+            # v149: щоденні витрати дня одним рядком «Щоденні витрати»
+            want = sum(e['kind'] != 'variable' for e in events) + (1 if any(e['kind'] == 'variable' for e in events) else 0)
+            check(page.locator('.ck-day-events .ck-bd-row').count()==want, 'деталі не містять усіх канонічних подій вибраного дня')
             detail_text=page.inner_text('.ck-day-events')
-            check(all(e['name'] in detail_text for e in events), 'повна назва прихованої події недоступна')
+            check(all(e['name'] in detail_text for e in events if e['kind'] != 'variable'), 'повна назва прихованої події недоступна')
             check(page.evaluate("[...document.querySelectorAll('.ck-day-events .ce-n')].every(e=>e.scrollWidth<=e.clientWidth+1)"), 'Прихована подія недоступна повністю')
             page.locator('.ck-day .ck-link').click()
 

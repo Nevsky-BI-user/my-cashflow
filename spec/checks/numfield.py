@@ -8,7 +8,7 @@ SETR = """(el,v)=>{const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prot
 
 def _salary_root(page):
     # v142: KPI «Наступна виплата» (ПК) і чип героя (телефон) прибрано з Огляду; зарплата в налаштуваннях:
-    # на ПК розділ сторінки налаштувань, на телефоні ⚙ у шапці, пункт «Зарплата» відкриває вікно
+    # на ПК розділ сторінки налаштувань, на телефоні вкладка «Налаштування» (v149), пункт «Зарплата» відкриває вікно
     if page.viewport_size['width'] >= 1024:
         page.keyboard.press('s')
         page.wait_for_timeout(400)
@@ -17,9 +17,9 @@ def _salary_root(page):
         root = '.set-page:has(input.nf-range)'
         check(page.locator(root).count() == 1, 'розділ «Зарплата» в налаштуваннях без повзунка')
         return page.locator(root)
-    page.click('.hdr-gear')
+    page.locator('.tab-bar .tab-btn').nth(5).click()
     page.wait_for_timeout(400)
-    page.locator('[role=dialog][aria-label="Налаштування"] button', has_text='Зарплата').first.click()
+    page.locator('.set-mpage button', has_text='Зарплата').first.click()
     page.wait_for_timeout(500)
     root = '[role=dialog]:has(input.nf-range)'
     check(page.locator(root).count() >= 1, 'пункт «Зарплата» не відкрив вікно з повзунком')

@@ -9,7 +9,22 @@ from datetime import date, timedelta
 
 from helpers import ROOT, check, finance_ref, finance_state, go_tab, num, shot
 
-RANGES = {'m': (-7, 30), 'q': (-90, 90), 'y': (-180, 180), 'all': (None, 90)}
+# v149: ± календарних місяців від сьогодні (назад, уперед); «Уся історія» від першої операції і 3 місяці вперед
+RANGES = {'m': (1, 1), 'm2': (2, 2), 'q': (3, 3), 'y': (12, 12), 'all': (None, 3)}
+
+
+def _mon(t, n):
+    # без модуля calendar: у spec/checks є власний calendar.py
+    y, m = divmod(t.month - 1 + n, 12)
+    y += t.year
+    nxt = date(y + 1, 1, 1) if m == 11 else date(y, m + 2, 1)
+    return date(y, m + 1, min(t.day, (nxt - date(y, m + 1, 1)).days))
+
+
+def _days(t, r):
+    """Дні від t до меж діапазону r: (назад або None, уперед)."""
+    a, b = RANGES[r]
+    return (None if a is None else (_mon(t, -a) - t).days, (_mon(t, b) - t).days)
 INFO = """(()=>{const s=document.querySelector('.dv-fc .fc-svg');const t=e=>e?e.textContent:null;return {from:s.dataset.from,to:s.dataset.to,n:+s.dataset.n,past:+s.dataset.past,
  pastD:(document.querySelector('.dv-fc .fc-past')||{getAttribute:()=>''}).getAttribute('d')||'',fut:!!document.querySelector('.dv-fc .fc-fut'),
  pressed:[...document.querySelectorAll('.dv-fc .fc-chips button[aria-pressed=true]')].map(b=>b.dataset.r),today:t(document.querySelector('.dv-fc .fc-today')),
@@ -40,7 +55,7 @@ def _no_overlap(page, tag):
 
 def _visible(first, t):
     """v146: чипи після обрізання лівої межі до першої операції на власних рахунках; дубль вужчого чипа прихований."""
-    key = lambda r: (max(first, _iso(t + timedelta(days=RANGES[r][0]))) if RANGES[r][0] is not None else first, RANGES[r][1])
+    key = lambda r: (max(first, _iso(t + timedelta(days=_days(t, r)[0]))) if RANGES[r][0] is not None else first, RANGES[r][1])
     out = []
     for r in RANGES:
         if all(key(q) != key(r) for q in out):
@@ -68,18 +83,18 @@ def chart(page):
     check(page.locator('.dv-fc input[type=range]').count() == 0 and page.locator('.fc-readout,.fc-day').count() == 0, 'лишились повзунок або панель дня')
     chips = page.evaluate("[...document.querySelectorAll('.dv-fc .fc-chips button')].map(b=>[b.dataset.r,b.textContent])")
     info = page.evaluate(INFO)
-    # v146: «Уся історія» видно, лише коли історія довша за «±3 міс.»
-    names = {'m': 'Місяць', 'q': '±3 міс.', 'y': 'Рік', 'all': 'Уся історія'}
+    # v146: «Уся історія» видно, лише коли історія довша за «3 міс.»; v149: чипи «1 міс.», «2 міс.», «3 міс.», «Рік»
+    names = {'m': '1 міс.', 'm2': '2 міс.', 'q': '3 міс.', 'y': 'Рік', 'all': 'Уся історія'}
     vis = _visible(info['first'], t)
     check(chips == [[r, names[r]] for r in vis], f'чипи діапазону: {chips}, а не {vis}')
-    check(info['pressed'] == ['q'], f'за замовчуванням не «±3 міс.»: {info["pressed"]}')
+    check(info['pressed'] == ['q'], f'за замовчуванням не «3 міс.»: {info["pressed"]}')
     # v148: крива в балансі (власні мінус борг кредиток), постійна мітка лише «Сьогодні: баланс»
     bal, shift = snap['positiveOwnCents'] - snap['creditDebtCents'], snap['positiveOwnCents'] - snap['cashCents']
     exp = 'Сьогодні: ' + _money(bal)
     check(info['today'] == exp, f'мітка сьогодні {info["today"]!r}, а не {exp!r}')
     payouts = sorted({e['date'] for e in ref['events'] if e['kind'] == 'payout'})
     for r in vis:
-        lo, hi = RANGES[r]
+        lo, hi = _days(t, r)
         page.locator(f'.dv-fc .fc-chips button[data-r={r}]').click()
         page.wait_for_timeout(250)
         info = page.evaluate(INFO)
@@ -121,7 +136,7 @@ def chart(page):
         page.keyboard.press('Escape')
     # «Найближче»: майбутні не приглушені, із строком
     rows = page.evaluate("[...document.querySelectorAll('.dv-near .dv-ev')].map(e=>({t:e.innerText,f:e.classList.contains('future'),o:getComputedStyle(e).opacity}))")
-    want = 5 if page.viewport_size['width'] < 1400 or page.viewport_size['height'] < 860 else 8  # compactNear: 5, інакше 8
+    want = 5 if page.viewport_size['width'] < 1400 or page.viewport_size['height'] < 1000 else 8  # compactNear: 5, інакше 8 (v149: двохрядкові рядки, 8 лише від висоти 1000)
     check(len(rows) == want, f'у «Найближче» {len(rows)} подій, а не {want}')
     check('Щоденні витрати' not in page.inner_text('.dv-near'), 'у «Найближче» лишився рядок «Щоденні витрати, прогноз» (v148: прибрано)')
     for r in rows:
@@ -167,7 +182,7 @@ def hover(page):
     box = page.locator('.dv-fc .fc-box')
     check(box.count() == 1 and page.locator('.dv-fc .fc-cross').count() == 1, 'наведення не показало перехрестя з боксом')
     tt = box.inner_text()
-    split = lambda s: 'Баланс ' in s and 'Власні ' in s and 'Кредитні ' in s  # v148: баланс, власні й кредитні лише в підказці
+    split = lambda s: 'Баланс' in s and 'Власні' in s and 'Кредитні' in s  # v149 рядками; v148: баланс, власні й кредитні лише в підказці
     check(re.search(r'^(Пн|Вт|Ср|Чт|Пт|Сб|Нд) \d\d\.\d\d', tt) and split(tt) and 'факт' in tt, f'бокс минулого дня: {tt!r}')
     page.mouse.move(b['x'] + b['width'] - 20, y)
     page.wait_for_timeout(60)

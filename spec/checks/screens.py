@@ -32,7 +32,9 @@ def desktop(page):
 
 
 def mobile(page):
-    check(page.locator('.tab-bar .tab-btn').count() == 5, 'на телефоні не 5 нижніх вкладок')
+    # v149: шоста вкладка «Налаштування» (сторінка, перевірка в v149.py)
+    check(page.locator('.tab-bar .tab-btn').count() == 6, 'на телефоні не 6 нижніх вкладок')
+    check(page.locator('.tab-bar .tab-btn').nth(5).inner_text().strip() == 'Налаштування', 'шоста вкладка не «Налаштування»')
     for i, (tid, title) in enumerate(TABS):
         go_tab(page, i)
         check(page.locator(f'.panel.p-{tid}').count() == 1, f'вкладка {title}: немає .p-{tid}')

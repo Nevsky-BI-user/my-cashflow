@@ -1,6 +1,7 @@
 # ПК-Календар v139 (DESIGN.md п. 12): KPI, компактна сітка місяця 7 колонок (повні назви подій, до 2 рядків, інакше «+N»),
 # минулі дні приглушеним тлом, сьогодні виділене; праворуч таблиця «Події і баланс» на всю висоту (каса по датах);
-# клік по дню: розклад балансу; червона рамка дня, де каса після білого платежу нижче нуля; 1920x1080 без прокрутки
+# клік по дню: розклад балансу; v149 без червоних рамок, мінус червоним лише в колонці балансу; 1920x1080 без прокрутки
+import re
 from datetime import date
 
 from helpers import check, finance_ref, freeze, go_tab, shot
@@ -10,7 +11,7 @@ NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.c
 # найменший кегль тексту в сітці й таблиці (лише елементи з власним текстом)
 MIN_FS = """sel=>Math.min(...[...document.querySelectorAll(sel+' *')].filter(e=>e.offsetParent&&[...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())).map(e=>parseFloat(getComputedStyle(e).fontSize)))"""
 ROWS = """[...document.querySelectorAll('.ck-day .cal-tbl .cal-ev')].map(r=>({d:r.dataset.date,b:r.dataset.bal==null?null:Number(r.dataset.bal),
-h:r.getBoundingClientRect().height,c:r.className,n:r.querySelector('.ce-n').textContent,a:r.querySelector('.ce-b').textContent}))"""
+h:r.getBoundingClientRect().height,top:r.getBoundingClientRect().top,bot:r.getBoundingClientRect().bottom,o:r.scrollHeight>r.clientHeight+1,c:r.className,n:r.querySelector('.ce-n').textContent,a:r.querySelector('.ce-b').textContent}))"""
 
 
 def desktop(page):
@@ -66,7 +67,9 @@ return{past:g('.ck-cal .cal-cell.past:not(.we)'),fut:g('.ck-cal .cal-cell.future
     check(repay, 'немає погашення в поточному місяці')
     for e in repay:
         check(page.locator('.cal-tbl .cal-ev[data-date="'+e['date']+'"]',has_text='Погашення кредитки').count()>=1, 'погашення не на плановій даті')
-    check(page.evaluate(MIN_FS, '.p-credits.desk .ck-cols') >= 13, f'текст у Календарі дрібніший за 13px: {page.evaluate(MIN_FS, ".p-credits.desk .ck-cols")}')
+    # v149 (власник: «менший шрифт другорядного»): назви в клітинках, баланс дня, факт і тихі мітки статусів від 11px, решта від 13px
+    check(page.evaluate(MIN_FS, '.p-credits.desk .ck-cols') >= 11, f'текст у Календарі дрібніший за 11px: {page.evaluate(MIN_FS, ".p-credits.desk .ck-cols")}')
+    check(page.evaluate(MIN_FS, '.p-credits.desk .cal-tbl .ce-a') >= 13 and page.evaluate(MIN_FS, '.p-credits.desk .cal-tbl .ce-b') >= 13, 'суми й баланс у таблиці дрібніші за 13px')
     page.mouse.move(2, 2)
     shot(page, 'cal-1280.jpg', full=False)
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол на 1280')
@@ -117,7 +120,7 @@ def table_1920(page, t):
     check(all(lo <= d <= hi for d in isos), f'у таблиці дати поза {lo}..{hi}: {sorted(d for d in isos if not lo <= d <= hi)}')
     check(t.isoformat() in isos and any('today' in r['c'] for r in rows), 'у таблиці немає підсвіченого рядка «сьогодні»')
     hd = page.evaluate("document.querySelector('.ck-day').innerText")
-    for s in ('Дата', 'Подія', 'Сума', 'Каса після'):  # v145: «баланс» лише власні мінус борг
+    for s in ('Дата', 'Подія', 'Сума', 'Баланс після'):  # v149: баланс = власні мінус борг кредиток (як плитка «Баланс»)
         check(s in hd, f'у таблиці немає колонки «{s}»')
     for d in sorted(isos):
         # рядок прогнозу щоденних витрат (cal-ev-var) підсумовує період і балансу не має
@@ -128,25 +131,28 @@ def table_1920(page, t):
             check(rr[-1]['b'] is not None and rr[-1]['a'].strip() != '', f'{d}: немає балансу після на останньому рядку дня')
         else:
             check(all(r['b'] is None and 'past' in r['c'] for r in rr), f'{d}: минулий рядок не приглушений або з балансом')
-    check(all(abs(r['h'] - 28) <= 1 for r in rows), f'рядки таблиці не 28px: {sorted({round(r["h"]) for r in rows})}')
+    # v149: рядки ростуть у висоту з довгою назвою, нічого не налазить і не обрізано
+    check(all(r['h'] >= 27 and not r['o'] for r in rows), f'рядки таблиці нижчі за 28px або з переповненням: {sorted({round(r["h"]) for r in rows})}')
+    check(all(rows[i + 1]['top'] >= rows[i]['bot'] - 1 for i in range(len(rows) - 1)), 'рядки таблиці налазять один на одного')
     projection=finance_ref(page)
     check(not any(e['funding']=='credit' for e in projection['events']), 'база автоматично переносить платежі на кредитку')
     days={d['date']:d for d in projection['days']}
+    sh=projection['snapshot']['positiveOwnCents']-projection['snapshot']['cashCents']
     for d in sorted({r['d'] for r in rows if r['d']>=t.isoformat() and 'cal-ev-var' not in r['c']}):
         last=[r for r in rows if r['d']==d and 'cal-ev-var' not in r['c']][-1]
         if 'cal-ev-end' in last['c']:
-            # v144: підсумковий рядок списку: каса на кінець дня перед зарплатою
-            check(abs(last['b']-days[d]['closingCashCents']/100)<=1, 'каса перед зарплатою не з проєкції '+d)
+            # v144: підсумковий рядок списку; v149: баланс на кінець дня перед зарплатою
+            check(abs(last['b']-(days[d]['netCents']+sh)/100)<=1, 'баланс перед зарплатою не з проєкції '+d)
             continue
-        # «Каса після» = cashAfterCents останньої незмінної події дня (змінні витрати дня: у розкладі)
+        # v149: «Баланс після» = каса мінус борг після останньої незмінної події дня плюс зсув (змінні витрати дня: у розкладі)
         evs=[e for e in projection['events'] if e['date']==d and e['kind']!='variable']
-        want=evs[-1]['cashAfterCents']/100 if evs else days[d]['openingCashCents']/100
+        want=(evs[-1]['cashAfterCents']-evs[-1]['debtAfterCents']+sh)/100 if evs else (projection['snapshot']['positiveOwnCents']-projection['snapshot']['creditDebtCents'])/100
         check(abs(last['b']-want)<=1, 'баланс календаря не з єдиної проєкції '+d)
     for d in pays:
         if int(d) >= t.day:
             cb = page.evaluate(CELLBAL, d)
             # v143: каса в клітинці = на кінець дня (зі змінними витратами дня), таблиця показує баланс після подій
-            tb = days[f"{t.isoformat()[:8]}{int(d):02d}"]['closingCashCents'] / 100
+            tb = (days[f"{t.isoformat()[:8]}{int(d):02d}"]['netCents'] + sh) / 100
             v = int(''.join(ch for ch in cb if ch.isdigit()) or 0) * (-1 if '−' in cb else 1)
             check(abs(v - tb) <= 1, f'{d}: у клітинці {cb!r}, у таблиці {tb}')
     scrollers=page.evaluate("""[...document.querySelectorAll('.content *')].filter(e=>e.offsetParent&&/auto|scroll/.test(getComputedStyle(e).overflowY)&&e.scrollHeight>e.clientHeight+2).map(e=>({cls:e.className,allowed:e.matches('.ck-day,.ck-side'),bottom:e.getBoundingClientRect().bottom}))""")
@@ -202,24 +208,38 @@ def _var_rows(page):
 
 
 def breakdown(page, t):
-    """Клік по дню: розклад балансу (стартова каса, події до дня з балансом після, підсумок = баланс дня в таблиці)."""
+    """Клік по дню: розклад балансу (v149: баланс сьогодні = плитка «Баланс», події до дня з балансом після, підсумок = баланс дня з рушія;
+    баланс сьогодні + надходження − відтоки = баланс на кінець; щоденні витрати дня одним рядком)."""
     cal = page.locator('.panel.p-credits.desk')
     rows = page.evaluate(ROWS)
     fut = [r for r in rows if int(r['d'][8:]) > t.day and r['b'] is not None]
     check(fut, 'у таблиці немає майбутніх рядків з балансом')
     iso = fut[-1]['d']
     # v143: підсумок розкладу = каса на кінець дня з рушія (змінні витрати дня в таблиці підсумовані рядком прогнозу)
-    want = next(d for d in finance_ref(page)['days'] if d['date'] == iso)['closingCashCents'] / 100
+    ref = finance_ref(page)
+    sh = ref['snapshot']['positiveOwnCents'] - ref['snapshot']['cashCents']
+    want = (next(d for d in ref['days'] if d['date'] == iso)['netCents'] + sh) / 100
+    now_bal = (ref['snapshot']['positiveOwnCents'] - ref['snapshot']['creditDebtCents']) / 100
     page.click(f'.ck-cal .cal-cell[data-date="{iso}"]')
     page.wait_for_timeout(250)
     check(cal.locator('.cal-cell.sel').count() == 1, 'клік не виділив день')
     side = page.inner_text('.ck-day')
-    check(f'РОЗКЛАД КАСИ · {int(iso[8:])} ' in side.upper(), f'шапка розкладу: {side[:60]!r}')
+    check(f'РОЗКЛАД БАЛАНСУ · {int(iso[8:])} ' in side.upper(), f'шапка розкладу: {side[:60]!r}')
+    check('Каса' not in side and 'каса' not in side, f'у розкладі лишилась «каса»: {side[:300]!r}')
     st = page.locator('.ck-bd-st').inner_text()
-    check('Стартова каса' in st, f'немає стартової каси: {st!r}')
+    sv = int(''.join(ch for ch in st.split('\n')[-1] if ch.isdigit()) or 0) * (-1 if '−' in st.split('\n')[-1] else 1)
+    check('Баланс сьогодні' in st and abs(sv - now_bal) <= 1, f'немає «Баланс сьогодні» = плитка «Баланс» {now_bal}: {st!r}')
     tot = page.locator('.ck-bd-tot').inner_text()
     v = int(''.join(ch for ch in tot.split('\n')[-1] if ch.isdigit()) or 0) * (-1 if '−' in tot.split('\n')[-1] else 1)
-    check('Каса на кінець' in tot and abs(v - want) <= 1, f'підсумок розкладу {tot!r}, у таблиці {want}')
+    check('Баланс на кінець' in tot and abs(v - want) <= 1, f'підсумок розкладу {tot!r}, у рушії {want}')
+    m = re.search(r'Надходження \+([\d\s\u00a0]+) ₴, відтоки −([\d\s\u00a0]+) ₴', side)
+    check(m, f'немає рядка «Надходження/відтоки»: {side[-200:]!r}')
+    n_in, n_out = (int(re.sub(r'\D', '', g)) for g in m.groups())
+    check(abs(sv + n_in - n_out - v) <= 2, f'баланс сьогодні {sv} + надходження {n_in} − відтоки {n_out} ≠ баланс на кінець {v}')
+    ev = page.locator('.ck-day-events .ck-bd-row')
+    names = [ev.nth(i).locator('.ce-n').inner_text() for i in range(ev.count())]
+    nvar = sum(1 for e in ref['events'] if e['date'] == iso and e['kind'] == 'variable')
+    check((names.count('Щоденні витрати') == (1 if nvar else 0)) and len(names) == sum(1 for e in ref['events'] if e['date'] == iso and e['kind'] != 'variable') + (1 if nvar else 0), f'події дня не з одним рядком «Щоденні витрати»: {names}')
     n = page.locator('.ck-bd-row').count()
     check(n >= 3, f'у розкладі лише {n} рядків')
     page.mouse.move(2, 2)
@@ -230,26 +250,23 @@ def breakdown(page, t):
 
 
 def short_frame(page):
-    """Червона рамка дня, де каса після білого платежу нижче нуля: monobank 500 замість 12 500."""
+    """v149 (власник: «без червоних рамок»): навіть за нестачі (monobank 500 замість 12 500) у сітці немає червоних рамок,
+    мінус червоним лише в колонці балансу таблиці, суми подій не червоні."""
     page.set_viewport_size({'width': 1920, 'height': 900})
     freeze(page, '2026-10-08', [("mono_account_id:'demo-mono',balance:12500,", "mono_account_id:'demo-mono',balance:500,")])
     go_tab(page, 3)
-    cal = page.locator('.panel.p-credits.desk')
-    sh = page.evaluate("[...document.querySelectorAll('.ck-cal .cal-cell.short')].map(c=>c.querySelector('.cal-dn').textContent.trim())")
-    check(len(sh) >= 1, 'немає червоної рамки дня з нестачею каси')
-    bs = cal.locator('.ck-cal .cal-cell.short').first.evaluate("e=>getComputedStyle(e).boxShadow")
-    check('inset' in bs and '2px' in bs, f'рамка не червона смуга: {bs}')
-    projection=finance_ref(page)
-    expected={str(int(d['date'][8:])) for d in projection['days'] if d['date'].startswith('2026-10') and d['shortfallCents']>0}
-    check(set(sh)==expected, f'рамки: пропущено {sorted(expected-set(sh))}; зайві {sorted(set(sh)-expected)}')
+    projection = finance_ref(page)
+    check(any(d['shortfallCents'] > 0 for d in projection['days'] if d['date'].startswith('2026-10')), 'фікстура без нестачі, тест нічого не перевіряє')
+    red = page.evaluate("""[...document.querySelectorAll('.ck-cal .cal-cell')].filter(c=>{const s=getComputedStyle(c);return /inset/.test(s.boxShadow)&&/2px/.test(s.boxShadow)&&!c.classList.contains('today')&&!c.classList.contains('sel')}).length""")
+    check(page.locator('.ck-cal .cal-cell.short').count() == 0 and red == 0, f'червоні рамки в сітці: {red}')
+    reds = page.evaluate("""(()=>{const rgb=e=>getComputedStyle(e).color.match(/[\\d.]+/g).map(Number);const isRed=e=>{const c=rgb(e);return c[0]>c[1]+60&&c[0]>c[2]+60};
+      return {amt:[...document.querySelectorAll('.cal-tbl .ce-a')].filter(e=>e.textContent.trim()&&isRed(e)).length,
+              bal:[...document.querySelectorAll('.cal-tbl .ce-b')].filter(e=>/−/.test(e.textContent)&&isRed(e)).length,
+              neg:[...document.querySelectorAll('.cal-tbl .ce-b')].filter(e=>/−/.test(e.textContent)).length}})()""")
+    check(reds['amt'] == 0, f'червоні суми подій: {reds}')
+    check(reds['neg'] == reds['bal'], f'мінусовий баланс не червоний: {reds}')
     page.mouse.move(2, 2)
     shot(page, 'cal-short-1920.jpg', full=False)
-    page.unroute(page.url)
-    freeze(page, '2026-10-08')
-    go_tab(page, 3)
-    r=finance_ref(page)
-    expected=sum(d['shortfallCents']>0 for d in r['days'] if d['date'].startswith('2026-10'))
-    check(cal.locator('.cal-cell.short').count()==expected, 'рамки базового прогнозу не відповідають проєкції')
 
 
 def mobile(page):
@@ -278,5 +295,5 @@ def mobile(page):
 CHECKS = [
     ('Календар: KPI, сітка, минулі дні, сьогодні, таблиця, розклад дня, 1920x1080', 'desktop', desktop),
     ('Календар на телефоні: як раніше плюс тло минулих днів', 'mobile', mobile),
-    ('Календар: червона рамка дня з нестачею каси', 'desktop', short_frame),
+    ('Календар: без червоних рамок, мінус червоним лише в балансі', 'desktop', short_frame),
 ]

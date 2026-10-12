@@ -263,3 +263,33 @@ test('budget_limit null falls back to limit in TS and Python (finance and next p
  assert.deepEqual(ts,py);
  assert.ok(ts.categories.filter(c=>['1','2','3'].includes(c.id)).every(c=>c.totalCents>0));
 });
+
+// v149 (міграція 29): end_date включно; після неї подій немає, щомісяця і щотижня; постійний дохід type 'income'
+test('fixed end_date: monthly events stop after the last date (inclusive)',()=>{
+ let d=fixture();d.fixed[0].end_date='2026-11-25';let r=both(d);
+ assert.deepEqual(ids(r,'fixed:1:'),['fixed:1:2026-10','fixed:1:2026-11']);
+ d=fixture();d.fixed[0].end_date='2026-11-24';r=both(d);
+ assert.deepEqual(ids(r,'fixed:1:'),['fixed:1:2026-10']);
+ assert.ok(r.events.every(e=>!e.id.startsWith('fixed:1:')||e.date<='2026-11-24'));
+});
+
+test('fixed end_date: weekly events stop after the last date (inclusive)',()=>{
+ const d=fixture();d.fixed.push(cleaning({end_date:'2026-10-26'}));const r=both(d);
+ assert.deepEqual(ids(r,'fixed:7:'),['fixed:7:2026-10-12','fixed:7:2026-10-19','fixed:7:2026-10-26']);
+ const e=fixture();e.fixed.push(cleaning({end_date:'2026-10-25'}));
+ assert.deepEqual(ids(both(e),'fixed:7:'),['fixed:7:2026-10-12','fixed:7:2026-10-19']);
+});
+
+test('fixed income raises cash on its date, is not mandatory and ends with end_date',()=>{
+ const plain=both(fixture());
+ const d=fixture();d.fixed.push({id:9,name:'Оренда гаража',type:'income',amount:900,day_of_month:15,end_date:'2026-11-14'});
+ const r=both(d);
+ const inc=r.events.filter(e=>e.id.startsWith('fixed:9:'));
+ assert.deepEqual(inc.map(e=>e.id),['fixed:9:2026-10']);
+ assert.equal(inc[0].kind,'income');assert.equal(inc[0].cashDeltaCents,90000);assert.equal(inc[0].creditEligible,false);
+ const day=(x,iso)=>x.days.find(v=>v.date===iso);
+ assert.equal(day(r,'2026-10-14').closingCashCents,day(plain,'2026-10-14').closingCashCents);
+ assert.equal(day(r,'2026-10-15').closingCashCents-day(plain,'2026-10-15').closingCashCents,90000);
+ assert.equal(r.nextPlan.mandatoryCents,plain.nextPlan.mandatoryCents,'income is not mandatory');
+ assert.ok(r.events.filter(e=>e.kind==='mandatory').every(e=>!e.id.startsWith('fixed:9:')));
+});

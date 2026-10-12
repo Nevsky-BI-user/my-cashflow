@@ -86,6 +86,12 @@ def week_day(f):
     return int(w) if w.is_integer() and 1 <= w <= 7 else None
 
 
+def fixed_ended(f, d):
+    """Дата d (date або YYYY-MM-DD) після end_date постійного платежу: подія не генерується; end_date включно, порожня: безстроково (міграція 29)."""
+    e = str(f.get('end_date') or '')[:10]
+    return bool(e) and (d if isinstance(d, str) else d.isoformat()) > e
+
+
 def week_key(day):
     """Ключ тижня оплати: 'W' + понеділок тижня дати YYYY-MM-DD; некоректна дата: None."""
     if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day):
@@ -197,7 +203,7 @@ def next_period_plan(data, asof):
             if f.get('active') is False or f.get('period')=='week' or (str(f.get('id')),f'{y:04d}-{m:02d}') in paid:
                 continue
             d=date(y,m,min(int(f['day_of_month']),last))
-            if start<=d<end:
+            if start<=d<end and not fixed_ended(f,d):
                 entries.append((cents(f['amount'])*(-1 if f['type']=='income' else 1),f.get('credit_ok') is True))
         for c in data.get('credits',[]):
             d=date(y,m,min(int(c['payment_day']),last)); first=int(c['start_year'])*12+int(c['start_month'])
@@ -209,7 +215,7 @@ def next_period_plan(data, asof):
         if f.get('active') is False or f.get('period')!='week' or w is None:
             continue
         d=start+timedelta(days=(w-1-start.weekday())%7)
-        while d<end:
+        while d<end and not fixed_ended(f,d):
             if (str(f.get('id')),week_key(d.isoformat())) not in paid:
                 entries.append((cents(f['amount'])*(-1 if f['type']=='income' else 1),f.get('credit_ok') is True))
             d+=timedelta(days=7)
@@ -374,7 +380,7 @@ def finance_projection(data, options):
         for i,f in enumerate(data.get('fixed',[])):
             if weekly(f): continue
             d=dt(y,m,min(int(f['day_of_month']),last))
-            if f.get('active') is False or d<asof or d>end_generation or (f.get('id') is not None and sid(f['id'])+'|'+month in paid): continue
+            if f.get('active') is False or d<asof or d>end_generation or fixed_ended(f,d) or (f.get('id') is not None and sid(f['id'])+'|'+month in paid): continue
             events.append(make('fixed:'+sid(f.get('id',i))+':'+month,d,f['name'],'income' if f.get('type')=='income' else 'mandatory',max(0,cents(f.get('amount'))),{'creditEligible':f.get('type')!='income' and f.get('credit_ok') is True}))
         for i,c in enumerate(data.get('credits',[])):
             d=dt(y,m,min(int(c['payment_day']),last)); first=int(c['start_year'])*12+int(c['start_month'])
@@ -386,7 +392,7 @@ def finance_projection(data, options):
         w=week_day(f)
         if not weekly(f) or f.get('active') is False or w is None: continue
         d=plus(asof,(w-iso_day(asof)+7)%7)
-        while d<=end_generation:
+        while d<=end_generation and not fixed_ended(f,d):
             if not (f.get('id') is not None and sid(f['id'])+'|'+week_key(d) in paid):
                 events.append(make('fixed:'+sid(f.get('id',i))+':'+d,d,f['name'],'income' if f.get('type')=='income' else 'mandatory',max(0,cents(f.get('amount'))),{'creditEligible':f.get('type')!='income' and f.get('credit_ok') is True}))
             d=plus(d,7)
@@ -603,7 +609,7 @@ def period_obl(start, end):
             if f.get('id') is not None and (str(f['id']), f'{y:04d}-{m:02d}') in PAID:
                 continue  # п. 13: оплачено в цьому місяці
             d = date(y, m, min(int(f['day_of_month']), last))
-            if start <= d < end:
+            if start <= d < end and not fixed_ended(f, d):
                 amt = float(f['amount'])
                 res.append((d, f['name'], amt if f['type'] != 'income' else -amt, f.get('credit_ok') is True))
         for c in snap['credits'] or []:
@@ -622,7 +628,7 @@ def period_obl(start, end):
         if f.get('active') is False or f.get('period') != 'week' or w is None:
             continue
         d = start + timedelta(days=(w - 1 - start.weekday()) % 7)
-        while d < end:
+        while d < end and not fixed_ended(f, d):
             if not (f.get('id') is not None and (str(f['id']), week_key(d.isoformat())) in PAID):
                 amt = float(f['amount'])
                 res.append((d, f['name'], amt if f['type'] != 'income' else -amt, f.get('credit_ok') is True))

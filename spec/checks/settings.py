@@ -1,5 +1,5 @@
-# Меню налаштувань: ПК (розділи праворуч) і телефон (список, другий рівень)
-from helpers import check, dialog
+# Меню налаштувань: ПК (розділи праворуч) і телефон (v149: шоста вкладка «Налаштування», сторінка зі списком, другий рівень)
+from helpers import check, dialog, go_tab
 
 SECTIONS = ['Зарплата', 'Розподіл бюджету', 'Накопичення', 'Платежі', 'Рахунки', 'Категорії', 'Тема', 'Інтеграції', 'Підказки']
 PANEL_TITLE = r"""()=>{const dl=document.querySelector('.set-page[aria-label="Налаштування"]');const pn=dl.children[1];
@@ -23,12 +23,12 @@ def desktop(page):
 
 
 def mobile(page):
-    page.click('.hdr-gear')
-    page.wait_for_timeout(400)
-    d = dialog(page, 'Налаштування')
-    check(d.count() == 1, 'шестерня не відкрила меню')
-    # ручку шита (.sheet-grip) не рахуємо: це не рядок меню
-    rows = page.evaluate("[...document.querySelector('[role=dialog][aria-label=\"Налаштування\"]').children].filter(e=>!e.classList.contains('sheet-grip')).length") - 1
+    go_tab(page, 5)
+    page.wait_for_timeout(200)
+    d = page.locator('.set-mpage[aria-label="Налаштування"]')
+    check(d.count() == 1 and dialog(page, 'Налаштування').count() == 0, 'шоста вкладка не відкрила сторінку налаштувань (або відкрила діалог)')
+    check(page.locator('.tab-bar .tab-btn[aria-current=page]').inner_text().strip() == 'Налаштування', 'вкладка «Налаштування» не активна')
+    rows = page.evaluate("[...document.querySelector('.set-mpage').children].length") - 1
     check(rows == 9, f'у списку {rows} рядків, а не 9')
     txt = d.inner_text()
     # «Підказки» на телефоні: кнопка туру і версія замість заголовка рядка

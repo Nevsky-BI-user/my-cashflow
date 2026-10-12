@@ -176,7 +176,7 @@ def pay_list(page):
     check(sal and (m.group(2), m.group(1)) == (sal[5:7], sal[8:10]), f'дата в заголовку {m.group(1)}.{m.group(2)}, а зарплата {sal}')
     s.click()
     page.wait_for_timeout(200)
-    n = page.evaluate("document.querySelector('details.cm-month').children.length-1")
+    n = page.evaluate("document.querySelectorAll('details.cm-month > .cm-event').length")  # v149: без рядка-шапки «Подія / Сума · баланс після»
     check(n == int(m.group(3)), f'у заголовку {m.group(3)} платежів, а рядків {n}')
 
 

@@ -163,11 +163,52 @@ def subscription(page):
     go_tab(page, 2)
     hint = page.locator('.flow-hint')
     check(hint.count() == 1 and 'Spotify' in hint.inner_text(), 'немає підказки про підписку Spotify')
-    hint.locator('button').click()
+    hint.locator('button', has_text='Додати').click()
     page.wait_for_timeout(400)
     d = dialog(page, 'Платежі')
     check(d.count() == 1, 'кнопка підказки не відкрила вікно платежів')
     check(d.locator('input[placeholder="Напр. Інтернет"]').input_value() == 'Spotify', 'чернетка платежу без назви Spotify')
+
+
+ECO = 'Щомісячний платіж EcoFlow Ukraine - monomarket'
+
+
+def _eco(page, credit):
+    """Демо: Spotify замінено на платіж EcoFlow 4 643 у двох місяцях; credit: розстрочка в CREDITS або None."""
+    patch = [("'Spotify',199,", "'" + ECO + "',4643,")]
+    if credit:
+        patch.append(("CREDITS=[", "CREDITS=[" + credit + ","))
+    page.unroute('**/*')
+    freeze(page, '2026-10-12', patch)
+    go_tab(page, 2)
+    return page.locator('.flow-hint')
+
+
+def subscription_known(page):
+    # v149: власник «це вже додано, навіщо ти пропонуєш ще раз?»: EcoFlow уже розстрочка, підказки бути не може
+    hint = _eco(page, None)
+    check(hint.count() == 1 and 'EcoFlow' in hint.inner_text(), 'контроль: без розстрочки підказки про EcoFlow немає, тест нічого не перевіряє')
+    hint = _eco(page, "{name:'EcoFlow',amount:4643,day:5,sy:2026,sm:8,total:12,color:'#7fa8f2',src:'mono'}")
+    check(hint.count() == 0, f'підказка про EcoFlow, хоча це розстрочка: {hint.first.inner_text() if hint.count() else ""!r}')
+    hint = _eco(page, "{name:'Розстрочка Б',amount:4643.4,day:5,sy:2026,sm:8,total:12,color:'#7fa8f2',src:'mono'}")
+    check(hint.count() == 0, 'підказка, хоча сума збігається з місячною сумою розстрочки до 1 ₴')
+    hint = _eco(page, "{name:'EcoFlow',amount:3100,day:5,sy:2026,sm:8,total:12,color:'#7fa8f2',src:'mono'}")
+    check(hint.count() == 0, 'підказка, хоча назва операції містить назву розстрочки')
+
+
+def subscription_no(page):
+    # «Ні» ховає підказку для цієї назви назавжди (localStorage, лише цей глядач)
+    go_tab(page, 2)
+    hint = page.locator('.flow-hint')
+    check(hint.count() == 1 and 'Spotify' in hint.inner_text(), 'немає підказки про Spotify')
+    hint.locator('button', has_text='Ні').click()
+    page.wait_for_timeout(300)
+    check(page.locator('.flow-hint').count() == 0, '«Ні» не сховало підказку')
+    page.reload()
+    page.wait_for_selector('.side', timeout=20000)
+    go_tab(page, 2)
+    check(page.locator('.flow-hint').count() == 0, 'після перезавантаження підказка знову зʼявилась')
+    page.evaluate("localStorage.removeItem('sub_hint_no')")
 
 
 def mobile(page):
@@ -186,6 +227,8 @@ def mobile(page):
 CHECKS = [
     ('Потік: фільтри, підсумок, дровер, стрілки', 'desktop', desktop),
     ('Потік: підказка про підписку', 'desktop', subscription),
+    ('Потік: немає підказки, коли операція вже розстрочка (EcoFlow)', 'desktop', subscription_known),
+    ('Потік: «Ні» ховає підказку назавжди', 'desktop', subscription_no),
     ('Потік 1920: усі категорії видно, від старіших до новіших, перемикач порядку', 'desktop', sort_chips),
     ('Потік: 17 категорій, усі видно без «ще N»', 'desktop', all_chips),
     ('Потік на телефоні: список і модалка', 'mobile', mobile),

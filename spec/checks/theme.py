@@ -182,7 +182,7 @@ def calendar_forecast_desktop(page):
 
 
 def calendar_forecast_mobile(page):
-    """Телефон 390: прогноз у тисячах («к») лише сьогодні і в дні виплат, клітинки не ширші за сітку"""
+    """Телефон 390: баланс на кінець дня у тисячах («к») у кожній клітинці від сьогодні (v149, раніше лише сьогодні і в дні виплат), клітинки не ширші за сітку"""
     page.set_viewport_size({'width': 390, 'height': 844})
     freeze(page, DAY)
     go_tab(page, 3)
@@ -191,7 +191,8 @@ def calendar_forecast_mobile(page):
     t = _tomorrow_cell(page, '.cm-calendar .cal-bal', '8')
     print(f'      сьогодні (телефон): {t!r}')
     check(t and t.endswith('к') and any(ch.isdigit() for ch in t), f'у клітинці сьогоднішнього дня немає суми «к»: {t!r}')
-    check(_tomorrow_cell(page, '.cm-calendar .cal-bal') is None, 'у клітинці звичайного дня (9-го) лишилась сума прогнозу')
+    n9 = _tomorrow_cell(page, '.cm-calendar .cal-bal')
+    check(n9 and n9.endswith('к'), f'у клітинці звичайного дня (9-го) немає балансу на кінець дня (v149): {n9!r}')
     w = page.evaluate("""(()=>{const c=[...document.querySelectorAll('.cm-calendar .cal-bal')].map(e=>e.closest('.cal-cell'));const g=c[0].parentElement.getBoundingClientRect();
 return {gl:g.left,gr:g.right,l:Math.min(...c.map(x=>x.getBoundingClientRect().left)),r:Math.max(...c.map(x=>x.getBoundingClientRect().right)),clip:[...document.querySelectorAll('.cm-calendar .cal-bal')].filter(e=>e.scrollWidth>e.clientWidth+0.5).length,sw:document.documentElement.scrollWidth}})()""")
     print(f'      сітка: {w}')

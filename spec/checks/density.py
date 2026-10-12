@@ -109,7 +109,8 @@ def calendar_real(page):
     lo, hi = list_range(finance_ref(page))
     nd = [d for d in nd if lo <= d <= hi]
     check(set(nd) <= dates, f'у таблиці немає дат з подіями: {sorted(set(nd) - dates)}')
-    check(c['ev'] and all(x == 28 for x in c['ev']), f'рядки таблиці не по 28px: {c["ev"]}')
+    # v149: рядки ростуть з довгою назвою і круглою кнопкою оплати 22px, але лишаються компактними
+    check(c['ev'] and all(27 <= x <= 34 for x in c['ev']), f'рядки таблиці не 27-34px: {c["ev"]}')
     ref = finance_ref(page)
     expected_repay = {e['date'] for e in ref['events'] if e['kind'] == 'repay' and e['date'].startswith(DAY[:7])}
     check(c['rep'] and set(c['rep']) == expected_repay, f'дати погашення не збігаються з планом: {c["rep"]}, {expected_repay}')
