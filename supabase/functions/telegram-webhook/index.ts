@@ -64,7 +64,7 @@ const HELP =
 // Постійна клавіатура під полем вводу: кнопки шлють звичайний текст, який роутер розуміє
 const BTN = { balance: '💰 Баланс', last: '📋 Останні', income: '➕ Дохід', help: '❓ Допомога', yes: '✅ Так, додати', no: '✖ Скасувати' };
 const MAIN_KB = {
-  keyboard: [[{ text: BTN.balance }, { text: BTN.last }], [{ text: BTN.income }, { text: BTN.help }]],
+  keyboard: [[{ text: BTN.balance }]],
   resize_keyboard: true,
   is_persistent: true,
 };
@@ -852,38 +852,49 @@ async function freeBlock(today: string): Promise<string> {
     .map((t) => String(t.credit_id) + '|' + String(t.date || t.created_at).slice(0, 7)));
   const installments = (cred.data || []).map((c) => {
     const first = Number(c.start_year) * 12 + Number(c.start_month); // start_month з 0
-    let n = 0;
+    let n = 0, lastDate = '';
     for (let k = first; k < first + Number(c.total_payments); k++) {
       const y = Math.floor(k / 12), m = k % 12;
       const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
       const d = `${y}-${String(m + 1).padStart(2, '0')}-${String(Math.min(Number(c.payment_day), last)).padStart(2, '0')}`;
+      lastDate = d;
       if (d > today && !paidCr.has(String(c.id) + '|' + d.slice(0, 7))) n++; // платіж у свій день вважається сплаченим за планом
     }
-    return { name: String(c.name), n, amountCents: Math.round(Number(c.monthly_amount) * 100) };
+    return { name: String(c.name), n, amountCents: Math.round(Number(c.monthly_amount) * 100), lastDate };
   }).filter((i) => i.n > 0);
   return formatFinanceMessage(projection, {count: lost.length, amountCents: lost.reduce((sum, t) => sum + Math.round(Number(t.amount) * 100), 0)},
-    installments);
+    installments) + await recentText();
 }
 
-async function last(chatId: number) {
+// Останні 5 операцій рядками: для статусу і для /last
+async function recentLines(): Promise<string[] | null> {
   const { data, error } = await sb
     .from('transactions')
     .select('amount,type,description,date,source,account_id')
     .order('date', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(5);
-  if (error || !data) return reply(chatId, 'Не вдалося отримати список.');
-  if (!data.length) return reply(chatId, 'Записів ще немає.');
+  if (error || !data) return null;
   // Назви рахунків (і неактивних): помилка лише прибирає назву з дужок
   const { data: accRows, error: accErr } = await sb.from('accounts').select('id,name');
   if (accErr) console.error('last: accounts lookup error:', accErr);
   const accName = new Map((accRows || []).map((a) => [a.id, a.name]));
-  const lines = data.map((t) => {
+  return data.map((t) => {
     const d = `${t.date.slice(8, 10)}.${t.date.slice(5, 7)}`;
-    const s = t.source === 'mono' ? 'mono' : t.source === 'telegram' ? 'tg' : 'вручну';
     const an = t.account_id != null ? accName.get(t.account_id) : null;
-    return `${d} ${t.type === 'income' ? '+' : '-'}${fmtMoney(Number(t.amount))} ${t.description || ''} (${s}${an ? ', ' + an : ''})`;
+    return `${d} · ${t.description || ''}: ${t.type === 'income' ? '+' : '-'}${fmtMoney(Number(t.amount))}${an ? ' (' + an + ')' : ''}`;
   });
+}
+
+async function recentText(): Promise<string> {
+  const lines = await recentLines();
+  return lines && lines.length ? '\n\nОстанні операції:\n' + lines.join('\n') : '';
+}
+
+async function last(chatId: number) {
+  const lines = await recentLines();
+  if (!lines) return reply(chatId, 'Не вдалося отримати список.');
+  if (!lines.length) return reply(chatId, 'Записів ще немає.');
   return reply(chatId, '📋 Останні:\n' + lines.join('\n'));
 }
 

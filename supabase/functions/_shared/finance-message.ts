@@ -6,7 +6,7 @@ const day = (value: string) => value.slice(8, 10) + '.' + value.slice(5, 7);
 const previousDay = (value: string) => new Date(Date.parse(value + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
 const plural = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'операція' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'операції' : 'операцій';
 
-export type Installment = {name: string; n: number; amountCents: number};
+export type Installment = {name: string; n: number; amountCents: number; lastDate?: string};
 
 // Короткий статус для бота: бюджет на початок періоду, доступно до виплати, власні, баланс, кожна картка окремим рядком, розстрочки, найближчі платежі.
 export function formatFinanceMessage(p: FinanceMessage, unassigned: {count: number; amountCents: number} = {count: 0, amountCents: 0},
@@ -40,7 +40,8 @@ export function formatFinanceMessage(p: FinanceMessage, unassigned: {count: numb
   }
   if (installments.length) {
     lines.push('', `Розстрочки: ${money(instCents)}`);
-    for (const i of installments) lines.push(`${i.name}: ${i.n} × ${money(i.amountCents)}`);
+    // Залишок розстрочки: кількість × платіж = сума, дата останнього платежу
+    for (const i of installments) lines.push(`${i.name}: ${i.n} × ${money(i.amountCents)} = ${money(i.n * i.amountCents)}` + (i.lastDate ? ` · до ${day(i.lastDate)}.${i.lastDate.slice(0, 4)}` : ''));
   }
   const due = p.events.filter(e => ['mandatory', 'fee'].includes(e.kind)).slice(0, 3);
   if (due.length) lines.push('', 'Найближчі платежі:', ...due.map(e => `${day(e.date)} · ${e.name}: ${money(-e.cashDeltaCents)}${e.certainty === 'conditional' ? ' (умовно)' : ''}`));
