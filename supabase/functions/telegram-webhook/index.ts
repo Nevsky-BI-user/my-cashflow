@@ -37,6 +37,11 @@ const WEBHOOK_SECRET = Deno.env.get('TELEGRAM_WEBHOOK_SECRET')!;
 const CLAUDE_API_KEY = Deno.env.get('CLAUDE_API_KEY') || '';
 
 const ALLOWED_EMAILS = ['gotnewmess@gmail.com', 'kovtunenko.yulchik@gmail.com'];
+// Telegram ID родини (секрет TELEGRAM_ALLOWED_IDS, через кому): їх пропускаємо без запиту в базу
+const ALLOWED_TG_IDS = new Set((Deno.env.get('TELEGRAM_ALLOWED_IDS') || '').split(',').map((v) => Number(v.trim())).filter((v) => v > 0));
+// Ліміт невдалих спроб коду з одного чату
+const LINK_TRIES = 5;
+const LINK_WINDOW_MS = 3600000;
 
 const sb = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -247,7 +252,21 @@ function todayKyiv(): string {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-async function linkByCode(chatId: number, code: string) {
+// Невдалі спроби коду за останню годину; помилка бази не блокує родину, але й не рахується як успіх
+async function linkTriesExceeded(chatId: number): Promise<boolean> {
+  const since = new Date(Date.now() - LINK_WINDOW_MS).toISOString();
+  const { count, error } = await sb.from('telegram_link_attempts').select('id', { count: 'exact', head: true })
+    .eq('chat_id', chatId).gte('at', since);
+  if (error) console.error('link attempts lookup error:', error);
+  return (count || 0) >= LINK_TRIES;
+}
+
+// silent: чужому чату нічого не відповідаємо, щоб бот не виказував себе
+async function linkByCode(chatId: number, code: string, silent = false) {
+  if (await linkTriesExceeded(chatId)) {
+    console.error('link refused: too many attempts', chatId);
+    return silent ? undefined : reply(chatId, 'Забагато спроб. Спробуйте через годину.', { remove_keyboard: true });
+  }
   const { data: prof } = await sb
     .from('profiles')
     .select('id')
@@ -255,13 +274,16 @@ async function linkByCode(chatId: number, code: string) {
     .gt('telegram_link_expires', new Date().toISOString())
     .maybeSingle();
   if (!prof) {
+    await sb.from('telegram_link_attempts').insert({ chat_id: chatId });
+    if (silent) return;
     return reply(chatId, 'Код невірний або прострочений. Згенеруйте новий у застосунку (шестерня, «Код для Telegram»).', { remove_keyboard: true });
   }
   // Той самий whitelist, що в застосунку: бот належить лише сімейним акаунтам
   const { data: au } = await sb.auth.admin.getUserById(prof.id);
   if (!ALLOWED_EMAILS.includes((au?.user?.email || '').toLowerCase())) {
     console.error('link refused: email not in whitelist', prof.id);
-    return reply(chatId, 'Доступ закритий.', { remove_keyboard: true });
+    await sb.from('telegram_link_attempts').insert({ chat_id: chatId });
+    return silent ? undefined : reply(chatId, 'Доступ закритий.', { remove_keyboard: true });
   }
   // Один Telegram-чат належить одному профілю: відвʼязуємо від попереднього
   await sb.from('profiles').update({ telegram_chat_id: null }).eq('telegram_chat_id', chatId).neq('id', prof.id);
@@ -1031,6 +1053,20 @@ Deno.serve(async (req) => {
   }
 
   // Далі завжди 200: інакше Telegram повторює той самий апдейт
+  // Сторожа: лише особисті чати; чужим Telegram ID нічого не відповідаємо
+  const gateChat = update?.message?.chat || update?.callback_query?.message?.chat;
+  const fromId = Number(update?.message?.from?.id || update?.callback_query?.from?.id || 0);
+  if (!gateChat || gateChat.type !== 'private' || !fromId || Number(gateChat.id) !== fromId) return new Response('ignored');
+  if (!ALLOWED_TG_IDS.has(fromId)) {
+    // Не в списку: або вже привʼязаний профіль (новий член родини після коду), або лише /start <код>
+    const { data: linked } = await sb.from('profiles').select('id').eq('telegram_chat_id', fromId).maybeSingle();
+    if (!linked) {
+      const code = String(update?.message?.text || '').trim().match(/^\/start\s+(\d{6})$/);
+      if (code) await linkByCode(fromId, code[1], true);
+      return new Response('ignored');
+    }
+  }
+
   // Кнопки рахунку під відповіддю: окремий тип апдейту без message
   if (update?.callback_query) {
     await onCallback(update.callback_query);
