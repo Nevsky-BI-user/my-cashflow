@@ -54,7 +54,7 @@ def scenario(page):
         r=finance_ref(page,verify_ts=True)
         s=r['scenario']
         check((s['newDebtCents'],s['cashPlanCents'],s['gapCents'])==(amount*100,plan,gap), 'scenario debt/plan/gap mismatch')
-        check(s['repayments'][0]['date']=='2026-11-24' and not s['errors'], 'scenario repayment date or errors mismatch')
+        check(s['repayments'][0]['date']=='2026-11-20' and not s['errors'], 'scenario repayment date or errors mismatch')
         check(r['nextPlan']['baseAvailableCents']==880000, 'scenario replaced base headline')
     d.get_by_label('Сума перенесення',exact=True).fill('21000')
     d.get_by_role('button',name='Переглянути сценарій').click()

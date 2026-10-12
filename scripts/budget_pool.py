@@ -1,7 +1,8 @@
 # Активний еталон: finance_projection / --finance, контракт docs/redesign/projection-contract.md (10.10.2026).
 # Нижче також збережено історичний CLI та його опис для сумісності з попередніми перевірками.
 # Правило каси (п. 12, варіант А): відсотків не платимо, усе, що лягло на кредитку за місяць M, гаситься власними
-#   грошима 24-го числа M+1 (вихідні не зсуваються). Каса по датах: старт = ownDebit + unassigned «зараз», далі події до
+#   грошима з виплати 21-го числа M+1 (v147: одне правило repay_plan, як repayDate у budget.ts; субота й неділя
+#   зсуваються, як сама виплата). Каса по датах: старт = ownDebit + unassigned «зараз», далі події до
 #   горизонту, баланс після кожної. Бюджет періоду не більший за найнижчу касу від його початку до горизонту мінус
 #   бюджети попередніх періодів (жадібно від поточного).
 # Вхід: JSON {accounts, fixed, credits, salary, spent?, account_tx?} (знімок БД; spent: витрати періоду, за замовчуванням 0;
@@ -25,7 +26,7 @@
 #   payout   виплати з датою строго після «зараз» (виплата сьогодні вже в балансі), плюс
 #   income   постійні доходи в дату, плюс
 #   white    обовʼязкові без credit_ok (витрати) у дату, з датою >= «зараз», мінус
-#   repay    погашення кредитки 24-го M+1: кошики боргу кредитних рахунків за місяцем M (прострочене 24-те: «зараз»)
+#   repay    погашення кредитки з виплати 21-го M+1: кошики боргу кредитних рахунків за місяцем M (минуле: «зараз»)
 #            плюс обовʼязкові з credit_ok з датою >= «зараз» у місяці M (раніші вже в боргу рахунку), мінус
 #   fee      комісія за недосягнутий поріг мінімальних витрат (п. 11) 1-го числа наступного місяця, мінус
 # Горизонт: max(3-тя виплата після «зараз», найпізніше погашення в межах 60 днів), включно.
@@ -55,6 +56,16 @@
 #   Старі поля payout, end, obligations, oblSum, oblWhite лишаються.
 import calendar, json, re, sys
 from datetime import date, datetime, timedelta
+
+
+def repay_plan(month, now=''):
+    """v147: єдине правило погашення (дзеркало repayDate у budget.ts): борг місяця M гаситься з виплати 21-го в M+1,
+    субота й неділя зсуваються, як сама виплата; минула дата гаситься «зараз» (з now '' дата без зсуву на «зараз»)."""
+    y, m = int(month[:4]), int(month[5:7])
+    d = date(y + m // 12, m % 12 + 1, 21)
+    w = d.weekday()
+    s = (d + timedelta(days=-1 if w == 5 else 1 if w == 6 else 0)).isoformat()
+    return now if now and s < now else s
 
 
 def parse_ts(s):
@@ -379,19 +390,13 @@ def finance_projection(data, options):
             if not (f.get('id') is not None and sid(f['id'])+'|'+week_key(d) in paid):
                 events.append(make('fixed:'+sid(f.get('id',i))+':'+d,d,f['name'],'income' if f.get('type')=='income' else 'mandatory',max(0,cents(f.get('amount'))),{'creditEligible':f.get('type')!='income' and f.get('credit_ok') is True}))
             d=plus(d,7)
-    def due_for(m):
+    def due_for(m):  # договірний строк 24-го M+1: лише інформаційне поле contractualDueDate
         y,n=ym(mi(m+'-01')+1)
         return dt(y,n,24)
-    # v146: борг місяця M гаситься з виплати 21-го числа в M+1 (будь-яка назва; вихідні зсуваються, як сама виплата)
-    repay_kind=next((k for k in ('advance','salary') if valid and int(float(cfg[k+'_day']))==21),None)
-    def repay_for(m):
-        if not repay_kind: return ''
-        y,n=ym(mi(m+'-01')+1); d=dt(y,n,21); w=date.fromisoformat(d).weekday()
-        return plus(d,-1 if w==5 else 1 if w==6 else 0)
+    # v147: дата погашення лише за спільним правилом repay_plan (виплата 21-го в M+1)
     for a in accounts:
         for month,amount in a['debt_months']:
-            due=due_for(month); pay=repay_for(month)
-            planned=asof if due<asof else (asof if pay<asof else pay) if pay else next_date if next_date and next_date<due else due
+            due=due_for(month); planned=repay_plan(month,asof)
             extra={'debtDeltaCents':-cents(amount),'contractualDueDate':due,'plannedRepaymentDate':planned}
             if 'id' in a: extra['accountId']=a['id']
             events.append(make('repay:'+('undefined' if a.get('id') is None else sid(a['id']))+':'+month,planned,a.get('name') or 'Погашення кредитки','repay',cents(amount),extra))
@@ -425,7 +430,7 @@ def finance_projection(data, options):
             if n==e['amountCents']: e.update(funding='credit',accountId=a['id'],debtDeltaCents=n)
             else:
                 e['amountCents']-=n; events.append({**e,'id':e['id']+':credit','amountCents':n,'cashDeltaCents':0,'debtDeltaCents':n,'funding':'credit','accountId':a['id']})
-            due=due_for(e['date'][:7]); repayment=make('scenario-repay:'+e['occurrenceId']+':'+sid(a['id']),due,'Погашення сценарного боргу','repay',n,{'accountId':a['id'],'debtDeltaCents':-n,'contractualDueDate':due,'plannedRepaymentDate':due}); scenario['repayments'].append(repayment); events.append(repayment)
+            due=due_for(e['date'][:7]); planned=repay_plan(e['date'][:7],asof); repayment=make('scenario-repay:'+e['occurrenceId']+':'+sid(a['id']),planned,'Погашення сценарного боргу','repay',n,{'accountId':a['id'],'debtDeltaCents':-n,'contractualDueDate':due,'plannedRepaymentDate':planned}); scenario['repayments'].append(repayment); events.append(repayment)
     for k in range(mi(asof),mi(end_generation)+1):
         y,m=ym(k); month=dt(y,m,1)[:7]; ny,nm=ym(k+1); d=dt(ny,nm,1)
         if d>end_generation: continue
@@ -688,12 +693,9 @@ def min_spend_fee(start, end):
     return fee_total if start <= fee_date < end else 0.0
 
 
-# п. 12: каса по датах. Борг кредитного рахунку за місяць M гаситься 24-го M+1 (прострочене: «зараз»)
+# п. 12: каса по датах. Борг кредитного рахунку за місяць M гаситься за спільним правилом repay_plan (минуле: «зараз»)
 def repay_date(month):
-    y, m = int(month[:4]), int(month[5:7])
-    y, m = (y, m + 1) if m < 12 else (y + 1, 1)
-    d = date(y, m, 24)
-    return d if d >= t_now else t_now
+    return date.fromisoformat(repay_plan(month, t_now.isoformat()))
 
 
 def debt_buckets(a):
@@ -719,7 +721,7 @@ KIND_ORDER = {'payout': 0, 'income': 1, 'white': 2, 'fee': 3, 'repay': 4}
 
 def cash_events(lo, hi):
     """Події каси з датою в [lo; hi] (п. 12): виплати (після «зараз») плюс, постійні доходи плюс, білі мінус у дату,
-    кредитні обовʼязкові з датою >= «зараз» і борг кредитних рахунків мінус 24-го M+1, комісія п. 11 мінус 1-го."""
+    кредитні обовʼязкові з датою >= «зараз» і борг кредитних рахунків мінус з виплати 21-го M+1, комісія п. 11 мінус 1-го."""
     ev = []
     for d, n, a in all_payouts(lo, hi):
         ev.append({'date': d, 'amount': a, 'name': n, 'kind': 'payout', 'payout': 'advance' if n == 'аванс' else 'salary'})
@@ -801,7 +803,7 @@ pool, savings, var_pool = plan_of(p_next[2], period[0], d1)
 print(f"сьогодні {today}; власні кошти {own:.2f}, борги {debt:.2f}, нетто {net:.2f}, мінус до перекриття {deficit:.2f}")
 print(f"поточна виплата: {p_next[1]} {p_next[0]} = {p_next[2]:.2f}; період до {p_after[0]} ({p_after[1]})")
 for d, n, a, ok in obl:
-    print(f"  {d}  {n:<32} {a:>10.2f}  {'кредитна, гаситься 24-го наступного місяця' if ok else 'біла'}")
+    print(f"  {d}  {n:<32} {a:>10.2f}  {'кредитна, гаситься з виплати 21-го наступного місяця' if ok else 'біла'}")
 print(f"обовʼязкові за період: {obl_sum:.2f}; відтоки каси за період {net_out(period[0], d1):.2f}")
 print(f"план періоду: {max(0.0, pool):.2f}; накопичення {pct:g}%: {savings:.2f}; змінні після накопичень: {var_pool:.2f}")
 obl_white = sum(o[2] for o in obl if not o[3] and o[2] > 0)

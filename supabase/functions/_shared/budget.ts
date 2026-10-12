@@ -91,6 +91,16 @@ export function deriveAccounts(accounts: Account[], txs: AccTx[]): Account[] {
   });
 }
 
+// Єдине правило погашення кредитки (v147, рішення власника 12.10.2026): борг місяця M гаситься з виплати 21-го числа в M+1.
+// Самодостатня (лише Date.UTC), бо вбудовується в index.html разом із financeProjection; ним користуються рушій, каса, бот і чипи.
+export function repayDate(month: string, now: string): string {
+  // субота й неділя зсуваються, як сама виплата (21.11.2026 субота: 20.11); минула дата гаситься «зараз»; now '' дає дату без зсуву на «зараз»
+  const d=new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5,7)),21)),w=d.getUTCDay();
+  d.setUTCDate(21+(w===6?-1:w===0?1:0));
+  const s=d.toISOString().slice(0,10);
+  return now&&s<now?now:s;
+}
+
 // Канонічна проєкція: вхід у гривнях, вихід у копійках; без I/O та мутації входу.
 // Функція самодостатня, щоб автономний фронтенд міг вбудувати той самий алгоритм.
 export function financeProjection(data: NextPeriodInput, options: {asof: string; through: string; scenario?: {selections: {occurrenceId: string; accountId: string | number; amountCents: number}[]} | null}) {
@@ -193,12 +203,10 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   (data.fixed||[]).forEach((f,i)=>{const w=Number(f.weekday);if(!weekly(f)||f.active===false||!Number.isInteger(w)||w<1||w>7)return;
     for(let d=plus(asof,(w-isoDay(asof)+7)%7);d<=endGeneration;d=plus(d,7)){if(f.id!=null&&paid.has(String(f.id)+'|W'+monday(d)))continue;events.push(make('fixed:'+String(f.id??i)+':'+d,d,f.name,f.type==='income'?'income':'mandatory',Math.max(0,cents(f.amount)),{creditEligible:f.type!=='income'&&f.credit_ok===true}));}
   });
+  // договірний строк 24-го M+1: лише інформаційне поле contractualDueDate, у розрахунках не бере участі
   const dueFor=(m: string)=>{const [y,n]=ym(monthIndex(m+'-01')+1);return date(y,n,24);};
-  // v146 (рішення власника 12.10.2026): борг, що виник у місяці M, гаситься з виплати 21-го числа в місяці M+1, як би її не названо
-  // в налаштуваннях; субота й неділя зсуваються, як сама виплата. Минула дата: «зараз». Без виплати 21-го: перша виплата до 24-го M+1.
-  const repayKind=valid?['advance','salary'].find(k=>Number(cfg![k+'_day'])===21):undefined;
-  const repayFor=(m: string)=>{if(!repayKind)return '';const [y,n]=ym(monthIndex(m+'-01')+1);const d=date(y,n,21),w=day(d).getUTCDay();return plus(d,w===6?-1:w===0?1:0);};
-  for(const a of accounts)for(const [month,amount] of a.debt_months){const due=dueFor(month),pay=repayFor(month),planned=due<asof?asof:pay?(pay<asof?asof:pay):nextDate&&nextDate<due?nextDate:due;events.push(make('repay:'+String(a.id)+':'+month,planned,a.name||'Погашення кредитки','repay',cents(amount),{accountId:a.id,debtDeltaCents:-cents(amount),contractualDueDate:due,plannedRepaymentDate:planned}));}
+  // v147: дата погашення лише за спільним правилом repayDate (виплата 21-го в M+1), однакова для рушія, каси, бота й чипів
+  for(const a of accounts)for(const [month,amount] of a.debt_months){const due=dueFor(month),planned=repayDate(month,asof);events.push(make('repay:'+String(a.id)+':'+month,planned,a.name||'Погашення кредитки','repay',cents(amount),{accountId:a.id,debtDeltaCents:-cents(amount),contractualDueDate:due,plannedRepaymentDate:planned}));}
   const minSpend: Record<string,any>[]=[];
   for(const a of accounts){if(a.id==null||cents(a.min_spend)<=0)continue;let spent=0,metOn;
     for(const t of txs.filter(t=>String(t.account_id)===String(a.id)&&t.type==='expense'&&txDate(t).slice(0,7)===asof.slice(0,7)).sort((a,b)=>cmp(txDate(a),txDate(b))||cmp(String(a.created_at),String(b.created_at))||cents(a.amount)-cents(b.amount))){spent+=cents(t.amount);if(metOn==null&&spent>=cents(a.min_spend))metOn=txDate(t);}
@@ -223,7 +231,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
       e.cashDeltaCents+=n;
       if(n===e.amountCents){e.funding='credit';e.accountId=a.id;e.debtDeltaCents=n;}
       else{e.amountCents-=n;events.push({...e,id:e.id+':credit',amountCents:n,cashDeltaCents:0,debtDeltaCents:n,funding:'credit',accountId:a.id});}
-      const due=dueFor(e.date.slice(0,7));const repayment=make('scenario-repay:'+e.occurrenceId+':'+String(a.id),due,'Погашення сценарного боргу','repay',n,{accountId:a.id,debtDeltaCents:-n,contractualDueDate:due,plannedRepaymentDate:due});
+      const due=dueFor(e.date.slice(0,7)),planned=repayDate(e.date.slice(0,7),asof);const repayment=make('scenario-repay:'+e.occurrenceId+':'+String(a.id),planned,'Погашення сценарного боргу','repay',n,{accountId:a.id,debtDeltaCents:-n,contractualDueDate:due,plannedRepaymentDate:planned});
       scenario.repayments.push(repayment);events.push(repayment);
     }
   }
@@ -463,12 +471,7 @@ function obligations(snap: Snapshot, start: string, end: string): Obligation[] {
 export type CashEvent = { date: string; amount: number; name: string; kind: string; payout?: 'advance' | 'salary'; balance?: number };
 const KIND_ORDER: Record<string, number> = { payout: 0, income: 1, white: 2, fee: 3, repay: 4 };
 
-// Погашення боргу за місяць M (YYYY-MM): 24-те M+1, вихідні не зсуваються; прострочене гаситься «зараз»
-export function repayDate(month: string, now: string): string {
-  const y = Number(month.slice(0, 4)), m = Number(month.slice(5, 7));
-  const d = iso(mk(m < 12 ? y : y + 1, m < 12 ? m + 1 : 1, 24));
-  return d >= now ? d : now;
-}
+// Погашення боргу за місяць M: спільне правило repayDate (над financeProjection)
 
 // Кошики боргу кредитного рахунку [[YYYY-MM, сума]]: з deriveAccounts або весь борг у місяці debt_month
 // (без нього місяць мітки balance_updated_at, без неї місяць «зараз»)

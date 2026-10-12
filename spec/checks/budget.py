@@ -35,7 +35,7 @@ def math(page):
         if debt is not None:
             snap['accounts'][1]['debt'] = debt
         ref = reference(snap, today, now)
-        # план п. 12: виплата − чисті відтоки каси періоду (погашення кредитки 24-го M+1) − накопичення
+        # план п. 12: виплата − чисті відтоки каси періоду (погашення кредитки з виплати 21-го M+1) − накопичення
         js = page.evaluate("""([t,s,n])=>periodBudget(t,s.salary,s.accounts,s.fixed,s.credits,s.salary.savings_pct,n||undefined)""", [today, snap, now])
         tag = f'{today}' + (f', борг {debt}' if debt is not None else '') + (f', зараз {now}' if now else '')
         check(js['payout']['date'] == ref['payout']['date'] and js['payout']['kind'] == ref['payout']['kind'],

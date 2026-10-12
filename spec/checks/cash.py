@@ -1,5 +1,5 @@
 # v139 (DESIGN.md п. 12, каса по датах), v145: Огляд з плиткою «Баланс» (власні мінус борг карток), Потік «сума, каса після» з сірим прогнозом,
-# картка кредитного рахунку (мінус борг, доступно, закрити до 24.MM), режим «Календарний місяць» з памʼяттю в localStorage,
+# картка кредитного рахунку (мінус борг, доступно, закрити до DD.MM за правилом repayDate), режим «Календарний місяць» з памʼяттю в localStorage,
 # жодного «до 25.MM» в інтерфейсі. Числа звіряються з еталоном scripts/budget_pool.py (допуск 1 ₴).
 import re
 from datetime import date, timedelta
@@ -116,7 +116,8 @@ def flow(page):
 
 
 def credit_card(page):
-    """Картка кредитного рахунку: мінус борг, «доступно X ₴» (ліміт мінус борг) або «ліміт не задано», «закрити до 24.MM»"""
+    """Картка кредитного рахунку: мінус борг, «доступно X ₴» (ліміт мінус борг) або «ліміт не задано»,
+    «закрити до DD.MM» з датою за спільним правилом repayDate (v147: виплата 21-го наступного місяця)"""
     page.set_viewport_size({'width': 1920, 'height': 1080})
     freeze(page, DAY)
     accs = page.evaluate("ACCOUNTS_DEMO.filter(a=>a.kind==='credit').map(a=>({name:a.name,debt:Number(a.debt)||0,lim:Number(a.credit_limit)||0}))")
@@ -129,7 +130,8 @@ def credit_card(page):
         if a['debt'] > 0:
             heads = [x for x in t.split('\n') if x.strip().startswith('−')]
             check(heads and abs(num(heads[0]) + a['debt']) <= 1, f'картка без мінус боргу: {t!r}')
-            check('закрити до 24.' in t, f'картка без «закрити до 24.MM»: {t!r}')
+            want = page.evaluate("n=>{const a=ACCOUNTS_DEMO.find(x=>x.name===n);const q=debtDue(a,new Date());return q?pbDm(q.date):''}", a['name'])
+            check(want and want[:2] in ('20', '21', '22') and ('закрити до ' + want) in t, f'картка без «закрити до {want}»: {t!r}')
         av = card.locator('.bcard-avail').inner_text()
         if a['lim'] > 0:
             check(abs(num(av) - (a['lim'] - a['debt'])) <= 1, f'доступно {av!r}, очікували {a["lim"] - a["debt"]}')
@@ -196,7 +198,7 @@ CHECKS = [
     ('Огляд: плитки KPI, «Баланс» за еталоном, 1920x1080', 'desktop', overview),
     ('Огляд на телефоні: плитки KPI, «Баланс» за еталоном', 'mobile', overview_mobile),
     ('Потік: «Сума», потім «Каса після», сірий прогноз за еталоном', 'desktop', flow),
-    ('Картка кредитки: мінус борг, доступно, закрити до 24-го', 'desktop', credit_card),
+    ('Картка кредитки: мінус борг, доступно, закрити до дати погашення', 'desktop', credit_card),
     ('Жодного «до 25.MM» на вкладках', 'desktop', no_25),
     ('Режим «Календарний місяць»: localStorage, факт + план днів місяця', 'desktop', month_mode),
 ]

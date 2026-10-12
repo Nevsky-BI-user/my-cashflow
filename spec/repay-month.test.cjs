@@ -49,11 +49,12 @@ test('partial FIFO: a repayment closes the oldest bucket first, the rest keeps i
  assert.deepEqual(repay(r2),[['repay:5:2026-09','2026-10-21','2026-10-24',300000],['repay:5:2026-10','2026-11-20','2026-11-24',600000]]);
 });
 
-test('overdue bucket repays today; without a payout on the 21st the old rule stays',()=>{
+// v147: одне правило скрізь; без виплати 21-го в налаштуваннях дата та сама (21-ше M+1 зі зсувом вихідних), запасного 24-го немає
+test('overdue bucket repays today; without a payout on the 21st the same 21st rule applies',()=>{
  const r=both({accounts:[{...privat,debt_month:'2026-08-01'}],salary,fixed:[],credits:[],categories:[],transactions:[]});
  assert.deepEqual(repay(r).map(e=>e[1]),['2026-10-12']);
  const r2=both({accounts:[mono],salary:{...salary,advance_day:20},fixed:[],credits:[],categories:[],transactions:[]});
- assert.deepEqual(repay(r2).map(e=>e[1]),['2026-10-20'],'перша виплата до 24.11');
+ assert.deepEqual(repay(r2).map(e=>e[1]),['2026-11-20'],'21.11.2026 субота: 20.11, як і з виплатою 21-го');
 });
 
 test('stored debt_month is the oldest month: older spending in history does not roll the debt back',()=>{
