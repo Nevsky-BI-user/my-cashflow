@@ -34,16 +34,14 @@ test('Бюджет: суми з проєкції застосунку, факт 
  assert.ok(m.topOver.length<=3);
  for(let i=1;i<m.topOver.length;i++)assert.ok(m.topOver[i-1].fact-m.topOver[i-1].plan>=m.topOver[i].fact-m.topOver[i].plan);
  const t=norm(rep.formatBudget(m));
- assert.match(t,/^📊 Бюджет періоду 06\.10-20\.10\n/);
+ assert.match(t,/^📊 Бюджет періоду 06\.10-21\.10\n/);
  assert.ok(t.includes('Бюджет: 20 373,94 ₴ · витрачено 12 373,94 ₴ (61%) · лишилось 8 000 ₴'),t);
- assert.ok(t.includes('До 20.10: 1 000 ₴/день (8 дн.)'),t);
- assert.ok(t.includes('⚠️ Дім: 2 445,41 ₴ / 800 ₴ (306%)'),t);
- assert.ok(t.includes('Здоровʼя: 223,69 ₴ / 800 ₴\n'),t);
- assert.ok(t.includes('Найбільші перевитрати:\n1. Дім: +1 645,41 ₴\n2. Продукти: +1 039,82 ₴\n3. Транспорт: +327,84 ₴'),t);
+ assert.ok(t.includes('До 21.10: 1 000 ₴/день (8 дн.)'),t);
+ for(const gone of ['Категорії, факт','Найбільші перевитрати','⚠️'])assert.ok(!t.includes(gone),gone+'\n'+t);
  assert.equal(rep.formatBudget(null),'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
 });
 
-test('Бюджет: ⚠️ і понад план, і від 90% плану, відсоток у дужках',async()=>{
+test('Бюджет: позначки понад план і від 90% плану в моделі, текст без категорій',async()=>{
  const {rep}=await setup();
  const pr={currentPeriod:{start:'2026-10-06',end:'2026-10-21',targetCents:100000,actualVariableCents:19000,dailyCents:9000.7,leftDays:9},
   periods:[{basis:'current',categories:[{id:1,totalCents:10000},{id:2,totalCents:10000}]}]};
@@ -52,9 +50,11 @@ test('Бюджет: ⚠️ і понад план, і від 90% плану, в�
   {id:3,type:'expense',amount:500,date:'2026-10-08',category_id:2,fixed_id:5},{id:4,type:'expense',amount:70,date:'2026-10-05',category_id:1}];
  const m=rep.budgetModel(pr,txs,cats,'2026-10-12');
  const t=norm(rep.formatBudget(m));
- assert.ok(t.includes('⚠️ А: 90 ₴ / 100 ₴ (90%)'),t);
- assert.ok(!t.includes('🟠'),t);
- assert.ok(t.includes('⚠️ Б: 100,01 ₴ / 100 ₴ (100%)'),t);
+ // Позначки лишаються в моделі (кільце на картинці), текст звіту лише з підсумком
+ const row=name=>m.rows.find(r=>r.name===name);
+ assert.ok(row('А').near&&!row('А').over);
+ assert.ok(row('Б').over);
+ assert.ok(!t.includes('⚠️')&&!t.includes('🟠'),t);
  assert.equal(m.dailyCents,9000);
 });
 

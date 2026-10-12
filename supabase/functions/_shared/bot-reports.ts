@@ -1,7 +1,7 @@
 // Звіти Telegram-бота з тієї самої проєкції, що й застосунок: Графік, Бюджет, Тиждень, Місяць, ранковий підсумок,
 // нагадування про платежі на завтра і запис «Оплачено». Чисті функції без I/O: їх перевіряють node-тести.
 import { lastPayout, type SalaryCfg } from './budget.ts';
-import { day, money, previousDay } from './finance-message.ts';
+import { day, money } from './finance-message.ts';
 
 type P = Record<string, any>;
 export type Tx = {
@@ -175,22 +175,9 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string): BudgetM
 
 export function formatBudget(m: BudgetModel | null): string {
   if (!m) return 'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.';
-  const lines = [`📊 Бюджет періоду ${day(m.start)}-${day(previousDay(m.end))}`,
+  const lines = [`📊 Бюджет періоду ${day(m.start)}-${day(m.end)}`,
     `Бюджет: ${money(m.poolCents)} · витрачено ${money(m.spentCents)} (${pct(m.spentCents, m.poolCents)}%) · лишилось ${money(m.leftCents)}`];
-  if (m.leftDays > 0) lines.push(`До ${day(previousDay(m.end))}: ${money(m.dailyCents)}/день (${m.leftDays} дн.)`);
-  if (m.rows.length) {
-    lines.push('', 'Категорії, факт / план:');
-    for (const r of m.rows) {
-      // ⚠️ понад план або 90% плану і більше; відсоток у дужках показує, що саме
-      const mark = r.over || r.near ? '⚠️ ' : '';
-      const tail = r.noPlan ? `${money(r.fact)}, без плану` : `${money(r.fact)} / ${money(r.plan)}` + (r.plan > 0 && (r.over || r.near) ? ` (${pct(r.fact, r.plan)}%)` : '');
-      lines.push(`${mark}${r.name}: ${tail}`);
-    }
-  }
-  if (m.topOver.length) {
-    lines.push('', 'Найбільші перевитрати:');
-    m.topOver.forEach((r, i) => lines.push(`${i + 1}. ${r.name}: +${money(r.fact - r.plan)}`));
-  }
+  if (m.leftDays > 0) lines.push(`До ${day(m.end)}: ${money(m.dailyCents)}/день (${m.leftDays} дн.)`);
   return lines.join('\n');
 }
 
@@ -343,7 +330,7 @@ const dueOn = (pr: P, date: string) => (pr.events || []).filter((e: P) => e.date
 export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string): string {
   const s = pr.snapshot, u = pr.untilPayout, tomorrow = plusDays(today, 1);
   const lines = [`☀️ Доброго ранку! ${day(today)}`, `Баланс: ${money(s.positiveOwnCents - s.creditDebtCents)}`];
-  if (u && u.days > 0) lines.push(`Доступно до ${day(previousDay(u.end))}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : ''));
+  if (u && u.days > 0) lines.push(`Доступно до ${day(u.end)}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : ''));
   const list = (title: string, rows: { name: string; cents: number }[]) => rows.length
     ? [`${title}: ${money(rows.reduce((n, r) => n + r.cents, 0))}`, ...rows.map((r) => `· ${r.name}: ${money(r.cents)}`)]
     : [`${title}: нічого`];

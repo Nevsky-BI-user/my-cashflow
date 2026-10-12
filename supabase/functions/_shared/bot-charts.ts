@@ -143,7 +143,7 @@ export function donutSvg(m: BudgetModel): string {
   const cx = 300, cy = 392, Ro = 236, Ri = 146;
   const out: string[] = [`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`,
     `<rect width="${W}" height="${H}" fill="${C.bg}"/>`, `<rect x="20" y="20" width="${W - 40}" height="${H - 40}" rx="28" fill="${C.card}"/>`,
-    text(48, 80, `Витрати за категоріями, ${day(m.start)}-${day(new Date(Date.parse(m.end + 'T00:00:00Z') - DAY).toISOString().slice(0, 10))}`, { size: 32, weight: 600 })];
+    text(48, 80, `Витрати за категоріями, ${day(m.start)}-${day(m.end)}`, { size: 32, weight: 600 })];
   if (!segs.length) {
     out.push(`<circle cx="${cx}" cy="${cy}" r="${(Ro + Ri) / 2}" fill="none" stroke="${C.grid}" stroke-width="${Ro - Ri}"/>`);
     out.push(text(cx, cy + 10, 'Витрат ще немає', { size: 28, fill: C.muted, anchor: 'middle' }));

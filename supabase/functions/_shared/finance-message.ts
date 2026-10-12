@@ -18,11 +18,11 @@ export function formatFinanceMessage(p: FinanceMessage, unassigned: {count: numb
   const lines: string[] = [];
   const plan = p.nextPlan;
   // Порядок: бюджет на початок періоду, доступно до виплати, власні, баланс (власні мінус борг карток)
-  if (plan) lines.push(`Бюджет на початок періоду: ${money(plan.targetCents)} · ${money(plan.averageDailyCents)}/день (${day(plan.start)}-${day(previousDay(plan.end))})`);
+  if (plan) lines.push(`Бюджет на початок періоду: ${money(plan.targetCents)} · ${money(plan.averageDailyCents)}/день (${day(plan.start)}-${day(plan.end)})`);
   else lines.push('Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
   // Доступно до виплати: з рушія (власні мінус обовʼязкові до виплати; борг кредиток гаситься з виплати)
   const u = p.untilPayout;
-  if (u && u.days > 0) lines.push(`Доступно до ${day(previousDay(u.end))}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : ''));
+  if (u && u.days > 0) lines.push(`Доступно до ${day(u.end)}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : ''));
   lines.push(`Власні кошти: ${money(own)}`, `Баланс: ${money(own - cardDebt)}`);
   if (accounts.length) {
     lines.push('', 'Картки:');
