@@ -1,4 +1,4 @@
-# Оформлення ПК (v135): шрифт Inter, плоскі картки банків без кіл, суцільна кнопка «+ Операція», лінія прогнозу 1.5px;
+# Оформлення ПК: 10.10.2026 користувач повернув тіні, шари й виразні KPI, зберігши чинну палітру.
 # період у шапці сторінки (Огляд, Бюджет, Потік, Календар), «Налаштування» пунктом панелі і сторінкою (не діалогом);
 # сьогоднішній день у Потоці (ПК і телефон) і в Календарі; прогноз балансу в клітинках Календаря; знімки ov-1920, ov-dark-1920, ov-375
 from helpers import check, dialog, freeze, go_tab, shot
@@ -18,7 +18,7 @@ BTN = "(sel)=>{const e=document.querySelector(sel);if(!e)return null;const s=get
 
 
 def fonts_cards_buttons(page):
-    """Inter (або фолбек без мережі, але з посиланням на Google Fonts), картки банків без кіл, кнопки без градієнтів, лінія прогнозу 1.5"""
+    """Inter з фолбеком, компактні картки з глибиною, виразні KPI, лінія прогнозу 1.5."""
     freeze(page, DAY)
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.evaluate("document.documentElement.setAttribute('data-theme','light')")
@@ -32,19 +32,20 @@ def fonts_cards_buttons(page):
     cards = page.evaluate(CARDS)
     check(len(cards) >= 3, f'карток банків {len(cards)}')
     for c in cards:
-        check(c['bi'] == 'none' or ('linear-gradient' in c['bi'] and 'radial' not in c['bi'] and 'conic' not in c['bi']), f'картка банку з декоративним фоном: {c["bi"][:80]}')
-        check(c['deco'] == 0, f'у картці банку лишились декоративні кола: {c}')
-        check(c['h'] == 96, f'картка банку {c["h"]}px, а не 96')
-        check(c['sh'] == 'none', f'картка банку з тінню: {c["sh"]}')
+        check('gradient' in c['bi'], f'у картки банку немає світлового шару: {c}')
+        check(96 <= c['h'] <= 132, f'картка банку не компактна: {c["h"]}px')
+        check(c['sh'] != 'none', f'картка банку без тіні: {c}')
     for sel in ('.side-add', '.dact'):
         b = page.evaluate(BTN, sel)
-        check(b and b['bi'] == 'none', f'{sel}: градієнт {b}')
+        check(b and b['bg'] != 'rgba(0, 0, 0, 0)', f'{sel}: немає акцентної поверхні {b}')
         check(b['fw'] in ('500', '600'), f'{sel}: вага {b["fw"]}, а не 500/600')
     sw = page.evaluate("(()=>{const e=document.querySelector('.fc-line');return e?getComputedStyle(e).strokeWidth:null})()")
     check(sw == '1.5px', f'лінія прогнозу {sw}, а не 1.5px')
-    # ваги 700+ на ПК не вживаються (видимі текстові вузли в .content і .side)
-    heavy = page.evaluate("""[...document.querySelectorAll('.content *, .side *')].filter(e=>e.offsetParent&&[...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())&&+getComputedStyle(e).fontWeight>=700).map(e=>e.textContent.trim().slice(0,20)).slice(0,5)""")
-    check(not heavy, f'текст із вагою 700+: {heavy}')
+    # Головні суми виділено; допоміжний текст лишається читабельним.
+    weights = page.evaluate("""[...document.querySelectorAll('.dv-kpi-v')].map(e=>+getComputedStyle(e).fontWeight)""")
+    check(weights and min(weights) >= 650, f'KPI без виразного акценту: {weights}')
+    support = page.evaluate("""[...document.querySelectorAll('.dv-wallet,.balc,.dv-recent')].filter(e=>e.offsetParent).map(e=>parseFloat(getComputedStyle(e).fontSize))""")
+    check(support and min(support) >= 11.5, f'допоміжний текст надто дрібний: {support}')
     page.mouse.move(2, 2)
     shot(page, 'ov-1920.jpg', full=False)
     page.evaluate("document.documentElement.setAttribute('data-theme','dark')")
@@ -84,7 +85,7 @@ def settings_page(page):
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(200)
     items = page.locator('.side-nav .side-item').all_inner_texts()
-    check([x.strip() for x in items] == ['Огляд', 'Бюджет', 'Потік', 'Календар', 'Цілі', 'Налаштування'], f'пункти навігації: {items}')
+    check([x.strip() for x in items] == ['Огляд', 'Бюджет', 'Операції', 'Платежі', 'Заощадження', 'Налаштування'], f'пункти навігації: {items}')
     check(page.locator('.side-seg').count() == 0, 'перемикач теми лишився в бічній панелі')
     page.locator('.side-nav .side-item', has_text='Налаштування').click()
     page.wait_for_timeout(400)
@@ -100,9 +101,9 @@ def settings_page(page):
     page.wait_for_timeout(250)
     check(sp.locator('button[aria-pressed]').count() == 3, 'у розділі «Тема» немає перемикача теми')
     shot(page, 'settings-1920.jpg', full=False)
-    page.locator('.side-nav .side-item', has_text='Потік').click()
+    page.locator('.side-nav .side-item', has_text='Операції').click()
     page.wait_for_timeout(300)
-    check(sp.count() == 0 and page.inner_text('.dtitle h1').strip() == 'Потік', 'перехід на «Потік» не закрив сторінку налаштувань')
+    check(sp.count() == 0 and page.inner_text('.dtitle h1').strip() == 'Операції', 'перехід на «Потік» не закрив сторінку налаштувань')
 
 
 def today_desktop(page):
@@ -186,12 +187,13 @@ def calendar_forecast_mobile(page):
     freeze(page, DAY)
     go_tab(page, 3)
     page.wait_for_timeout(300)
-    t = _tomorrow_cell(page, '.cal-bal-m', '8')
+    # окремий мобільний календар v142 (.cm-calendar): сума прогнозу в .cal-bal (раніше .cal-bal-m)
+    t = _tomorrow_cell(page, '.cm-calendar .cal-bal', '8')
     print(f'      сьогодні (телефон): {t!r}')
     check(t and t.endswith('к') and any(ch.isdigit() for ch in t), f'у клітинці сьогоднішнього дня немає суми «к»: {t!r}')
-    check(_tomorrow_cell(page, '.cal-bal-m') is None, 'у клітинці звичайного дня (9-го) лишилась сума прогнозу')
-    w = page.evaluate("""(()=>{const c=[...document.querySelectorAll('.cal-bal-m')].map(e=>e.closest('.cal-cell'));const g=c[0].parentElement.getBoundingClientRect();
-return {gl:g.left,gr:g.right,l:Math.min(...c.map(x=>x.getBoundingClientRect().left)),r:Math.max(...c.map(x=>x.getBoundingClientRect().right)),clip:[...document.querySelectorAll('.cal-bal-m')].filter(e=>e.scrollWidth>e.clientWidth+0.5).length,sw:document.documentElement.scrollWidth}})()""")
+    check(_tomorrow_cell(page, '.cm-calendar .cal-bal') is None, 'у клітинці звичайного дня (9-го) лишилась сума прогнозу')
+    w = page.evaluate("""(()=>{const c=[...document.querySelectorAll('.cm-calendar .cal-bal')].map(e=>e.closest('.cal-cell'));const g=c[0].parentElement.getBoundingClientRect();
+return {gl:g.left,gr:g.right,l:Math.min(...c.map(x=>x.getBoundingClientRect().left)),r:Math.max(...c.map(x=>x.getBoundingClientRect().right)),clip:[...document.querySelectorAll('.cm-calendar .cal-bal')].filter(e=>e.scrollWidth>e.clientWidth+0.5).length,sw:document.documentElement.scrollWidth}})()""")
     print(f'      сітка: {w}')
     check(w['l'] >= w['gl'] - 0.5 and w['r'] <= w['gr'] + 0.5, f'клітинки виходять за ширину сітки: {w}')
     check(w['clip'] == 0, f'сума прогнозу обрізана в {w["clip"]} клітинках')
@@ -211,18 +213,18 @@ def drawer_sheet(page):
     page.locator('.p-flow.desk .flow-row.tx').first.click()
     page.wait_for_timeout(400)
     d = page.locator('.drawer').first.evaluate(ST)
-    check(d['bg'] == 'rgb(255, 255, 255)' and d['bl'] == '1px rgb(230, 232, 236)' and '0px 8px 24px' in d['sh'], f'дровер: {d}')
+    check(d['bg'] == 'rgb(255, 255, 255)' and d['bl'] == '1px rgb(230, 232, 236)' and d['sh'] != 'none' and 'inset' in d['sh'], f'дровер: {d}')
     page.keyboard.press('Escape')
     page.wait_for_timeout(300)
     page.keyboard.press('n')
     page.wait_for_timeout(500)
     m = page.locator('.sheet').first.evaluate(ST)
-    check(m['bg'] == 'rgb(255, 255, 255)' and m['bt'] == '1px rgb(230, 232, 236)' and '0px 8px 24px' in m['sh'], f'модалка: {m}')
+    check(m['bg'] == 'rgb(255, 255, 255)' and m['bt'] == '1px rgb(230, 232, 236)' and m['sh'] != 'none', f'модалка: {m}')
     page.keyboard.press('Escape')
 
 
 CHECKS = [
-    ('ПК 1920: Inter, картки банків без кіл, кнопки без градієнтів, лінія прогнозу 1.5, без ваг 700+', 'desktop', fonts_cards_buttons),
+    ('ПК 1920: Inter, компактні картки з шарами й тінями, виразні KPI, лінія прогнозу 1.5', 'desktop', fonts_cards_buttons),
     ('ПК: перемикач періоду в шапці сторінки, не в панелі', 'desktop', period_header),
     ('ПК: «Налаштування» пунктом панелі відкриває сторінку', 'desktop', settings_page),
     ('ПК: дровер і модалка білі з волосяною межею і мʼякою тінню', 'desktop', drawer_sheet),

@@ -7,10 +7,22 @@ SETR = """(el,v)=>{const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prot
 
 
 def _salary_root(page):
-    page.click('.dv-pay-btn' if page.viewport_size['width'] >= 1024 else '.o-chip')
+    # v142: KPI «Наступна виплата» (ПК) і чип героя (телефон) прибрано з Огляду; зарплата в налаштуваннях:
+    # на ПК розділ сторінки налаштувань, на телефоні ⚙ у шапці, пункт «Зарплата» відкриває вікно
+    if page.viewport_size['width'] >= 1024:
+        page.keyboard.press('s')
+        page.wait_for_timeout(400)
+        page.locator('.set-page nav button', has_text='Зарплата').first.click()
+        page.wait_for_timeout(300)
+        root = '.set-page:has(input.nf-range)'
+        check(page.locator(root).count() == 1, 'розділ «Зарплата» в налаштуваннях без повзунка')
+        return page.locator(root)
+    page.click('.hdr-gear')
+    page.wait_for_timeout(400)
+    page.locator('[role=dialog][aria-label="Налаштування"] button', has_text='Зарплата').first.click()
     page.wait_for_timeout(500)
     root = '[role=dialog]:has(input.nf-range)'
-    check(page.locator(root).count() >= 1, 'чип зарплати не відкрив вікно з повзунком')
+    check(page.locator(root).count() >= 1, 'пункт «Зарплата» не відкрив вікно з повзунком')
     return page.locator(root).last
 
 

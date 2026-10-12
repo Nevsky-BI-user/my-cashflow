@@ -4,7 +4,7 @@ from pathlib import Path
 SPEC = Path(__file__).resolve().parent
 ROOT = SPEC.parent
 SHOTS = SPEC / '.out' / 'shots'
-TABS = [('overview', 'Огляд'), ('budget', 'Бюджет'), ('flow', 'Потік'), ('credits', 'Календар'), ('goals', 'Цілі')]
+TABS = [('overview', 'Огляд'), ('budget', 'Бюджет'), ('flow', 'Операції'), ('credits', 'Платежі'), ('goals', 'Заощадження')]
 
 
 def check(cond, msg):
@@ -133,6 +133,31 @@ def current_ref(snap, today, now=None):
 
 
 def num(text):
-    """'37 268 ₴' -> 37268 (пробіли й нерозривні пробіли тисяч, мінус U+2212)."""
-    t = ''.join(ch for ch in text if ch.isdigit() or ch in '-−')
-    return -int(t.strip('-−')) if t.startswith(('-', '−')) else int(t)
+    """Українська сума, включно копійки: '−37 268,50 ₴' -> -37268.5."""
+    import re
+    match = re.search(r'[−+-]?\s*\d[\d \u00a0\u202f]*(?:[,.]\d+)?', text)
+    check(match, f'немає числа в {text!r}')
+    value = re.sub(r'\s', '', match.group()).replace('−', '-').replace(',', '.')
+    return float(value)
+
+
+def finance_state(page):
+    """Лише демо-превʼю: сирий нормалізований вхід та фактична проєкція екранів."""
+    value = page.evaluate('({data:window.__financeInput,options:window.__financeOptions,result:window.__financeProjection})')
+    check(all(k in value for k in ('data', 'options', 'result')), 'немає демо-проєкції фінансів')
+    return value
+
+
+def finance_ref(page, verify_ts=False):
+    """Проєкція Python на тому самому синтетичному вході; за потреби також TS Telegram."""
+    value = finance_state(page)
+    payload = _json.dumps([{'data': value['data'], 'options': value['options']}], ensure_ascii=False)
+    def run(cmd):
+        result = _sp.run(cmd, input=payload, cwd=ROOT, capture_output=True, text=True, encoding='utf-8',
+                         timeout=30, check=True, env={**_os.environ, 'PYTHONUTF8': '1'})
+        return _json.loads(result.stdout)[0]
+    expected = run([_sys.executable, str(ROOT / 'scripts' / 'budget_pool.py'), '--finance'])
+    check(value['result'] == expected, 'проєкція браузера відрізняється від еталона Python')
+    if verify_ts:
+        check(run(['node', 'spec/ts_finance.mts']) == expected, 'проєкція TS для Telegram відрізняється від Python')
+    return expected

@@ -5,7 +5,7 @@ import sys
 
 from datetime import date
 
-from helpers import ROOT, SHOTS, SPEC, check, current_ref, demo_snapshot, freeze, go_tab, num, open_payout, shot
+from helpers import ROOT, SHOTS, SPEC, check, finance_ref, current_ref, demo_snapshot, freeze, go_tab, num, open_payout, shot
 
 FIX = SPEC / 'fixtures' / 'snapshot.json'
 # (дата сьогодні, зміна боргу кредитки або None): звичайний день, день самої виплати, дефіцит, бюджет у мінусі
@@ -59,11 +59,12 @@ PATCH = [('TX_DEMO_ROWS=[', 'TX_DEMO_ROWS=[' + HOT_ROW)]
 def expected(page, today):
     """Очікуване з демо-операцій і еталона budget_pool.py: період, бюджет, витрати за категоріями, «горить»."""
     t = date.fromisoformat(today)
-    # знімок застосунку (рахунки, операції з мітками, витрати періоду): еталон дає і плановий varPool, і обмежений varPoolCur
-    ref = current_ref(page.evaluate('window.__cashSnap()'), today, today)
+    # Повна проєкція Python перевіряє браузер; тут читаємо поточну ціль.
+    projection = finance_ref(page)
+    cur = next(p for p in projection['periods'] if p['basis']=='current')
+    ref = dict(payout={'date':cur['start']}, end=cur['end'], varPoolCur=cur['targetCents']/100, gap=max(0,cur['targetCents']-cur['availableCents'])/100, perDay=(projection['currentPeriod']['remainingTargetCents']/100/max(1,len(projection['currentPeriod']['futureSchedule']))))
     start, end = date.fromisoformat(ref['payout']['date']), date.fromisoformat(ref['end'])
     cats = page.evaluate("BCAT.map(c=>({id:c.id,name:c.name,limit:c.limit}))")
-    total = sum(c['limit'] for c in cats)
     txs = page.evaluate("([y,m])=>txDemo(y,m)", [start.year, start.month - 1])
     spend, ops = {}, {}
     for x in txs:
@@ -73,16 +74,7 @@ def expected(page, today):
             continue
         spend[x['category_id']] = spend.get(x['category_id'], 0) + x['amount']
         ops[x['category_id']] = ops.get(x['category_id'], 0) + 1
-    days = (end - start).days
-    frac = 0 if t < start else min(days, (t - start).days + 1) / days
-    # категорії ділять обмежений готівкою бюджет поточного періоду (DESIGN.md п. 5)
-    pool = ref['varPoolCur']
-    hot = set()
-    for c in cats:
-        plan = pool * c['limit'] / total
-        f = spend.get(c['id'], 0)
-        if f > 0 and (plan <= 0 or f / plan > frac + 0.1):
-            hot.add(c['name'])
+    hot = set()  # Поточний факт не порівнюємо з залишковим планом від завтра.
     names = {c['id']: c['name'] for c in cats}
     return ref, start, end, {names[k]: v for k, v in spend.items()}, {names[k]: v for k, v in ops.items()}, hot
 
@@ -102,11 +94,9 @@ def desktop(page):
     check(lbl.startswith(str(start.day)), f'період у бічній панелі «{lbl}», очікували від {start}')
     v = num(kpi(page, 'bud-pool'))
     check(abs(v - ref['varPoolCur']) <= 1, f'«Бюджет періоду» {v}, еталон budget_pool.py varPoolCur {ref["varPoolCur"]:.2f}')
-    if ref['varPoolCur'] < ref['planCur'] - 0.5:
-        check('обмежено готівкою' in page.inner_text('.bud-pool .bud-cap'), 'немає підпису «обмежено готівкою»')
-        check(abs(num(page.inner_text('.bud-pool .bud-plan')) - ref['planCur']) <= 1, 'плановий бюджет у підписі не той')
+    check('обмежено готівкою' not in page.inner_text('.bud-pool'), 'план досі стискається готівкою')
     sv = num(kpi(page, 'bud-sav'))
-    check(sv == round(ref['savings']), f'«Накопичення періоду» {sv}, еталон {ref["savings"]:.2f}')
+    check(abs(sv-ref['gap'])<=1, 'нестача до цілі не відповідає проєкції')
     total = sum(spend.values())
     got = num(kpi(page, 'bud-spent'))
     check(got == round(total), f'«Витрачено» {got}, сума демо-операцій періоду {total}')
@@ -114,8 +104,6 @@ def desktop(page):
     pd = num(kpi(page, 'bud-day'))
     want = ref['perDay']
     check(abs(pd - want) <= 1, f'«На день лишилось» {pd}, еталон perDay {want:.2f}')
-    print(f'      ПК-Бюджет {DAY}: бюджет {v}, витрачено {got}, на день {pd}, накопичення {sv}; '
-          f'еталон varPool {ref["varPool"]:.2f}, varPoolCur {ref["varPoolCur"]:.2f}, savings {ref["savings"]:.2f}, витрати {total}, «горить» {sorted(hot)}')
     rows = page.evaluate("""[...document.querySelectorAll('.bud-cat')].map(e=>({n:e.querySelector('.bud-name').textContent,
 f:e.querySelector('.bud-nums b').textContent,hot:e.classList.contains('hot'),idle:e.classList.contains('idle')}))""")
     check(len(rows) == page.evaluate('BCAT.length'), f'{len(rows)} категорій замість усіх')
@@ -123,11 +111,8 @@ f:e.querySelector('.bud-nums b').textContent,hot:e.classList.contains('hot'),idl
         f = num(r['f'])
         check(f == round(spend.get(r['n'], 0)), f'{r["n"]}: факт {f}, сума операцій періоду {spend.get(r["n"], 0)}')
         check(r['idle'] == (f == 0), f'{r["n"]}: сірий стан не збігається з витратами')
-    got_hot = {r['n'] for r in rows if r['hot']}
-    check(hot and got_hot == hot, f'«горить» {got_hot}, очікували {hot}')
-    check(page.locator('.bud-cat.hot .bud-hot').count() == len(hot), 'немає бейджа «горить»')
-    check(page.locator('.bud-pace path.bud-fact').count() == 1 and page.locator('.bud-pace .bud-plan').count() == 1,
-          'графік темпу без ліній')
+    check(not any(r['hot'] for r in rows), 'поточний факт помилково порівняно з планом від завтра')
+    check('факт / план від завтра' in page.inner_text('.bud-catcard'), 'не пояснено базу категорій')
     check(page.locator('.bud-top .bud-row').count() >= 1, 'топ-5 місць порожній')
     shot(page, 'budget-1280.jpg')
     page.set_viewport_size({'width': 1920, 'height': 1080})
@@ -135,7 +120,7 @@ f:e.querySelector('.bud-nums b').textContent,hot:e.classList.contains('hot'),idl
     shot(page, 'budget-1920.jpg')
     # клік по категорії, що горить: операції за період і «У Потік»
     # (знімок на весь екран міняє розмір вікна і скидає стан компонентів, тому вікно спершу високе, знімок без full_page)
-    name = sorted(hot)[0]
+    name = sorted(spend)[0]
     for w, hh, f in ((1920, 1300, 'budget-cat-1920.jpg'), (1280, 1400, 'budget-cat-1280.jpg')):
         page.set_viewport_size({'width': w, 'height': hh})
         page.wait_for_timeout(300)
@@ -197,8 +182,8 @@ def mobile(page):
 
 
 CHECKS = [
-    ('Бюджет періоду як в еталоні (7 випадків)', 'desktop', math),
-    ('ПК-Бюджет: KPI, категорії, «горить», операції, У Потік', 'desktop', desktop),
+    ('Legacy periodBudget: ізольована сумісність (7 випадків)', 'desktop', math),
+    ('ПК-Бюджет: ціль, факт/майбутній план, операції та У Потік', 'desktop', desktop),
     ('Період за замовчуванням містить сьогодні', 'desktop', default_period),
     ('ПК-Бюджет: період, що ще не почався', 'desktop', future_period),
     ('Бюджет на телефоні: витрати періоду', 'mobile', mobile),

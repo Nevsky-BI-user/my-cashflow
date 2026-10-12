@@ -3,11 +3,10 @@
 # клік по дню: розклад балансу; червона рамка дня, де каса після білого платежу нижче нуля; 1920x1080 без прокрутки
 from datetime import date
 
-from helpers import check, freeze, go_tab, shot
+from helpers import check, finance_ref, freeze, go_tab, shot
 
 MO = ['Січень', 'Лютий', 'Березень', 'Квітень', 'Травень', 'Червень', 'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень']
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
-INNER_SCROLL = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getComputedStyle(e).overflowY;return o==='auto'||o==='scroll'}).length"""
 # найменший кегль тексту в сітці й таблиці (лише елементи з власним текстом)
 MIN_FS = """sel=>Math.min(...[...document.querySelectorAll(sel+' *')].filter(e=>e.offsetParent&&[...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())).map(e=>parseFloat(getComputedStyle(e).fontSize)))"""
 ROWS = """[...document.querySelectorAll('.ck-day .cal-tbl .cal-ev')].map(r=>({d:r.dataset.date,b:r.dataset.bal==null?null:Number(r.dataset.bal),
@@ -33,9 +32,24 @@ def desktop(page):
     check(len(hs) >= 28 and min(hs) >= 64, f'клітинки нижчі за 64px: {min(hs) if hs else None}')
     many = page.evaluate("Math.max(0,...[...document.querySelectorAll('.ck-cal .cal-cell')].map(e=>e.querySelectorAll('.cal-ln').length))")
     check(many <= 2, f'у клітинці {many} рядків подій, а не до 2')
-    # повні назви без «...»: назва переноситься, не обрізається
-    cut = page.evaluate("[...document.querySelectorAll('.ck-cal .cal-nm')].filter(e=>getComputedStyle(e).textOverflow==='ellipsis'||getComputedStyle(e).whiteSpace==='nowrap'||e.closest('.cal-cell').scrollHeight>e.closest('.cal-cell').clientHeight+1).map(e=>e.textContent)")
-    check(not cut, f'назви подій обрізані: {cut}')
+    # 10.10.2026: коротка назва у вузькій клітинці, повна: у доступному розкладі дня.
+    names = page.locator('.ck-cal .cal-nm')
+    for i in range(names.count()):
+        name = names.nth(i).inner_text()
+        cell = names.nth(i).locator('xpath=ancestor::*[contains(@class,"cal-cell")][1]')
+        if cell.get_attribute('aria-pressed') != 'true':
+            cell.click()
+        page.wait_for_timeout(100)
+        details=page.inner_text('.ck-day-events')
+        if name=='Щоденні витрати':
+            iso=cell.get_attribute('data-date')
+            events=[e for e in finance_ref(page)['events'] if e['date']==iso and e['kind']=='variable']
+            check(events and all(e['name'] in details for e in events), 'деталі дня не містять змінних категорій')
+        else:
+            check(name in details, f'Повна назва недоступна після вибору дня: {name}')
+
+    check(page.evaluate("[...document.querySelectorAll('.ck-bd-list .ce-n')].every(e=>e.scrollWidth<=e.clientWidth+1)"), 'Назви розкладу дня обрізані')
+    page.locator('.ck-day .ck-link').click()
     check(page.inner_text('.ck-month') == f'{MO[t.month - 1]} {t.year}', f'заголовок місяця: {page.inner_text(".ck-month")!r}')
     today = cal.locator('.cal-cell.today')
     check(today.count() == 1, 'немає клітинки «сьогодні»')
@@ -49,10 +63,11 @@ def desktop(page):
 return{past:g('.ck-cal .cal-cell.past:not(.we)'),fut:g('.ck-cal .cal-cell.future:not(.we)'),today:g('.ck-cal .cal-cell.today')}})()""")
     check(bg['past'] and bg['past'] != bg['fut'] and bg['past'] != bg['today'] and bg['past'] not in ('rgba(0, 0, 0, 0)', 'transparent'), f'тло минулих днів не відрізняється: {bg}')
     check(cal.locator('.cal-badge', has_text='А').count() == 1 and cal.locator('.cal-badge', has_text='З').count() == 1, 'немає бейджів А і З')
-    # погашення кредитки 24-го (п. 12): подія в клітинці 24-го
-    if t.day <= 24:
-        c24 = page.inner_text(f'.ck-cal .cal-cell[data-date="{t.year}-{t.month:02d}-24"]')
-        check('Погашення кредитки' in c24, f'у клітинці 24-го немає погашення кредитки: {c24!r}')
+    projection=finance_ref(page)
+    repay=[e for e in projection['events'] if e['kind']=='repay' and e['date'][:7]==t.isoformat()[:7]]
+    check(repay, 'немає погашення в поточному місяці')
+    for e in repay:
+        check(page.locator('.cal-tbl .cal-ev[data-date="'+e['date']+'"]',has_text='Погашення кредитки').count()>=1, 'погашення не на плановій даті')
     check(page.evaluate(MIN_FS, '.p-credits.desk .ck-cols') >= 13, f'текст у Календарі дрібніший за 13px: {page.evaluate(MIN_FS, ".p-credits.desk .ck-cols")}')
     page.mouse.move(2, 2)
     shot(page, 'cal-1280.jpg', full=False)
@@ -69,7 +84,7 @@ return{past:g('.ck-cal .cal-cell.past:not(.we)'),fut:g('.ck-cal .cal-cell.future
     page.set_viewport_size({'width': 1920, 'height': 1080})
     page.wait_for_timeout(300)
     w = page.evaluate("document.querySelector('.panel.p-credits').getBoundingClientRect().width")
-    check(w <= 1600, f'на 1920 Календар ширший за 1600: {w}')
+    check(w <= page.evaluate('innerWidth - 220'), f'на 1920 Календар виходить за доступну область: {w}')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол на 1920')
     table_1920(page, t)
     breakdown(page, t)
@@ -80,13 +95,14 @@ CELLBAL = """d=>{const c=[...document.querySelectorAll('.ck-cal .cal-cell')].fin
 
 
 def table_1920(page, t):
-    """Сітка ліворуч, таблиця праворуч на всю висоту, 1920x1080 і 1920x900 без прокрутки й без внутрішніх скролів."""
+    """Сітка й таблиця в межах екрана; довгий список має лише погоджену внутрішню прокрутку."""
     cal = page.locator('.panel.p-credits.desk')
     wr = page.evaluate("document.querySelector('.ck-cal').getBoundingClientRect().width/document.querySelector('.ck-cols').getBoundingClientRect().width")
     check(0.5 <= wr <= 0.65, f'сітка займає {wr:.2f} ширини, а не 50-65 %')
     # таблиця на всю висоту колонки: нижній край картки таблиці = нижній край сітки
     gap = page.evaluate("Math.abs(document.querySelector('.ck-day').getBoundingClientRect().bottom-document.querySelector('.ck-cal').getBoundingClientRect().bottom)")
-    check(gap <= 2, f'таблиця не на всю висоту: різниця {gap}px')
+    check(page.evaluate("[...document.querySelectorAll('.ck-day,.ck-cal')].every(e=>e.getBoundingClientRect().bottom<=innerHeight)"), 'Сітка або розклад виходить за екран')
+    check(page.evaluate("[...document.querySelectorAll('.ck-cal .cal-nm')].every(e=>getComputedStyle(e).whiteSpace!=='nowrap'&&e.scrollWidth<=e.clientWidth+1)"), 'На широкому екрані назви не переносяться повністю')
     pays = set(page.evaluate(PAYDAYS, '.ck-cal .cal-cell'))
     check(len(pays) == 2, f'у сітці не два дні виплат: {pays}')
     withbal = page.evaluate("[...document.querySelectorAll('.ck-cal .cal-cell')].filter(c=>c.querySelector('.cal-bal')).map(c=>c.querySelector('.cal-dn').textContent.trim())")
@@ -108,21 +124,25 @@ def table_1920(page, t):
         else:
             check(all(r['b'] is None and 'past' in r['c'] for r in rr), f'{d}: минулий рядок не приглушений або з балансом')
     check(all(abs(r['h'] - 28) <= 1 for r in rows), f'рядки таблиці не 28px: {sorted({round(r["h"]) for r in rows})}')
-    # кредитні обовʼязкові касу в дату не рухають (п. 12): баланс як у попереднього рядка, позначка «гасимо 24.MM»
-    for i, r in enumerate(rows):
-        if ' cr' in f" {r['c']}" and i and rows[i - 1]['b'] is not None and r['b'] is not None:
-            check(r['b'] == rows[i - 1]['b'], f"{r['d']} {r['n']}: кредитний рядок змінив касу {rows[i - 1]['b']} -> {r['b']}")
-            check('гасимо 24.' in r['n'], f"{r['d']} {r['n']}: без позначки «гасимо 24.MM»")
-    if t.day <= 24:
-        rep = [r for r in rows if r['d'].endswith('-24') and 'Погашення кредитки' in r['n']]
-        check(len(rep) == 1, f'у таблиці немає погашення кредитки 24-го: {[r["n"] for r in rows if r["d"].endswith("-24")]}')
+    projection=finance_ref(page)
+    check(not any(e['funding']=='credit' for e in projection['events']), 'база автоматично переносить платежі на кредитку')
+    days={d['date']:d for d in projection['days']}
+    for d in sorted({r['d'] for r in rows if r['d']>=t.isoformat()}):
+        last=[r for r in rows if r['d']==d][-1]
+        check(abs(last['b']-days[d]['closingCashCents']/100)<=1, 'баланс календаря не з єдиної проєкції '+d)
     for d in pays:
         if int(d) >= t.day:
             cb = page.evaluate(CELLBAL, d)
             tb = [r for r in rows if int(r['d'][8:]) == int(d)][-1]['b']
             v = int(''.join(ch for ch in cb if ch.isdigit()) or 0) * (-1 if '−' in cb else 1)
             check(abs(v - tb) <= 1, f'{d}: у клітинці {cb!r}, у таблиці {tb}')
-    check(page.evaluate(INNER_SCROLL) == 0, 'у Календарі є внутрішній скрол')
+    scrollers=page.evaluate("""[...document.querySelectorAll('.content *')].filter(e=>e.offsetParent&&/auto|scroll/.test(getComputedStyle(e).overflowY)&&e.scrollHeight>e.clientHeight+2).map(e=>({cls:e.className,allowed:e.matches('.ck-day,.ck-side'),bottom:e.getBoundingClientRect().bottom}))""")
+    check(all(e['allowed'] and e['bottom']<=1081 for e in scrollers), f'непогоджені або необмежені скроли: {scrollers}')
+    last=page.locator('.ck-day .cal-ev').last
+    last.scroll_into_view_if_needed()
+    check(last.evaluate("e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight+1}"), 'останній рядок недосяжний у межах екрана')
+    check(page.evaluate('window.scrollY')==0, 'до останнього рядка прокрутилася вся сторінка')
+    page.locator('.ck-day').evaluate('e=>e.scrollTop=0')
     sh = page.evaluate('document.documentElement.scrollHeight')
     check(sh <= 1080, f'Календар не вміщається в 1920x1080: {sh}')
     page.mouse.move(2, 2)
@@ -172,35 +192,40 @@ def short_frame(page):
     check(len(sh) >= 1, 'немає червоної рамки дня з нестачею каси')
     bs = cal.locator('.ck-cal .cal-cell.short').first.evaluate("e=>getComputedStyle(e).boxShadow")
     check('inset' in bs and '2px' in bs, f'рамка не червона смуга: {bs}')
-    for d in sh:
-        sel = f'.ck-day .cal-ev[data-date="2026-10-{int(d):02d}"]'
-        tys = page.evaluate("s=>[...document.querySelectorAll(s+'.short .ce-tg')].map(e=>e.textContent)", sel)
-        check(tys and all(x in ('біла', 'погашення', 'комісія') for x in tys), f'{d}: рамка без білого платежу {tys}')
-        bal = page.evaluate("s=>[...document.querySelectorAll(s+'.short')].map(r=>Number(r.dataset.bal))", sel)
-        check(bal and all(b < 0 for b in bal), f'{d}: баланс після не відʼємний: {bal}')
+    projection=finance_ref(page)
+    expected={str(int(d['date'][8:])) for d in projection['days'] if d['date'].startswith('2026-10') and d['shortfallCents']>0}
+    check(set(sh)==expected, f'рамки: пропущено {sorted(expected-set(sh))}; зайві {sorted(set(sh)-expected)}')
     page.mouse.move(2, 2)
     shot(page, 'cal-short-1920.jpg', full=False)
     page.unroute(page.url)
     freeze(page, '2026-10-08')
     go_tab(page, 3)
-    check(cal.locator('.cal-cell.short').count() == 0, 'червона рамка без нестачі')
+    r=finance_ref(page)
+    expected=sum(d['shortfallCents']>0 for d in r['days'] if d['date'].startswith('2026-10'))
+    check(cal.locator('.cal-cell.short').count()==expected, 'рамки базового прогнозу не відповідають проєкції')
 
 
 def mobile(page):
-    go_tab(page, 3)
-    check(page.locator('.p-credits.desk').count() == 0, 'на телефоні показано ПК-Календар')
-    check(page.locator('.panel.p-credits .cal-list .cal-ev').count() >= 1, 'на телефоні зник список подій календаря')
-    check(page.locator('.panel.p-credits .cal-badge', has_text='А').count() == 1, 'на телефоні немає бейджа А')
-    t = date.today()
-    withbal = page.evaluate("[...document.querySelectorAll('.panel.p-credits .cal-bal-m')].map(e=>e.parentElement.firstChild.textContent.trim())")
-    pays = set(page.evaluate(PAYDAYS, '.panel.p-credits .cal-cell'))
-    check(withbal and set(withbal) <= pays | {str(t.day)}, f'на телефоні сума прогнозу не лише в дні виплат і сьогодні: {withbal}, виплати {pays}')
-    # v139: минулі дні приглушеним тлом
-    past = page.evaluate("[...document.querySelectorAll('.panel.p-credits .cal-cell.past')].map(e=>getComputedStyle(e).backgroundColor)")
-    check(len(past) == t.day - 1, f'на телефоні позначено {len(past)} минулих днів, а не {t.day - 1}')
-    check(all(b not in ('rgba(0, 0, 0, 0)', 'transparent') for b in past), f'минулі дні без тла: {set(past)}')
-    page.mouse.move(2, 2)
-    shot(page, 'v139-cal-375.jpg', full=False)
+    """Одна проєкція: мобільна сітка, відкриття дня і читабельні деталі без горизонтального скролу."""
+    go_tab(page,3)
+    check(page.locator('.panel.p-credits .cal-cell').count()>=28, 'немає мобільної сітки')
+    check(page.evaluate(NO_HSCROLL), 'мобільний календар ширший за екран')
+    projection=finance_ref(page)
+    pays=[e for e in projection['events'] if e['kind']=='payout' and e['date'][:7]==date.today().isoformat()[:7]]
+    check(pays, 'немає майбутніх виплат')
+    for e in pays:
+        check(page.locator('.cal-cell[data-date="'+e['date']+'"]').count()==1, 'немає дня виплати')
+    t=date.today()
+    past=page.locator('.cal-cell.past')
+    check(past.count()==t.day-1, 'минулі дні не позначені')
+    cell=page.locator('.cal-cell.today')
+    if cell.get_attribute('aria-pressed')!='true':
+        cell.click()
+    page.wait_for_timeout(200)
+    check(page.locator('.ck-day-events').count()==1, 'сьогодні не відкрило деталі')
+    check(page.evaluate(NO_HSCROLL), 'деталі дня ширші за телефон')
+    finance_ref(page)
+    shot(page,'v139-cal-375.jpg',full=False)
 
 
 CHECKS = [

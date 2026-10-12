@@ -1,4 +1,5 @@
-# Еталон грошової логіки (DESIGN.md, «Гроші по рахунках», третя редакція, п. 1-13; власник 08.10.2026, п. 13: 09.10.2026).
+# Активний еталон: finance_projection / --finance, контракт docs/redesign/projection-contract.md (10.10.2026).
+# Нижче також збережено історичний CLI та його опис для сумісності з попередніми перевірками.
 # Правило каси (п. 12, варіант А): відсотків не платимо, усе, що лягло на кредитку за місяць M, гаситься власними
 #   грошима 24-го числа M+1 (вихідні не зсуваються). Каса по датах: старт = ownDebit + unassigned «зараз», далі події до
 #   горизонту, баланс після кожної. Бюджет періоду не більший за найнижчу касу від його початку до горизонту мінус
@@ -8,7 +9,7 @@
 # Похідний баланс ручних рахунків (як deriveAccounts у _shared/budget.ts): якщо є account_tx
 #   (список {account_id, type, amount, created_at, date?}), рахунки без mono_account_id з id і balance_updated_at
 #   отримують операції, створені строго після balance_updated_at: debit/cash balance - витрати + доходи,
-#   credit debt + витрати - доходи (не менше 0) і кошики debt_months [[YYYY-MM, сума]]: збережений борг у місяці
+#   credit спершу витрачає власний залишок, дохід спершу гасить борг; кошики debt_months [[YYYY-MM, сума]]: борг у місяці
 #   debt_month (без нього місяць мітки), витрати за місяцем дати операції, доходи гасять найстаріші кошики.
 # Оплата постійного платежу (п. 13): fixed[] містить id і variable (сума змінна, amount = середня; на розрахунок не
 #   впливає), account_tx[] містить fixed_id. Операція type = 'expense' з fixed_id = f.id і датою (поле date, без нього
@@ -103,13 +104,317 @@ def derive_accounts(accounts, txs):
     return out
 
 
+def next_period_plan(data, asof):
+    """Новий план після резервування; *Cents — копійки, averageDailyCents — середнє.
+    salary — salary_config; remainingCents не є банківською касою по датах.
+    Немає відомої майбутньої виплати: {plan: None, reason: no_next_payout}.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    def safe(n):
+        if abs(n) > 9007199254740991:
+            raise ValueError('Unsafe cents')
+        return n
+    def cents(n):
+        return safe(int((Decimal(str(n or 0)) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP)))
+    def total(values):
+        return safe(sum(values))
+    current = date.fromisoformat(asof)
+    cfg = data.get('salary')
+    missing = {'plan': None, 'reason': 'no_next_payout'}
+    def valid_day(value):
+        try:
+            n = float(value)
+            return n.is_integer() and 1 <= n <= 31
+        except (ValueError, TypeError):
+            return False
+    if not cfg or any(not valid_day(cfg.get(k)) for k in ('advance_day', 'salary_day', 'split_day')):
+        return missing
+    upcoming = []
+    rate = float(cfg.get('rate') or 0)
+    def weekdays(y, m, lo, hi):
+        return sum((date(y,m,1)+timedelta(days=d-1)).weekday() < 5 for d in range(lo,hi+1))
+    for i in range(-1, 3):
+        y, m0 = divmod(current.year*12+current.month-1+i,12)
+        m = m0+1
+        py, pm = (y,m-1) if m>1 else (y-1,12)
+        for kind in ('advance','salary'):
+            d = date(y,m,1)+timedelta(days=int(cfg[kind+'_day'])-1)
+            d += timedelta(days=-1 if d.weekday()==5 else 1 if d.weekday()==6 else 0)
+            sy,sm = (y,m) if kind=='advance' else (py,pm)
+            last = calendar.monthrange(sy,sm)[1]
+            lo,hi = (1,int(cfg['split_day'])) if kind=='advance' else (int(cfg['split_day'])+1,last)
+            amount = cents(rate/weekdays(sy,sm,1,last)*weekdays(sy,sm,lo,hi))/100 if rate>0 else float(cfg.get(kind+'_amount') or 0)
+            if d>current and amount>0:
+                upcoming.append({'date':d.isoformat(),'kind':kind,'amount':amount,'amountCents':cents(amount)})
+    upcoming.sort(key=lambda p:p['date'])
+    if not upcoming:
+        return missing
+    nxt = upcoming[0]
+    after = next((p for p in upcoming if p['date']>nxt['date']),None)
+    if not after:
+        return missing
+    start,end = date.fromisoformat(nxt['date']),date.fromisoformat(after['date'])
+    txs = data.get('transactions',data.get('account_tx',[]))
+    accounts = [a for a in derive_accounts(data.get('accounts',[]),txs) if a.get('active') is not False]
+    stamps = [parse_ts(a['balance_updated_at']) for a in accounts if not a.get('mono_account_id') and a.get('balance_updated_at')]
+    adjustment = cents(sum(float(t['amount'])*(1 if t.get('type')=='income' else -1) for t in txs if t.get('account_id') is None and t.get('source')!='mono' and stamps and parse_ts(t['created_at'])>min(stamps)))
+    own = max(0,total([max(0,cents(a.get('balance'))) for a in accounts]+[adjustment]))
+    debt = total(max(0,cents(a.get('debt'))) for a in accounts if a.get('kind')=='credit')
+    paid = {(str(t['fixed_id']),str(t.get('date') or t.get('created_at') or '')[:7]) for t in txs if t.get('fixed_id') is not None and t.get('type')=='expense'}
+    entries = []
+    for k in range(start.year*12+start.month-1,end.year*12+end.month):
+        y,m0=divmod(k,12); m=m0+1; last=calendar.monthrange(y,m)[1]
+        for f in data.get('fixed',[]):
+            if f.get('active') is False or (str(f.get('id')),f'{y:04d}-{m:02d}') in paid:
+                continue
+            d=date(y,m,min(int(f['day_of_month']),last))
+            if start<=d<end:
+                entries.append((cents(f['amount'])*(-1 if f['type']=='income' else 1),f.get('credit_ok') is True))
+        for c in data.get('credits',[]):
+            d=date(y,m,min(int(c['payment_day']),last)); first=int(c['start_year'])*12+int(c['start_month'])
+            if start<=d<end and first<=k<first+int(c['total_payments']):
+                entries.append((cents(c['monthly_amount']),c.get('credit_ok') is True))
+    mandatory=total(a for a,_ in entries if a>0)
+    income=total(-a for a,_ in entries if a<0)
+    eligible=total(a for a,ok in entries if a>0 and ok)
+    base=total([total([own,nxt['amountCents']]),-total([mandatory,debt])])
+    target=max(1500000,base); gap=total([target,-base]); days=(end-start).days
+    categories=sorted([{'id':str(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit',c.get('limit'))))/100} for c in data.get('categories',[]) if c.get('active') is not False and c.get('type')=='expense'],key=lambda c:c['id'])
+    if len({c['id'] for c in categories})!=len(categories): raise ValueError('Duplicate category id')
+    if not any(c['weight']>0 for c in categories): categories = [{'id':'unallocated','name':'Не розподілено','weight':1}]
+    def allocate(amount,weights):
+        if amount==0: return [0]*len(weights)
+        denominator=sum(weights)
+        values=[amount*w//denominator for w in weights]
+        order=sorted(range(len(weights)),key=lambda i:(-(amount*weights[i]%denominator),i))
+        for i in order[:amount-sum(values)]: values[i]+=1
+        return values
+    totals=allocate(target,[cents(c['weight']) for c in categories]); remaining=totals[:]; balance=base; schedule=[]
+    for day in range(days):
+        spend=target//days+int(day<target%days)
+        amounts=remaining[:] if day==days-1 else allocate(spend,remaining)
+        remaining=[v-a for v,a in zip(remaining,amounts)]; balance=total([balance,-spend])
+        schedule.append({'date':(start+timedelta(days=day)).isoformat(),'spendCents':spend,'remainingCents':balance,'byCategory':[{'id':c['id'],'name':c['name'],'amountCents':a} for c,a in zip(categories,amounts)]})
+    return {'start':start.isoformat(),'end':end.isoformat(),'days':days,'nextPayout':nxt,'followingPayout':after,'positiveOwnCents':own,'debtCents':debt,'mandatoryCents':mandatory,'otherIncomeCents':income,'eligibleMandatoryCents':eligible,'baseAvailableCents':base,'targetCents':target,'gapCents':gap,'averageDailyCents':target/days,'categories':[{**c,'totalCents':a} for c,a in zip(categories,totals)],'schedule':schedule}
+
+
+def finance_projection(data, options):
+    """Чиста канонічна проєкція. Вхід — гривні; грошовий вихід — копійки."""
+    from decimal import Decimal, ROUND_HALF_UP
+    from copy import deepcopy
+    asof, through = options['asof'], options['through']
+    def safe(n):
+        if abs(n)>9007199254740991: raise ValueError('Unsafe cents')
+        return n
+    def cents(n): return safe(int((Decimal(str(n or 0))*100).quantize(Decimal(1),rounding=ROUND_HALF_UP)))
+    def total(values): return safe(sum(values))
+    def plus(s,n): return (date.fromisoformat(s)+timedelta(days=n)).isoformat()
+    def distance(a,b): return (date.fromisoformat(b)-date.fromisoformat(a)).days
+    def dt(y,m,d): return (date(y,m,1)+timedelta(days=d-1)).isoformat()
+    def mi(s): return int(s[:4])*12+int(s[5:7])-1
+    def ym(k):
+        y,m=divmod(k,12)
+        return y,m+1
+    def txdate(t): return str(t.get('date') or t.get('created_at') or '')[:10]
+    def sid(v): return str(v) if v is not None else 'null'
+    if through<asof or distance(asof,through)>3660: raise ValueError('Invalid horizon')
+    for s in (asof,through):
+        if date.fromisoformat(s).isoformat()!=s: raise ValueError('Invalid date')
+    seen=set(); txs=[]
+    for t in data.get('transactions',data.get('account_tx',[])):
+        if txdate(t)>asof: continue
+        if t.get('id') is not None:
+            if sid(t['id']) in seen: continue
+            seen.add(sid(t['id']))
+        txs.append(deepcopy(t))
+    txs.sort(key=lambda t:(parse_ts(t['created_at']).timestamp(),str(t.get('id',''))))
+    accounts=[]
+    for index,a in enumerate(a for a in data.get('accounts',[]) if a.get('active') is not False):
+        a=deepcopy(a)
+        if a.get('id') is None: a['id']='unidentified:'+str(index)
+        balance=cents(a.get('balance')); debt=max(0,cents(a.get('debt')))
+        month=str(a.get('debt_month') or a.get('balance_updated_at') or asof)[:7]; buckets={}
+        for m,v in a.get('debt_months',[[month,debt/100]]): buckets[m]=buckets.get(m,0)+max(0,cents(v))
+        excess=total(buckets.values())-debt
+        if excess<0: buckets[month]=buckets.get(month,0)-excess
+        if excess>0:
+            for m in sorted(buckets,reverse=True):
+                n=min(excess,buckets[m]); buckets[m]-=n; excess-=n
+        if not a.get('mono_account_id') and a.get('id') is not None and a.get('balance_updated_at'):
+            try: since=parse_ts(a['balance_updated_at'])
+            except ValueError: since=None
+            if since is not None:
+                for t in txs:
+                    if sid(t.get('account_id'))!=sid(a['id']) or parse_ts(t['created_at'])<=since: continue
+                    amount=max(0,cents(t.get('amount')))
+                    if a.get('kind')!='credit':
+                        balance=safe(balance+(amount if t.get('type')=='income' else -amount)); continue
+                    if t.get('type')=='income':
+                        left=amount
+                        for m in sorted(buckets):
+                            n=min(left,buckets[m]); buckets[m]-=n; left-=n; debt-=n
+                        balance=safe(balance+left)
+                    else:
+                        own=min(max(0,balance),amount); balance-=own; borrowed=amount-own; m=txdate(t)[:7]
+                        buckets[m]=buckets.get(m,0)+borrowed; debt=safe(debt+borrowed)
+        a.update(balance=balance/100,debt=debt/100,balanceCents=balance,debtCents=debt,debt_months=[[m,buckets[m]/100] for m in sorted(buckets) if buckets[m]>0]); accounts.append(a)
+    stamps=[]
+    for a in accounts:
+        if not a.get('mono_account_id') and a.get('balance_updated_at'):
+            try: stamps.append(parse_ts(a['balance_updated_at']))
+            except ValueError: pass
+    adjustment=total((1 if t.get('type')=='income' else -1)*cents(t.get('amount')) for t in txs if stamps and t.get('account_id') is None and t.get('source')!='mono' and parse_ts(t['created_at'])>min(stamps))
+    own=max(0,total([max(0,a['balanceCents']) for a in accounts]+[adjustment])); cash=total([a['balanceCents'] for a in accounts]+[adjustment]); debt=total(a['debtCents'] for a in accounts if a.get('kind')=='credit')
+    snapshot={'positiveOwnCents':own,'cashCents':cash,'unassignedAdjustmentCents':adjustment,'creditDebtCents':debt,'accounts':accounts,'warnings':[]}
+    cfg=data.get('salary'); payout_list=[]
+    def valid_day(v):
+        try: return float(v).is_integer() and 1<=float(v)<=31
+        except (ValueError,TypeError): return False
+    valid=cfg and all(valid_day(cfg.get(k)) for k in ('advance_day','salary_day','split_day'))
+    def weekdays(y,m,lo,hi): return sum(date.fromisoformat(dt(y,m,d)).weekday()<5 for d in range(lo,hi+1))
+    if valid:
+        for k in range(mi(asof)-2,mi(through)+4):
+            y,m=ym(k); py,pm=ym(k-1)
+            for kind in ('advance','salary'):
+                d=dt(y,m,int(cfg[kind+'_day'])); w=date.fromisoformat(d).weekday(); d=plus(d,-1 if w==5 else 1 if w==6 else 0)
+                sy,sm=(y,m) if kind=='advance' else (py,pm); rate=float(cfg.get('rate') or 0); last=calendar.monthrange(sy,sm)[1]
+                amount=cents(rate/weekdays(sy,sm,1,last)*weekdays(sy,sm,1 if kind=='advance' else int(cfg['split_day'])+1,int(cfg['split_day']) if kind=='advance' else last)) if rate>0 else cents(cfg.get(kind+'_amount'))
+                if amount>0: payout_list.append({'date':d,'kind':kind,'amount':amount/100,'amountCents':amount})
+    payout_list.sort(key=lambda p:(p['date'],p['kind'])); payout_dates=sorted({p['date'] for p in payout_list})
+    next_date=next((d for d in payout_dates if d>asof),''); following=next((d for d in payout_dates if next_date and d>next_date),''); has_plan=bool(next_date and following)
+    def payout_at(d):
+        rows=[p for p in payout_list if p['date']==d]; amount=total(p['amountCents'] for p in rows)
+        return {**rows[0],'amount':amount/100,'amountCents':amount}
+    end_generation=next((d for d in payout_dates if d>through and d>=following),plus(through,1)); events=[]
+    def make(i,d,name,kind,amount,extra=None):
+        return {'id':i,'occurrenceId':i,'date':d,'name':name,'kind':kind,'cashDeltaCents':amount if kind in ('income','payout') else -amount,'debtDeltaCents':0,'funding':'cash','certainty':'planned','amountCents':amount,**(extra or {})}
+    for p in payout_list:
+        if asof<p['date']<=end_generation: events.append(make('payout:'+p['kind']+':'+p['date'],p['date'],'Аванс' if p['kind']=='advance' else 'Зарплата','payout',p['amountCents']))
+    paid={sid(t['fixed_id'])+'|'+txdate(t)[:7] for t in txs if t.get('type')=='expense' and t.get('fixed_id') is not None}
+    for k in range(mi(asof),mi(end_generation)+1):
+        y,m=ym(k); month=dt(y,m,1)[:7]; last=calendar.monthrange(y,m)[1]
+        for i,f in enumerate(data.get('fixed',[])):
+            d=dt(y,m,min(int(f['day_of_month']),last))
+            if f.get('active') is False or d<asof or d>end_generation or (f.get('id') is not None and sid(f['id'])+'|'+month in paid): continue
+            events.append(make('fixed:'+sid(f.get('id',i))+':'+month,d,f['name'],'income' if f.get('type')=='income' else 'mandatory',max(0,cents(f.get('amount'))),{'creditEligible':f.get('type')!='income' and f.get('credit_ok') is True}))
+        for i,c in enumerate(data.get('credits',[])):
+            d=dt(y,m,min(int(c['payment_day']),last)); first=int(c['start_year'])*12+int(c['start_month'])
+            if d<asof or d>end_generation or k<first or k>=first+int(c['total_payments']): continue
+            events.append(make('installment:'+sid(c.get('id',i))+':'+month,d,c['name']+' (розстрочка)','mandatory',max(0,cents(c.get('monthly_amount'))),{'creditEligible':c.get('credit_ok') is True}))
+    def due_for(m):
+        y,n=ym(mi(m+'-01')+1)
+        return dt(y,n,24)
+    for a in accounts:
+        if a.get('kind')!='credit': continue
+        for month,amount in a['debt_months']:
+            due=due_for(month); planned=asof if due<asof else next_date if next_date and next_date<due else due
+            extra={'debtDeltaCents':-cents(amount),'contractualDueDate':due,'plannedRepaymentDate':planned}
+            if 'id' in a: extra['accountId']=a['id']
+            events.append(make('repay:'+('undefined' if a.get('id') is None else sid(a['id']))+':'+month,planned,a.get('name') or 'Погашення кредитки','repay',cents(amount),extra))
+    min_spend=[]
+    for a in accounts:
+        if a.get('id') is None or cents(a.get('min_spend'))<=0: continue
+        spent=0; met=None
+        rows=sorted([t for t in txs if sid(t.get('account_id'))==sid(a['id']) and t.get('type')=='expense' and txdate(t)[:7]==asof[:7]],key=lambda t:(txdate(t),str(t.get('created_at','')),cents(t.get('amount'))))
+        for t in rows:
+            spent+=cents(t.get('amount'))
+            if met is None and spent>=cents(a.get('min_spend')): met=txdate(t)
+        row={'accountId':a['id'],'month':asof[:7],'spent':spent/100,'min':cents(a.get('min_spend'))/100,'fee':cents(a.get('min_spend_fee'))/100,'left':max(0,cents(a.get('min_spend'))-spent)/100}
+        if met: row['metOn']=met
+        min_spend.append(row)
+    order={'payout':0,'income':1,'repay':2,'mandatory':3,'fee':4,'variable':5}
+    def event_key(e): return e['date'],order[e['kind']],e['id']
+    scenario={'selectedCents':0,'newDebtCents':0,'cashPlanCents':0,'gapCents':0,'repayments':[],'errors':[]} if options.get('scenario') is not None else None
+    if scenario is not None:
+        used=set()
+        def selection_key(s): return event_key(next((e for e in events if e['occurrenceId']==s['occurrenceId']),{'date':'9999','kind':'mandatory','id':s['occurrenceId']}))
+        for selection in sorted(options['scenario'].get('selections',[]),key=selection_key):
+            e=next((e for e in events if e['occurrenceId']==selection['occurrenceId'] and e['kind']=='mandatory'),None); a=next((a for a in accounts if sid(a.get('id'))==sid(selection['accountId'])),None); n=selection['amountCents']; error=''
+            if e is None or not e.get('creditEligible'): error='Платіж не дозволений для кредитного сценарію.'
+            elif e['id'] in used or not isinstance(n,(int,float)) or int(n)!=n or abs(n)>9007199254740991 or n<=0 or n>e['amountCents']: error='Некоректна сума або повторний вибір платежу.'
+            elif a is None or a.get('kind')!='credit' or a.get('credit_limit') is None: error='Для кредитного рахунку потрібен відомий ліміт.'
+            else:
+                debt_at=a['debtCents']+total(v['debtDeltaCents'] for v in events if sid(v.get('accountId'))==sid(a['id']) and event_key(v)<event_key(e))
+                if n>cents(a['credit_limit'])-debt_at: error='На дату платежу бракує кредитного ліміту.'
+            if error: scenario['errors'].append(error); continue
+            used.add(e['id']); scenario['selectedCents']+=n; scenario['newDebtCents']+=n; e['cashDeltaCents']+=n
+            if n==e['amountCents']: e.update(funding='credit',accountId=a['id'],debtDeltaCents=n)
+            else:
+                e['amountCents']-=n; events.append({**e,'id':e['id']+':credit','amountCents':n,'cashDeltaCents':0,'debtDeltaCents':n,'funding':'credit','accountId':a['id']})
+            due=due_for(e['date'][:7]); repayment=make('scenario-repay:'+e['occurrenceId']+':'+sid(a['id']),due,'Погашення сценарного боргу','repay',n,{'accountId':a['id'],'debtDeltaCents':-n,'contractualDueDate':due,'plannedRepaymentDate':due}); scenario['repayments'].append(repayment); events.append(repayment)
+    for k in range(mi(asof),mi(end_generation)+1):
+        y,m=ym(k); month=dt(y,m,1)[:7]; ny,nm=ym(k+1); d=dt(ny,nm,1)
+        if d>end_generation: continue
+        for a in accounts:
+            if a.get('id') is None or cents(a.get('min_spend'))<=0 or cents(a.get('min_spend_fee'))<=0: continue
+            actual=total(cents(t.get('amount')) for t in txs if sid(t.get('account_id'))==sid(a['id']) and t.get('type')=='expense' and txdate(t)[:7]==month)
+            assigned=0 if month==asof[:7] else total(e['amountCents'] for e in events if e['kind']=='mandatory' and sid(e.get('accountId'))==sid(a['id']) and e['date'][:7]==month)
+            if actual+assigned<cents(a.get('min_spend')): events.append(make('fee:'+sid(a['id'])+':'+month,d,'Комісія: '+str(a.get('name') or a['id']),'fee',cents(a.get('min_spend_fee')),{'accountId':a['id'],'certainty':'conditional'}))
+    categories=sorted([{'id':sid(c['id']),'name':c.get('name') or '', 'weight':max(0,cents(c.get('budget_limit',c.get('limit'))))/100} for c in data.get('categories',[]) if c.get('active') is not False and c.get('type')=='expense'],key=lambda c:c['id'])
+    if len({c['id'] for c in categories})!=len(categories): raise ValueError('Duplicate category id')
+    if not any(c['weight']>0 for c in categories): categories=[{'id':'unallocated','name':'Не розподілено','weight':1}]
+    def allocate(amount,weights):
+        if not amount: return [0]*len(weights)
+        denominator=sum(weights); values=[amount*w//denominator for w in weights]; indices=sorted(range(len(weights)),key=lambda i:(-(amount*weights[i]%denominator),i))
+        for i in indices[:amount-sum(values)]: values[i]+=1
+        return values
+    def distribution(target,start,end,available):
+        count=distance(start,end); totals=allocate(target if count>0 else 0,[cents(c['weight']) for c in categories]); remaining=totals[:]; schedule=[]; balance=available
+        for i in range(count):
+            spend=target//count+int(i<target%count); amounts=remaining[:] if i==count-1 else allocate(spend,remaining); remaining=[v-a for v,a in zip(remaining,amounts)]; balance=safe(balance-spend)
+            schedule.append({'date':plus(start,i),'spendCents':spend,'remainingCents':balance,'byCategory':[{'id':c['id'],'name':c['name'],'amountCents':a} for c,a in zip(categories,amounts)]})
+        return {'categories':[{**c,'totalCents':a} for c,a in zip(categories,totals)],'schedule':schedule}
+    def between(start,end): return [e for e in events if start<=e['date']<end and e['kind']!='variable']
+    def mandatory(start,end): return total(e['amountCents'] for e in between(start,end) if e['kind'] in ('mandatory','fee'))
+    next_plan=current_period=None; periods=[]
+    if has_plan:
+        nxt=payout_at(next_date); after=payout_at(following); reserved=mandatory(next_date,following); base=safe(own+nxt['amountCents']-reserved-debt); target=max(1500000,base)
+        next_plan={'start':next_date,'end':following,'days':distance(next_date,following),'nextPayout':nxt,'followingPayout':after,'positiveOwnCents':own,'debtCents':debt,'mandatoryCents':reserved,'otherIncomeCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='income'),'eligibleMandatoryCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='mandatory' and e.get('creditEligible')),'baseAvailableCents':base,'targetCents':target,'gapCents':max(0,target-base),'averageDailyCents':target/distance(next_date,following),**distribution(target,next_date,following,base)}
+        start=next((d for d in reversed(payout_dates) if d<=asof),asof); actual=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('fixed_id') is None and txdate(t)>=start); mandatory_now=mandatory(asof,next_date); available=safe(cash-mandatory_now-debt); target=max(1500000,actual+available); remaining=max(0,target-actual); dist=distribution(remaining,plus(asof,1),next_date,available)
+        current_period={'start':start,'end':next_date,'actualVariableCents':actual,'targetCents':target,'remainingTargetCents':remaining,'futureSchedule':dist['schedule']}
+        periods.append({'start':start,'end':next_date,'basis':'current','openingCashCents':cash,'payoutCents':0,'mandatoryCents':mandatory_now,'debtReserveCents':debt,'availableCents':available,'targetCents':target,'gapCents':max(0,remaining-available),**dist})
+        future=[d for d in payout_dates if d>asof]
+        for i in range(len(future)-1):
+            start,end=future[i:i+2]
+            if start>through: break
+            opening=safe(cash+total(e['cashDeltaCents'] for e in events if asof<=e['date']<start)-total(d['spendCents'] for p in periods for d in p['schedule'] if d['date']<start)); entries=between(start,end); payout=total(e['amountCents'] for e in entries if e['kind']=='payout'); reserved=mandatory(start,end); scheduled_repay=total(e['amountCents'] for e in entries if e['kind']=='repay'); outstanding_debt=safe(debt+total(e['debtDeltaCents'] for e in events if e['date']<start)); new_repay=total(e['amountCents'] for e in entries if e['kind']=='repay' and e['id'].startswith('scenario-repay:') and any(v['funding']=='credit' and start<=v['date']<end and e['id']=='scenario-repay:'+v['occurrenceId']+':'+sid(v.get('accountId')) for v in events)); debt_reserved=outstanding_debt+new_repay; available=safe(opening+total(e['cashDeltaCents'] for e in entries)+scheduled_repay-debt_reserved); target=next_plan['targetCents'] if i==0 else max(1500000,available)
+            periods.append({'start':start,'end':end,'basis':'headline' if i==0 else 'projected','openingCashCents':opening,'payoutCents':payout,'mandatoryCents':reserved,'debtReserveCents':debt_reserved,'availableCents':available,'targetCents':target,'gapCents':max(0,target-available),**distribution(target,start,end,available)})
+    if scenario is not None:
+        base=next_plan['baseAvailableCents'] if next_plan else 0
+        gain=total(e['amountCents'] for e in events if e['funding']=='credit' and next_plan['start']<=e['date']<next_plan['end'])-total(e['amountCents'] for e in scenario['repayments'] if next_plan['start']<=e['date']<next_plan['end']) if next_plan else 0
+        scenario['cashPlanCents']=safe(base+gain); scenario['gapCents']=max(0,(next_plan['targetCents'] if next_plan else 1500000)-scenario['cashPlanCents'])
+    for p in periods:
+        for d in p['schedule']:
+            for c in d['byCategory']:
+                if c['amountCents']>0: events.append(make('variable:'+d['date']+':'+c['id'],d['date'],c['name'],'variable',c['amountCents'],{'categoryId':c['id']}))
+    visible=sorted([e for e in events if asof<=e['date']<=through],key=event_key); days=[]; d=asof
+    while d<=through:
+        opening=cash; today=[e for e in visible if e['date']==d]; by_category=[]; minimum=cash; variable=0
+        for e in today:
+            cash=safe(cash+e['cashDeltaCents']); debt=safe(debt+e['debtDeltaCents']); e['cashAfterCents']=cash; e['debtAfterCents']=debt; minimum=min(minimum,cash)
+            if e['kind']=='variable':
+                variable+=e['amountCents']; by_category.append({'id':e['categoryId'],'name':e['name'],'amountCents':e['amountCents']})
+        days.append({'date':d,'openingCashCents':opening,'closingCashCents':cash,'debtCents':debt,'netCents':cash-debt,'variableCents':variable,'byCategory':by_category,'minCashCents':minimum,'shortfallCents':max(0,-minimum),'eventIds':[e['id'] for e in today]}); d=plus(d,1)
+    return {'snapshot':snapshot,'nextPlan':next_plan,'reason':None if next_plan else 'no_next_payout','currentPeriod':current_period,'periods':periods,'events':visible,'days':days,'scenario':scenario,'minSpend':min_spend}
+
+
+# Окремий синтетичний/CLI API не запускає стару касову модель.
+if len(sys.argv) > 1 and sys.argv[1] == '--finance':
+    print(json.dumps([finance_projection(c['data'], c.get('options', c)) for c in json.load(sys.stdin)], ensure_ascii=True))
+    sys.exit(0)
+
+if len(sys.argv) > 1 and sys.argv[1] == '--next-period':
+    print(json.dumps([next_period_plan(c['data'], c['asof']) for c in json.load(sys.stdin)], ensure_ascii=True))
+    sys.exit(0)
+
+
 snap = json.load(open(sys.argv[1], encoding='utf-8-sig'))
 if snap.get('account_tx') is not None:
     snap['accounts'] = derive_accounts(snap['accounts'], snap['account_tx'])
 today = date.fromisoformat(sys.argv[2]) if len(sys.argv) > 2 else date.today()
 now = date.fromisoformat(sys.argv[3]) if len(sys.argv) > 3 else None
 cfg = snap['salary']
-RATE, SPLIT = float(cfg['rate']), int(cfg['split_day'])
+RATE, SPLIT = float(cfg.get('rate') or 0), int(cfg['split_day'])
 ADV, SAL = int(cfg['advance_day']), int(cfg['salary_day'])
 
 
@@ -128,8 +433,8 @@ def payouts(y, m):
     py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
     plast = calendar.monthrange(py, pm)[1]
     return [
-        (adj(y, m, ADV), 'аванс', round(RATE / wd(y, m, 1, last) * wd(y, m, 1, SPLIT), 2)),
-        (adj(y, m, SAL), 'зарплата', round(RATE / wd(py, pm, 1, plast) * wd(py, pm, SPLIT + 1, plast), 2)),
+        (adj(y, m, ADV), 'аванс', round(RATE / wd(y, m, 1, last) * wd(y, m, 1, SPLIT), 2) if RATE > 0 else float(cfg.get('advance_amount') or 0)),
+        (adj(y, m, SAL), 'зарплата', round(RATE / wd(py, pm, 1, plast) * wd(py, pm, SPLIT + 1, plast), 2) if RATE > 0 else float(cfg.get('salary_amount') or 0)),
     ]
 
 

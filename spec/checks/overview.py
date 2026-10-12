@@ -2,11 +2,11 @@
 # «Вільно» = змінний бюджет періоду (scripts/budget_pool.py на демо-знімку) мінус витрати періоду від виплати до сьогодні.
 from datetime import date
 
-from helpers import check, current_ref, demo_snapshot, freeze, num, open_payout, shot
+from helpers import check, dialog, finance_ref, current_ref, demo_snapshot, freeze, num, open_payout, shot
 
 TODAY = '2026-10-08'
 # o-ms-list: поріг мінімальних витрат рахунку (п. 11), у демо в Ощаду він є
-ORDER = ['o-hero', 'o-accs', 'o-bal', 'o-ms-list', 'o-next', 'o-budget', 'o-recent', 'o-weeks', 'o-strip', 'o-ccy']
+ORDER = ['projection-summary', 'o-accs', 'o-next', 'dv-fc', 'o-bal', 'o-ms-list', 'o-budget', 'o-recent', 'o-weeks', 'o-strip', 'o-ccy']
 
 
 def _spent(page, start, today):
@@ -36,22 +36,13 @@ def mobile_today(page):
         check(f'{round(v):,}'.replace(',', ' ') in c.replace('\u00a0', ' ').replace('\u202f', ' '), f'чип {c!r} без суми {v}')
     check(page.locator('.o-accs .o-acc-add').count() == 1, 'у ряді рахунків немає «+»')
     shown = len(chips)
-    # герой: еталон freeNow = max(0, min(varPool - витрати періоду, cashNow)); витрати рахує Python і кладе в знімок
-    t = date.fromisoformat(TODAY)
-    start, _ = open_payout(t)
-    snap = demo_snapshot(page)
-    snap['spent'] = _spent(page, start, t)
-    ref = current_ref(snap, TODAY, TODAY)
-    free = round(ref['freeNow'])
-    hero = num(page.inner_text('.o-free-v'))
-    print(f'      Огляд {TODAY}: чипів рахунків {shown}; budget_pool.py: varPool {ref["varPool"]:.2f}, витрати {ref["spent"]:.0f}, '
-          f'whiteDue {ref["whiteDue"]:.2f}, cashNow {ref["cashNow"]:.2f}, freeNow {ref["freeNow"]:.2f}; у героя {hero}')
-    check(abs(hero - free) <= 1, f'герой {hero}, а еталон freeNow = {free}')
-    sub = page.inner_text('.o-chip')
-    check(sub.startswith('на день ') and (' до авансу ' in sub or ' до зарплати ' in sub) and sub.endswith('дн.'), f'підрядок героя: {sub!r}')
-    check(page.locator('.o-hero .fx-line, .o-hero [data-k=cash]').count() >= 1, 'під героєм немає рядка-пояснення')
-    fs = page.evaluate("getComputedStyle(document.querySelector('.o-free-v')).fontSize")
-    check(fs == '36px', f'кегль героя {fs}')
+    ref = finance_ref(page)
+    n = ref['nextPlan']
+    hero = num(page.inner_text('.dv-free .dv-kpi-v'))
+    check(abs(hero-n['baseAvailableCents']/100)<=1, 'герой не дорівнює плану наступного періоду')
+    check('доступно після виплати' in page.inner_text('.projection-summary').lower(), 'немає назви плану')
+    fs = page.evaluate("getComputedStyle(document.querySelector('.dv-free .dv-kpi-v')).fontSize")
+    check(float(fs.removesuffix('px')) >= 28, f'кегль героя {fs}')
     lbl = page.evaluate("[...document.querySelectorAll('.o-strip div')].filter(e=>/^(Дохід|Витрати|Залишок)$/i.test(e.innerText.trim())).map(e=>getComputedStyle(e).fontSize)")
     check(len(lbl) == 3 and all(x == '11px' for x in lbl), f'підписи стрічки періоду: {lbl}')
     nxt = page.locator('.o-next .o-next-row')
@@ -70,7 +61,30 @@ def recent_to_flow(page):
     check(page.locator('.panel.p-flow').count() == 1, '«Усі операції в Потоці» не відкрили Потік')
 
 
+def pay_period(page):
+    # період у «Доступно після виплати» є кнопкою «Налаштувати зарплату»: працює з клавіатури, відкриває форму зарплати
+    b = page.locator('.p-overview .dv-free .ps-period')
+    check(b.count() == 1, 'період «Доступно після виплати» не кнопка')
+    check(b.get_attribute('title') == 'Налаштувати зарплату', f'підказка кнопки періоду: {b.get_attribute("title")!r}')
+    lbl = b.get_attribute('aria-label') or ''
+    check(b.inner_text() in lbl and 'налаштувати зарплату' in lbl.lower(), f'aria-label кнопки періоду: {lbl!r}')
+    # виглядає як підпис періоду, а не як системна кнопка: блок під сумою, прозоре тло, ціль натиску на телефоні не менша за 24px
+    st = b.evaluate("e=>{const c=getComputedStyle(e);return [c.display,c.backgroundColor,Math.round(e.getBoundingClientRect().height)]}")
+    check(st[0] == 'block' and st[1] in ('rgba(0, 0, 0, 0)', 'transparent'), f'кнопка періоду зі стилем системної кнопки: {st}')
+    check(page.viewport_size['width'] >= 1024 or st[2] >= 24, f'кнопка періоду на телефоні нижча за 24px: {st}')
+    b.focus()
+    page.keyboard.press('Enter')
+    page.wait_for_timeout(400)
+    d = dialog(page, 'Зарплата')
+    check(d.count() == 1 and 'Ставка на місяць' in d.inner_text(), 'Enter на періоді не відкрив налаштування зарплати')
+    page.keyboard.press('Escape')
+    page.wait_for_timeout(300)
+    check(d.count() == 0, 'Esc не закрив налаштування зарплати')
+
+
 CHECKS = [
-    ('Огляд телефона: порядок, гаманець, «Вільно до виплати»', 'mobile', mobile_today),
+    ('Огляд телефона: порядок, гаманець, план після виплати', 'mobile', mobile_today),
     ('Огляд телефона: перехід з останніх операцій у Потік', 'mobile', recent_to_flow),
+    ('Огляд ПК: період виплати відкриває зарплату', 'desktop', pay_period),
+    ('Огляд телефона: період виплати відкриває зарплату', 'mobile', pay_period),
 ]

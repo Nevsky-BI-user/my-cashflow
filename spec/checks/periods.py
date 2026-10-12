@@ -65,6 +65,13 @@ def salary(page):
     print(f'      зарплата {lo}..{hi}: еталон {len(ref)} операцій, у Потоці {n_ui}; після 21-го в txDemo {len(late)}')
     check(n_ui == len(ref), f'у періоді зарплати {n_ui} операцій, еталон {len(ref)}')
     check(all(lo <= d < hi for d, n in ui if n), f'у періоді зарплати операції після 21-го або до 6-го: {ui}')
+    # Історичний бюджет не підставляє ціль наступної виплати під минулу дату.
+    go_tab(page, 1)
+    budget = page.locator('.p-budget')
+    check('Фактичні витрати періоду' in budget.inner_text(), 'немає факту історичного бюджету')
+    check('Збереженого плану для цього періоду немає' in budget.inner_text(), 'немає пояснення відсутнього історичного плану')
+    check(budget.locator('.bud-pool').count() == 0, 'історичний період показує майбутню ціль бюджету')
+    check(budget.locator('strong').count() > 0, 'історичні фактичні суми приховано')
 
 
 CHECKS = [

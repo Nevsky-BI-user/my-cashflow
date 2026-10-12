@@ -2,8 +2,13 @@
 from helpers import TABS, check, go_tab
 
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
-# елементи всередині .content з власним вертикальним скролом (на ПК таких немає жодного)
-INNER_SCROLL = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getComputedStyle(e).overflowY;return o==='auto'||o==='scroll'}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30))"""
+# елементи всередині .content з власним вертикальним скролом; погоджені лише довгі списки:
+# таблиця операцій і розклад подій Платежів (.ck-day, .ck-side), як у calendar.py і density.py
+INNER_SCROLL = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getComputedStyle(e).overflowY;return e.offsetParent&&(o==='auto'||o==='scroll')&&e.scrollHeight>e.clientHeight+2&&!e.matches('.flow-table,.ck-day,.ck-side')}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30))"""
+# остання подія розкладу Платежів досяжна прокруткою всередині списку і видна на екрані
+LAST_EVENT = r"""()=>{const box=document.querySelector('.p-credits .ck-day');const last=box&&[...box.querySelectorAll('.cal-ev')].pop();if(!last)return false;
+const sc=[box,...box.querySelectorAll('*')].filter(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+2);sc.forEach(x=>x.scrollTop=x.scrollHeight);
+const r=last.getBoundingClientRect(),b=box.getBoundingClientRect();const ok=r.bottom<=Math.min(b.bottom,innerHeight)+2&&r.top>=b.top-2;sc.forEach(x=>x.scrollTop=0);return ok}"""
 
 
 def desktop(page):
@@ -19,6 +24,11 @@ def desktop(page):
         check(page.evaluate(NO_HSCROLL), f'{title}: горизонтальний скрол')
         inner = page.evaluate(INNER_SCROLL)
         check(not inner, f'{title}: внутрішній скрол у .content: {inner[:3]}')
+        if tid == 'flow':
+            check(page.locator('.flow-table').evaluate("e=>{e.scrollTop=e.scrollHeight;const r=e.lastElementChild.getBoundingClientRect(),b=e.getBoundingClientRect();return r.bottom<=b.bottom+2}"), 'Остання операція недосяжна')
+        if tid == 'credits':
+            check(page.evaluate(LAST_EVENT), 'Платежі: остання подія розкладу недосяжна')
+
 
 
 def mobile(page):

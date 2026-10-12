@@ -34,6 +34,10 @@ def _with_mock(page, fail='null'):
     page.wait_for_selector('.side' if page.viewport_size['width'] >= 1024 else '.tab-bar', timeout=5000)
 
 
+# вміст Огляду після відповіді: підсумок доступних коштів (з KPI або, без графіка виплат у порожній БД, з поясненням) і прогноз
+CONTENT = '.p-overview .projection-summary, .p-overview .dv-kpis, .p-overview .dv-fc'
+
+
 def demo_no_skel(page):
     check(page.locator('.skel').count() == 0, 'у превʼю без БД видно скелетони')
     check(page.locator('.dv-kpi').count() == 4, 'у превʼю без БД немає 4 KPI Огляду')
@@ -54,11 +58,11 @@ def _skel_then_data(page, name, kpi_sel):
 
 
 def skel_desktop(page):
-    _skel_then_data(page, 'skeleton-1280.jpg', '.dv-kpi')
+    _skel_then_data(page, 'skeleton-1280.jpg', CONTENT)
 
 
 def skel_mobile(page):
-    _skel_then_data(page, 'skeleton-375.jpg', '.o-hero')
+    _skel_then_data(page, 'skeleton-375.jpg', CONTENT)
 
 
 def error_banner(page):

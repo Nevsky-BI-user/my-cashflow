@@ -25,7 +25,7 @@ def desktop(page):
     check(page.locator('.dv-acc-head .dv-acc-add').count() == 1, 'немає кнопки «+ Рахунок» у заголовку рахунків')
     for i in range(3):
         w = cards.nth(i).bounding_box()
-        check(240 <= w['width'] <= 300.5 and abs(w['height'] - 96) <= 1, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, а не 240-300 x 96')
+        check(w['width'] >= 240 and 96 <= w['height'] <= 132, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, поза адаптивним розміром ≥240 × 96-132')
     # monobank: чорна картка, «дебетова», кнопка ↻ «Оновити» без БД не падає й оновлює час
     mono = page.locator('.dv-cards .bcard-mono')
     check(mono.count() == 1, 'немає картки monobank')
@@ -35,7 +35,7 @@ def desktop(page):
     bg = mono.evaluate("e=>{const s=getComputedStyle(e);return s.backgroundImage+' | '+s.backgroundColor}")
     bg0 = cards.nth(0).evaluate("e=>{const s=getComputedStyle(e);return s.backgroundImage+' | '+s.backgroundColor}")
     card = page.evaluate("getComputedStyle(document.querySelector('.dv-kpi')).backgroundColor")
-    check(bg == bg0 and bg == 'none | ' + card, f'картка monobank не така, як інші картки й KPI: {bg[:60]} / {bg0[:60]} / {card}')
+    check(bg == bg0 and 'gradient' in bg and mono.evaluate("e=>getComputedStyle(e).boxShadow") != 'none', f'картка monobank не така, як інші картки й KPI: {bg[:60]} / {bg0[:60]} / {card}')
     upd = page.locator('.dv-acc-head .dv-mono-upd')
     check(upd.count() == 1 and 'Оновити' in upd.inner_text(), 'немає кнопки «Оновити» для monobank')
     upd.click()
@@ -84,7 +84,7 @@ def wide(page):
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(400)
     cw = page.evaluate("document.querySelector('.content').getBoundingClientRect().width")
-    check(cw <= 1600.5, f'ширина контенту {cw:.0f}px більша за 1600')
+    check(page.evaluate(NO_HSCROLL) and cw <= page.evaluate('innerWidth - 220'), f'ширина контенту {cw:.0f}px виходить за доступну область')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол на 1920')
     fs = page.evaluate("getComputedStyle(document.querySelector('.content')).fontSize")
     check(fs == '13px', f'базовий шрифт .content {fs}, а не 13px')
@@ -109,13 +109,73 @@ def mobile(page):
         check(row.evaluate('e=>e.scrollLeft') > 0, 'ряд рахунків не прокрутився')
         row.evaluate('e=>e.scrollLeft=0')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол сторінки на 375')
-    free = page.locator('.o-free').inner_text().lower()  # підпис героя у верхньому регістрі (text-transform)
-    check('вільно до виплати' in free, f'герой «Вільно до виплати» не знайдено: {free!r}')
+    # головна сума v142 на початку екрана: «Доступно після виплати» з періодом (раніше герой «Вільно до виплати», .o-free)
+    first = page.evaluate("(document.querySelector('.p-overview')||{}).firstElementChild?.className||''")
+    check('projection-summary' in first, f'першим на Огляді не підсумок доступних коштів: {first!r}')
+    free = page.locator('.p-overview .projection-summary .dv-free').inner_text().lower()  # підпис у верхньому регістрі (text-transform)
+    check('доступно після виплати' in free and '₴' in free and 'дн.' in free, f'головна сума «Доступно після виплати» з періодом не знайдена: {free!r}')
     shot(page, 'ov-375.jpg')
+
+
+IN_VIEW = "e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight+1&&r.left>=0&&r.right<=innerWidth+1}"
+
+
+def _add_cash(page, add, count, where):
+    # «+» відкриває форму «Новий рахунок»; вид «Готівка» доступний, збережений рахунок зʼявляється в ряду
+    before = count()
+    add.click()
+    page.wait_for_timeout(300)
+    d = dialog(page, 'Рахунок')
+    check(d.count() == 1 and 'Новий рахунок' in d.inner_text(), f'{where}: «+» не відкрив форму «Новий рахунок»')
+    kind = d.locator('[role=group][aria-label="Тип"] button', has_text='Готівка')
+    check(kind.count() == 1, f'{where}: у формі немає виду «Готівка»')
+    kind.click()
+    check(kind.get_attribute('aria-pressed') == 'true', f'{where}: вид «Готівка» не вибрався')
+    d.locator('input[type=text]').first.fill('Готівка вдома')
+    d.locator('button', has_text='Зберегти').click()
+    page.wait_for_timeout(400)
+    check(d.count() == 0, f'{where}: форма не закрилась після «Зберегти»')
+    check(count() == before + 1, f'{where}: рахунків у ряду {count()}, очікували {before + 1}')
+
+
+def cash_desktop(page):
+    # картки рахунків на ПК-Огляді видно без прокрутки на 1280×800 і 1920×1080, «+ Рахунок» поруч
+    for w, hh in ((1920, 1080), (1280, 800)):
+        page.set_viewport_size({'width': w, 'height': hh})
+        page.wait_for_timeout(400)
+        row = page.locator('.p-overview .dv-accs')
+        check(row.count() == 1, f'{w}×{hh}: на Огляді немає ряду карток рахунків')
+        check(page.locator('.dv-cards .bcard').count() == 3, f'{w}×{hh}: у ряду не 3 картки')
+        check(row.evaluate(IN_VIEW), f'{w}×{hh}: ряд карток рахунків не в межах екрана')
+        check(page.locator('.dv-acc-add').evaluate(IN_VIEW), f'{w}×{hh}: «+ Рахунок» не видно')
+    _add_cash(page, page.locator('.dv-acc-add'), lambda: page.locator('.dv-cards .bcard').count(), 'ПК')
+    check(page.locator('.dv-cards .bcard', has_text='Готівка вдома').count() == 1, 'ПК: картки «Готівка вдома» немає в ряду')
+    # вид зберігся: повторне відкриття картки показує «Готівка» вибраною
+    page.locator('.dv-cards .bcard', has_text='Готівка вдома').click()
+    page.wait_for_timeout(300)
+    d = dialog(page, 'Рахунок')
+    pressed = d.locator('[role=group][aria-label="Тип"] button[aria-pressed=true]').inner_text()
+    check(pressed == 'Готівка', f'ПК: збережений рахунок має вид «{pressed}», а не «Готівка»')
+    page.keyboard.press('Escape')
+
+
+def cash_mobile(page):
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.wait_for_timeout(400)
+    row = page.locator('.p-overview .o-accs')
+    chips = row.locator('.o-acc-chip:not(.o-unas):not(.o-acc-add)')
+    check(row.count() == 1 and row.evaluate(IN_VIEW), '390: ряд рахунків не видно на першому екрані')
+    add = row.locator('.o-acc-add')
+    check(add.count() == 1, '390: у ряду рахунків немає «+»')
+    add.scroll_into_view_if_needed()
+    _add_cash(page, add, chips.count, '390')
+    # на чипі коротка назва банку (accShort), тому новий рахунок рахуємо кількістю чипів, а не назвою
 
 
 CHECKS = [
     ('Картки на ПК, форма, баланс, зарплатний один', 'desktop', desktop),
-    ('ПК 1920: ширина 1600, шрифт 14, без дрібного', 'desktop', wide),
+    ('ПК 1920: адаптивна ширина, шрифт 14, без дрібного', 'desktop', wide),
     ('Ряд карток на телефоні прокручується', 'mobile', mobile),
+    ('Рахунки на ПК 1280×800 і 1920×1080: ряд видно, «+» додає готівку', 'desktop', cash_desktop),
+    ('Рахунки на телефоні 390: ряд видно, «+» додає готівку', 'mobile', cash_mobile),
 ]

@@ -3,7 +3,8 @@
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { debtBuckets, deriveAccounts, fixedPaid, freeToPayout, lastPayout, minSpendStatus, repayDate, unassignedAdj, type AccTx, type Snapshot } from '../_shared/budget.ts';
+import { financeProjection, lastPayout, type AccTx } from '../_shared/budget.ts';
+import { formatFinanceMessage } from '../_shared/finance-message.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -52,7 +53,7 @@ const HELP =
   '/income 51000 зарплата (або /дохід): теж дохід\n\n' +
   'Фото чека: сума й магазин розпізнаються автоматично\n' +
   '/yes: підтвердити дохід, схожий на Monobank\n' +
-  '/balance: баланс за місяць\n' +
+  '/balance: баланс, картки, розстрочки\n' +
   '/last: останні 5 записів\n\n' +
   'Рахунок: слово ощад, приват або готівка на початку чи в кінці опису (для фото: у підписі), ' +
   'наприклад «250 кава приват». Без слова витрата лишається без рахунку, бот спитає кнопками; ' +
@@ -758,117 +759,76 @@ async function confirmPending(chatId: number, userId: string) {
   }
 }
 
+// Посилання на застосунок під статусом; постійна клавіатура лишається
+const APP_URL = 'https://nevsky-bi-user.github.io/my-cashflow/';
+const APP_KB = { inline_keyboard: [[{ text: '📱 Відкрити застосунок', url: APP_URL }]] };
+
 async function balance(chatId: number) {
   const today = todayKyiv();
-  const start = today.slice(0, 7) + '-01';
-  const { data, error } = await sb
-    .from('transactions')
-    .select('amount,type')
-    .gte('date', start)
-    .lte('date', today);
-  if (error || !data) return reply(chatId, 'Не вдалося порахувати.');
-  let inc = 0, exp = 0;
-  for (const t of data) (t.type === 'income' ? (inc += Number(t.amount)) : (exp += Number(t.amount)));
-  const month =
-    `Місяць з ${start.slice(8, 10)}.${start.slice(5, 7)}\n` +
-    `Доходи: ${fmtMoney(inc)}\nВитрати: ${fmtMoney(exp)}\nБаланс: ${fmtMoney(inc - exp)}`;
-  // Блок «Вільно до виплати»: помилка в ньому не ховає підсумок місяця
-  let free = '';
+  let free: string;
   try {
     free = await freeBlock(today);
   } catch (e) {
     console.error('balance: free block failed', (e as Error)?.message);
+    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.', APP_KB);
   }
-  return reply(chatId, free ? month + '\n\n' + free : month);
+  return reply(chatId, free, APP_KB);
 }
 
-const fmtNum = (n: number) => new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 0 }).format(Math.round(n));
-const fmtInt = (n: number) => fmtNum(n) + ' ₴';
 // Місяць після «за» (знахідний відмінок збігається з називним)
 const MONTH_ACC = ['січень', 'лютий', 'березень', 'квітень', 'травень', 'червень', 'липень', 'серпень', 'вересень', 'жовтень', 'листопад', 'грудень'];
 
-// «Вільно до виплати» за правилом білої і кредитної картки (DESIGN.md), спільна логіка в _shared/budget.ts
+// Повний набір потрібних операцій: сторінки зі стабільним порядком, без тихого ліміту 1000.
+async function financeTransactions(from: string, today: string, since: number): Promise<AccTx[]> {
+  const rows: AccTx[] = [];
+  for (let page = 0; page < 100; page++) {
+    let query = sb.from('transactions').select('id,account_id,category_id,fixed_id,type,amount,created_at,date,source')
+      .lte('date', today).order('id', { ascending: true }).range(page * 1000, page * 1000 + 999);
+    query = Number.isFinite(since) ? query.or(`created_at.gt."${new Date(since).toISOString()}",date.gte.${from}`) : query.gte('date', from);
+    const {data, error} = await query;
+    if (error) throw new Error('finance transactions lookup failed');
+    rows.push(...(data || []) as AccTx[]);
+    if (!data || data.length < 1000) return rows;
+  }
+  throw new Error('finance transactions pagination limit');
+}
+
+// Погоджений план та прогноз каси: та сама чиста модель, що у застосунку.
 async function freeBlock(today: string): Promise<string> {
-  const [acc, fix, cred, sal] = await Promise.all([
-    sb.from('accounts').select('id,name,kind,balance,debt,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
+  const [acc, fix, cred, sal, cats] = await Promise.all([
+    sb.from('accounts').select('id,name,kind,balance,debt,credit_limit,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
     sb.from('fixed_payments').select('id,name,amount,day_of_month,type,active,credit_ok,variable').eq('active', true),
-    sb.from('credits').select('name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
-    sb.from('salary_config').select('rate,split_day,advance_day,salary_day,savings_pct').order('id').limit(1).maybeSingle(),
+    sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
+    sb.from('salary_config').select('rate,advance_amount,salary_amount,split_day,advance_day,salary_day,savings_pct').order('id').limit(1).maybeSingle(),
+    sb.from('categories').select('id,name,is_income,budget_limit').order('id'),
   ]);
-  if (acc.error || fix.error || cred.error || sal.error || !sal.data) throw new Error('budget data lookup failed');
-  // Похідний баланс ручних рахунків: операції з account_id після balance_updated_at (deriveAccounts)
+  if (acc.error || fix.error || cred.error || sal.error || cats.error) throw new Error('budget data lookup failed');
   const manual = (acc.data || []).filter((a) => !a.mono_account_id && a.balance_updated_at);
   const since = Math.min(...manual.map((a) => Date.parse(a.balance_updated_at)).filter((t) => !isNaN(t)));
-  // Той самий запит дає й витрати поточного місяця для порогу мінімальних витрат (п. 11): операції місяця,
-  // записані до звірки балансу, теж мають рахуватись. Зайві рядки deriveAccounts відсіює міткою created_at.
-  const monthStart = today.slice(0, 7) + '-01';
-  let atQ = sb.from('transactions').select('account_id,type,amount,created_at,date').not('account_id', 'is', null);
-  atQ = isFinite(since) ? atQ.or(`created_at.gte."${new Date(since).toISOString()}",date.gte.${monthStart}`) : atQ.gte('date', monthStart);
-  const { data: at, error: atErr } = await atQ;
-  if (atErr) throw new Error('account tx lookup failed');
-  const accTx = (at || []) as AccTx[];
-  const accounts = deriveAccounts(acc.data || [], accTx);
-  const minSpend = minSpendStatus(accounts, accTx.filter((t) => String(t.date || '') <= today), today);
-  // Операції без рахунку (п. 9): віднімаються від власних, доки не розподілені; ті, що створені до мітки балансу, не рахуємо.
-  // Нагадування: витрати з бота й застосунку без рахунку за 60 днів
-  const lowerMs = Math.min(isFinite(since) ? since : Infinity, Date.now() - 60 * 86_400_000);
-  const { data: ua, error: uaErr } = await sb.from('transactions')
-    .select('account_id,type,amount,created_at,source,date')
-    .is('account_id', null)
-    .gte('created_at', new Date(lowerMs).toISOString());
-  if (uaErr) throw new Error('unassigned lookup failed');
-  const unTx = (ua || []) as (AccTx & { date: string })[];
-  const unassigned = isFinite(since) ? unassignedAdj(unTx, since) : 0;
   const from60 = shiftDate(today, -60);
-  const lost = unTx.filter((t) => t.type !== 'income' && (t.source === 'telegram' || t.source === 'manual') && t.date >= from60);
-  const lostSum = lost.reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const snap: Snapshot = { accounts, fixed: fix.data || [], credits: cred.data || [], salary: sal.data };
-
-  // Витрати поточного періоду: від останньої виплати до сьогодні (як у застосунку)
-  const from = lastPayout(snap.salary, today).date;
-  const { data: tx, error: txErr } = await sb
-    .from('transactions')
-    .select('amount')
-    .neq('type', 'income')
-    .gte('date', from)
-    .lte('date', today);
-  if (txErr) throw new Error('spent lookup failed');
-  const spent = (tx || []).reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  // п. 13: постійний платіж, оплачений операцією з fixed_id у своєму місяці, з обовʼязкових цього місяця зникає
-  const { data: fp, error: fpErr } = await sb.from('transactions').select('fixed_id,type,amount,created_at,date')
-    .not('fixed_id', 'is', null).gte('date', from.slice(0, 7) + '-01');
-  if (fpErr) throw new Error('fixed paid lookup failed');
-  snap.paid = fixedPaid((fp || []) as AccTx[]);
-
-  const r = freeToPayout(snap, today, spent, unassigned, minSpend);
-  const kind = r.nextPayout.kind === 'advance' ? 'аванс' : 'зарплата';
-  const due = ddmm(r.nextPayout.date);
-  // Кредитка: борг і найближча дата погашення (24-те наступного місяця після місяця боргу, DESIGN.md п. 12)
-  const repayOf = (a: (typeof accounts)[number]) => {
-    const ds = debtBuckets(a, today).map((b) => repayDate(b[0], today)).sort();
-    return ds.length ? `, закрити до ${ddmm(ds[0])}` : '';
-  };
-  const accLine = 'Рахунки: ' + accounts
-    .map((a) => `${a.name} ${a.kind === 'credit' ? 'борг ' + fmtInt(Number(a.debt) || 0) + repayOf(a) : fmtInt(Number(a.balance) || 0)}`)
-    .join(' · ');
-  let out = accLine + '\n' + `Вільно до виплати: ${fmtInt(r.freeNow)} (${kind} ${due}) · на день ${fmtInt(r.perDay)}`;
-  // Каса напередодні виплати (DESIGN.md п. 12): усі білі платежі, комісії й погашення кредиток до дати виплати вже враховані
-  out += `\nДо виплати ${due} (${r.daysToPayout} дн.): каса ${fmtInt(r.cashBeforePayout)}`;
-  if (r.shortage > 0) out += `\nБракує ${fmtInt(r.shortage)} на білі платежі до ${due}`;
-  // Поріг мінімальних витрат за місяць (п. 11): «Ощадбанк: витрачено 1 763 з 15 000 за жовтень, ще 13 237 до 31.10, інакше комісія 400 ₴»
-  for (const m of r.minSpend) {
-    const a = accounts.find((x) => Number(x.id) === m.accountId);
-    const [y, mo] = m.month.split('-').map(Number);
-    const end = `${String(new Date(Date.UTC(y, mo, 0)).getUTCDate()).padStart(2, '0')}.${String(mo).padStart(2, '0')}`;
-    out += `\n${a?.name || 'Рахунок'}: витрачено ${fmtNum(m.spent)} з ${fmtNum(m.min)} за ${MONTH_ACC[mo - 1]}, ` +
-      (m.left > 0 ? `ще ${fmtNum(m.left)} до ${end}, інакше комісія ${fmtInt(m.fee)}` : `поріг ${fmtNum(m.min)} досягнуто`);
-  }
-  if (lost.length) {
-    out += `\n⚠️ Без рахунку: ${lost.length} ${lost.length === 1 ? 'операція' : lost.length < 5 ? 'операції' : 'операцій'} ` +
-      `на ${fmtInt(lostSum)}, виберіть рахунок під повідомленнями або в застосунку`;
-  }
-  return out;
+  const periodStart = sal.data ? lastPayout(sal.data, today).date : today.slice(0, 7) + '-01';
+  const from = [from60, periodStart, today.slice(0, 7) + '-01'].sort()[0];
+  const transactions = await financeTransactions(from, today, since);
+  const projection = financeProjection({accounts: acc.data || [], fixed: fix.data || [], credits: cred.data || [], salary: sal.data,
+    categories: (cats.data || []).map(c => ({...c, type: c.is_income ? 'income' : 'expense'})), transactions},
+    {asof: today, through: shiftDate(today, 90)});
+  const lost = transactions.filter(t => t.account_id == null && t.type === 'expense' &&
+    (t.source === 'telegram' || t.source === 'manual') && String(t.date || t.created_at).slice(0, 10) >= from60);
+  // Залишок розстрочок: платежі з датою після сьогодні (сплачені за планом не рахуються)
+  const installments = (cred.data || []).map((c) => {
+    const first = Number(c.start_year) * 12 + Number(c.start_month); // start_month з 0
+    let n = 0;
+    for (let k = first; k < first + Number(c.total_payments); k++) {
+      const y = Math.floor(k / 12), m = k % 12;
+      const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+      const d = `${y}-${String(m + 1).padStart(2, '0')}-${String(Math.min(Number(c.payment_day), last)).padStart(2, '0')}`;
+      if (d > today) n++; // платіж у свій день вважається сплаченим за планом
+    }
+    return { name: String(c.name), n, amountCents: Math.round(Number(c.monthly_amount) * 100) };
+  }).filter((i) => i.n > 0);
+  return formatFinanceMessage(projection, {count: lost.length, amountCents: lost.reduce((sum, t) => sum + Math.round(Number(t.amount) * 100), 0)},
+    installments, today);
 }
 
 async function last(chatId: number) {

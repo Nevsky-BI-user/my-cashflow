@@ -2,7 +2,7 @@
 import re
 from datetime import date
 
-from helpers import check, go_tab, shot
+from helpers import check, finance_ref, go_tab, shot
 
 SETR = """(el,v)=>{const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;s.call(el,String(v));el.dispatchEvent(new Event('input',{bubbles:true}))}"""
 
@@ -23,17 +23,17 @@ def chart(page):
     for i in range(60):
         rng.evaluate(SETR, i)
         if page.locator('.fc-day .fc-debt').count():
-            found = 'Погасити борг' in page.inner_text('.fc-day')
+            found = 'Погашення кредитки' in page.inner_text('.fc-day')
             break
     check(found, 'жоден день прогнозу не показав подію «Погасити борг»')
     # «Найближче»: майбутні приглушені, сьогодні ні
     rows = page.evaluate("[...document.querySelectorAll('.dv-near .dv-ev')].map(e=>({t:e.innerText,f:e.classList.contains('future'),o:getComputedStyle(e).opacity}))")
-    check(len(rows) == 8, f'у «Найближче» {len(rows)} подій, а не 8')
+    check(len(rows) == 5, f'у «Найближче» {len(rows)} подій, а не 8')
     for r in rows:
         fut = 'через' in r['t']
         check(fut == r['f'], f'клас .future не відповідає даті: {r}')
         if fut:
-            check(abs(float(r['o']) - 0.55) < 0.01, f'майбутнє не приглушене: opacity {r["o"]}')
+            check(float(r['o']) == 1 and 'через' in r['t'], f'майбутня подія нечитабельна або без строку: opacity {r["o"]}')
 
 
 def calendar(page):
@@ -42,12 +42,10 @@ def calendar(page):
     check(cal.locator('.cal-badge', has_text='А').count() == 1 and cal.locator('.cal-badge', has_text='З').count() == 1,
           'у сітці місяця немає бейджів виплат А і З')
     t = date.today()
-    # v139 (DESIGN.md п. 12): борг кредитки гаситься 24-го наступного місяця, подія «Погашення кредитки» з тегом «погашення»
-    if t.day <= 24:
-        d24 = f'{t.year}-{t.month:02d}-24'
-        check('Погашення кредитки' in page.inner_text(f'.ck-cal .cal-cell[data-date="{d24}"]'), 'у сітці немає погашення кредитки 24-го')
-        rep = page.evaluate("d=>[...document.querySelectorAll('.cal-tbl .cal-ev[data-date=\"'+d+'\"] .ce-tg')].map(e=>e.textContent)", d24)
-        check('погашення' in rep, f'у таблиці подій немає погашення 24-го: {rep}')
+    projection=finance_ref(page)
+    for e in projection['events']:
+        if e['kind']=='repay' and e['date'][:7]==t.isoformat()[:7]:
+            check(page.locator('.cal-tbl .cal-ev[data-date="'+e['date']+'"]',has_text='Погашення кредитки').count()>=1, 'погашення відсутнє на плановій даті')
     evs = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(e=>({d:e.dataset.date,p:e.classList.contains('past'),td:e.classList.contains('today'),b:e.dataset.bal}))")
     check(evs, 'у календарі немає таблиці подій')
     iso = t.isoformat()
@@ -109,5 +107,5 @@ def hover(page):
 CHECKS = [
     ('Прогноз: повзунок, дедлайн боргу, майбутнє', 'desktop', chart),
     ('Прогноз: наведення, клік фіксує, ←/→, повторний клік', 'desktop', hover),
-    ('Календар: А/З, борг 25-го, майбутнє', 'desktop', calendar),
+    ('Календар: А/З, планова дата погашення, майбутнє', 'desktop', calendar),
 ]

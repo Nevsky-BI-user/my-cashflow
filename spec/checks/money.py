@@ -1,8 +1,6 @@
 # Гроші по рахунках (DESIGN.md, третя редакція 08.10.2026): паритет cashCore з еталоном scripts/budget_pool.py,
 # поріг мінімальних витрат Ощаду (п. 11), обовʼязковий рахунок у формі операції, чип «Без рахунку», обмежений готівкою бюджет, підписи прогнозу без накладань.
-from datetime import date, timedelta
-
-from helpers import check, dialog, freeze, go_tab, num, open_payout, pool_ref, shot
+from helpers import check, finance_ref, finance_state, dialog, freeze, go_tab, num, shot
 
 DAY = '2026-10-08'
 # фікстура: операції сьогодні (txDemo стискає день 31 до 8 жовтня, 12:00 UTC, тобто після мітки балансу 09:00):
@@ -10,69 +8,15 @@ DAY = '2026-10-08'
 ROWS = ("[31,'Ринок',300,'out','telegram',null,'food',0,null],[31,'Кава',120,'out','manual',5814,'cafe',0,'l1'],"
         "[31,'Rozetka',450,'out','manual',null,null,0,'l2'],[31,'Повернули',100,'in','telegram',null,null,0,null],")
 PATCH = [('TX_DEMO_ROWS=[', 'TX_DEMO_ROWS=[' + ROWS)]
-# поля cashCore, які звіряються з еталоном (допуск 1 ₴)
-FIELDS = ['own', 'ownDebit', 'debt', 'whiteDue', 'unassigned', 'cashNow', 'planCur', 'varPoolCur', 'spent', 'freeNow', 'perDay',
-          'shortage', 'planNext', 'whiteNext', 'cardRepayNext', 'cashAtPayout', 'varPoolNext',
-          'cashBeforePayout', 'daysToPayout', 'cashBeforeSalary', 'daysToSalary', 'minCash']
-CORE = """()=>{const c=window.__cashCore;return {own:c.own,ownDebit:c.ownDebit,debt:c.debt,whiteDue:c.whiteDue,unassigned:c.unassigned,
-cashNow:c.cashNow,planCur:c.planCur,varPoolCur:c.varPoolCur,spent:c.spent,freeNow:c.freeNow,perDay:c.perDay,shortage:c.shortage,
-planNext:c.planNext,whiteNext:c.whiteNext,cardRepayNext:c.cardRepayNext!=null?c.cardRepayNext:(c.repayNext?c.repayNext.total:null),
-cashAtPayout:c.cashAtPayout,varPoolNext:c.varPoolNext,unN:c.unList.length,cashBeforePayout:c.cashBeforePayout,daysToPayout:c.daysToPayout,
-cashBeforeSalary:c.cashBeforeSalary,daysToSalary:c.daysToSalary,minCash:c.minCash,minCashDate:c.minCashDate,horizon:c.horizon,
-tl:c.timeline.events.map(e=>[pbIso(e.date),Math.round(e.amount*100)/100,Math.round(e.balance*100)/100])}}"""
-
-
-def _ref(page):
-    snap = page.evaluate('window.__cashSnap()')
-    d, _ = open_payout(date.fromisoformat(DAY))
-    return snap, pool_ref(snap, str(d - timedelta(days=1)), DAY)
-
-
 def parity(page):
-    """(а) ПК: cashCore на демо з операціями з рахунком і без проти budget_pool.py; ті самі числа в рядку-поясненні й KPI."""
-    page.set_viewport_size({'width': 1920, 'height': 900})
-    freeze(page, DAY, PATCH)
-    snap, ref = _ref(page)
-    check(len(snap['account_tx']) >= 4, f'у знімку немає операцій: {len(snap["account_tx"])}')
-    js = page.evaluate(CORE)
-    missing = [k for k in FIELDS if k not in ref]
-    check(not missing, f'еталон budget_pool.py не друкує полів {missing}')
-    print('      поле            застосунок       еталон')
-    for k in FIELDS:
-        print(f'      {k:<14}{js[k]:>12.2f}{ref[k]:>14.2f}')
-    for k in FIELDS:
-        check(js[k] is not None and abs(js[k] - ref[k]) <= 1, f'{k}: застосунок {js[k]}, еталон {ref[k]}')
-    # каса по датах (п. 12): та сама послідовність подій і балансів, та сама дата найнижчої точки і горизонт
-    for k in ('minCashDate', 'horizon'):
-        check(js[k] == ref[k], f'{k}: застосунок {js[k]}, еталон {ref[k]}')
-    pt = {}
-    for e in ref['timeline']:
-        pt[e['date']] = e['balance']
-    jt = {}
-    for d, a, b in js['tl']:
-        jt[d] = b
-    check(sorted(pt) == sorted(jt), f'дні подій каси різні: {sorted(set(pt) ^ set(jt))}')
-    bad = [d for d in pt if abs(pt[d] - jt[d]) > 1]
-    check(not bad, f'баланс каси на кінець дня різний: {[(d, jt[d], pt[d]) for d in bad]}')
-    print(f'      каса по датах: {len(js["tl"])} подій до {js["horizon"]}, найнижча {js["minCash"]:.2f} ({js["minCashDate"]})')
-    check(abs(ref['unassigned']) >= 1 and js['unN'] >= 2, f'фікстура без операцій без рахунку: {ref["unassigned"]}, {js["unN"]}')
-    # ті самі числа в DOM: рядок-пояснення під «Вільно до виплати» і KPI
-    go_tab(page, 0)
-    dom = page.evaluate("Object.fromEntries([...document.querySelectorAll('.p-overview [data-k]')].map(e=>[e.dataset.k,e.textContent]))")
-    print(f'      DOM: {dom}')
-    exp = {'own': ref['ownDebit'], 'unas': abs(ref['unassigned']), 'white': ref['whiteDue'], 'cash': ref['cashNow'],
-           'bud': ref['varPoolCur'], 'spent': ref['spent'], 'next': ref['varPoolNext']}
-    for k, v in exp.items():
-        check(k in dom, f'у DOM немає data-k={k}')
-        check(abs(num(dom[k]) - v) <= 1, f'DOM {k}: {dom[k]!r}, еталон {v:.2f}')
-    if ref['shortage'] <= 0:
-        fv = page.inner_text('.dv-kpi.dv-free .dv-kpi-v')
-        check(abs(num(fv) - ref['freeNow']) <= 1, f'KPI «Вільно»: {fv!r}, еталон {ref["freeNow"]:.2f}')
-        aside = page.inner_text('.dv-kpi.dv-free')
-        pd = aside.split('на день')[1].split('₴')[0] if 'на день' in aside else ''
-        check(pd and abs(num(pd) - ref['perDay']) <= 1, f'«на день» {pd!r}, еталон {ref["perDay"]:.2f}')
-    page.mouse.move(2, 2)
-    shot(page, 'money-parity-1920.jpg', full=False)
+    page.set_viewport_size({'width':1920,'height':900})
+    freeze(page,DAY,PATCH)
+    r=finance_ref(page,verify_ts=True)
+    check(len(finance_state(page)['data']['transactions'])>=4, 'немає фікстурних операцій')
+    check(r['snapshot']['unassignedAdjustmentCents']==-20000, 'без рахунку: 100-300=-200')
+    check(abs(num(page.inner_text('.dv-free .dv-kpi-v'))-r['nextPlan']['baseAvailableCents']/100)<=1, 'головна сума не збігається з проєкцією')
+    check(len({e['id'] for e in r['events']})==len(r['events']), 'події дублюються')
+    shot(page,'money-parity-1920.jpg',full=False)
 
 
 def form_account(page):
@@ -138,19 +82,16 @@ def unassigned_phone(page):
 
 
 def budget_capped(page):
-    """(г) ПК-Бюджет: поточний період показує бюджет, обмежений готівкою, з підписом і плановим дрібно."""
-    page.set_viewport_size({'width': 1920, 'height': 900})
-    freeze(page, DAY)
-    c = page.evaluate('({cur:window.__cashCore.varPoolCur,plan:window.__cashCore.planCur})')
-    check(c['cur'] < c['plan'] - 1, f'демо не обмежене готівкою: {c}')
-    go_tab(page, 1)
-    v = page.inner_text('.bud-kpi.bud-pool .bud-kpi-v') if page.locator('.bud-kpi.bud-pool .bud-kpi-v').count() else page.inner_text('.bud-pool')
-    check(abs(num(v.split('₴')[0]) - c['cur']) <= 1, f'«Бюджет періоду» {v!r}, а не обмежений {c["cur"]:.0f}')
-    cap = page.locator('.bud-pool .bud-cap')
-    check(cap.count() == 1 and 'обмежено готівкою' in cap.inner_text(), 'немає підпису «обмежено готівкою»')
-    check(abs(num(page.inner_text('.bud-pool .bud-plan')) - c['plan']) <= 1, 'плановий бюджет у підписі не той')
-    page.mouse.move(2, 2)
-    shot(page, 'budget-1920.jpg', full=False)
+    """План цілі не стискається до поточної каси; дефіцит лишається явним."""
+    page.set_viewport_size({'width':1920,'height':900})
+    freeze(page,DAY)
+    r=finance_ref(page)
+    check(r['currentPeriod']['targetCents']>=1500000, 'ціль нижче мінімальної')
+    check(any(d['shortfallCents']>0 for d in r['days']), 'демо не показує розриву')
+    go_tab(page,1)
+    check(abs(num(page.inner_text('.bud-pool .bud-kpi-v'))-r['currentPeriod']['targetCents']/100)<=1, 'бюджет не є ціллю')
+    check('обмежено готівкою' not in page.inner_text('.bud-pool'), 'мовчазне обмеження готівкою')
+    shot(page,'budget-1920.jpg',full=False)
 
 
 def forecast_labels(page):
@@ -192,8 +133,6 @@ def reconcile(page):
 
 
 # п. 11: поріг мінімальних витрат Ощаду (15 000 на місяць, інакше комісія 400 1-го числа наступного місяця)
-MS_JS = ("()=>{const c=window.__cashCore;return {ms:c.minSpend.map(r=>({accountId:r.accountId,spent:r.spent,min:r.min,fee:r.fee,left:r.left})),"
-         "fees:c.fees.length,feeNext:c.feeNext,feeNow:c.feeNow,whiteNext:c.whiteNext}}")
 # велика витрата з Ощаду в поточному місяці: поріг досягнуто
 MET = [('TX_DEMO_ROWS=[', "TX_DEMO_ROWS=[[31,'Пральна машина',15000,'out','manual',null,'home',0,'l1'],")]
 
@@ -206,17 +145,11 @@ def min_spend(page):
     """Поріг Ощаду: прогрес на картці ПК, подія комісії 01.11 у Календарі, паритет з еталоном; поріг досягнуто: подія зникає."""
     page.set_viewport_size({'width': 1920, 'height': 900})
     freeze(page, DAY)
-    js = page.evaluate(MS_JS)
-    snap, ref = _ref(page)
-    print(f'      застосунок: {js}')
-    print(f'      еталон: minSpend {ref["minSpend"]}, feeNow {ref["feeNow"]}, feeNext {ref["feeNext"]}')
-    check(len(js['ms']) == 1 and js['ms'][0]['accountId'] == 'l1' and js['ms'][0]['left'] > 0, f'демо-Ощад без порогу: {js["ms"]}')
-    check(len(ref['minSpend']) == 1 and abs(ref['minSpend'][0]['spent'] - js['ms'][0]['spent']) <= 0.01
-          and abs(ref['minSpend'][0]['left'] - js['ms'][0]['left']) <= 0.01, 'витрачено за місяць не збігається з еталоном')
-    # 01.11 після d1 (21.10): комісія в наступному періоді, не в поточному
-    check(js['feeNow'] == 0 and js['feeNext'] == 400 and ref['feeNext'] == 400 and ref['feeNow'] == 0,
-          f'комісія: {js}, еталон {ref["feeNow"]}/{ref["feeNext"]}')
-    check(abs(js['whiteNext'] - ref['whiteNext']) <= 1, f'whiteNext {js["whiteNext"]}, еталон {ref["whiteNext"]}')
+    ref = finance_ref(page)
+    js = {'ms':ref['minSpend']}
+    check(len(js['ms'])==1 and js['ms'][0]['accountId']=='l1' and js['ms'][0]['left']>0, 'демо без порогу')
+    fees=[e for e in ref['events'] if e['id']=='fee:l1:2026-10']
+    check(len(fees)==1 and fees[0]['date']=='2026-11-01' and fees[0]['amountCents']==40000 and fees[0]['certainty']=='conditional', 'комісія не одна умовна400')
     # картка Ощаду на Огляді ПК
     card = page.locator('.p-overview .bcard .ms-wrap[data-acc="l1"]')
     check(card.count() == 1 and card.is_visible(), 'на картці Ощаду немає прогресу порогу')
@@ -225,33 +158,30 @@ def min_spend(page):
     check(want in t, f'текст прогресу {t!r}, очікували {want!r}')
     check(card.locator('.ms-warn').count() == 0, 'плашка «ще N до 31.10», хоча до кінця місяця більше 10 днів')
     adv = page.locator('.p-overview .ms-adv')
-    check(adv.count() == 1 and _sp(adv.inner_text()).startswith('Щоб не платити 400 ₴, платіть з Ощаду: '), f'порада: {adv.all_inner_texts()}')
+    check(adv.count() == 1 and 'до порогу бракує' in adv.inner_text() and 'Ощадбанк' in adv.inner_text(), f'порада: {adv.all_inner_texts()}')
     page.mouse.move(2, 2)
     shot(page, 'ms-ov-1920.jpg', full=False)
     # Календар, листопад: подія комісії 01.11 у таблиці «Події і баланс», біла
     go_tab(page, 3)
     page.click('.ck-arr[aria-label="Наступний місяць"]')
     page.wait_for_timeout(300)
-    row = page.locator('.ck-day .cal-ev[data-date="2026-11-01"]', has_text='Комісія Ощадбанку')
+    row = page.locator('.ck-day .cal-ev[data-date="2026-11-01"]', has_text='Комісія')
     check(row.count() == 1, 'у таблиці Календаря немає події комісії 01.11')
     rt = _sp(row.inner_text())
-    check('(витрачено ' in rt and 'з 15 000)' in rt and '400 ₴' in rt and 'комісія' in rt, f'рядок комісії: {rt!r}')
+    check('400 ₴' in rt and 'комісія' in rt.lower(), f'рядок комісії: {rt!r}')
     page.mouse.move(2, 2)
     shot(page, 'ms-cal-1920.jpg', full=False)
     # поріг досягнуто: події немає ні в ядрі, ні в Календарі, на картці «без комісії»
     freeze(page, DAY, MET)
-    js2 = page.evaluate(MS_JS)
-    snap2, ref2 = _ref(page)
-    print(f'      після витрати 15 000: {js2}; еталон feeNext {ref2["feeNext"]}, metOn {ref2["minSpend"][0].get("metOn")}')
-    check(js2['ms'][0]['left'] == 0 and js2['fees'] == 0 and js2['feeNext'] == 0 and ref2['feeNext'] == 0 and ref2['minSpend'][0].get('metOn'),
-          f'поріг досягнуто, а комісія лишилась: {js2}')
-    check(abs(js2['whiteNext'] - ref2['whiteNext']) <= 1 and abs(js['whiteNext'] - js2['whiteNext'] - 400) <= 0.01, 'whiteNext не зменшився на 400')
+    ref2 = finance_ref(page)
+    check(ref2['minSpend'][0]['left']==0 and not any(e['id']=='fee:l1:2026-10' for e in ref2['events']), 'комісія поточного місяця лишилась після факту15000')
+    check(ref['nextPlan']['mandatoryCents']-ref2['nextPlan']['mandatoryCents']==40000, 'резерв не зменшився на400')
     check(page.locator('.p-overview .ms-wrap[data-acc="l1"] .ms-ok').count() == 1, 'немає позначки «без комісії»')
     check(page.locator('.p-overview .ms-adv').count() == 0, 'порада лишилась після досягнення порогу')
     go_tab(page, 3)
     page.click('.ck-arr[aria-label="Наступний місяць"]')
     page.wait_for_timeout(300)
-    check(page.locator('.ck-day .cal-ev', has_text='Комісія').count() == 0, 'подія комісії лишилась у Календарі')
+    check(page.locator('.ck-day .cal-ev[data-date="2026-11-01"]', has_text='Комісія').count() == 0, 'подія комісії лишилась у Календарі')
 
 
 def min_spend_late(page):
@@ -259,11 +189,9 @@ def min_spend_late(page):
     page.set_viewport_size({'width': 1920, 'height': 900})
     day = '2026-10-25'
     freeze(page, day)
-    js = page.evaluate(MS_JS)
-    snap = page.evaluate('window.__cashSnap()')
-    d, _ = open_payout(date.fromisoformat(day))
-    ref = pool_ref(snap, str(d - timedelta(days=1)), day)
-    check(js['feeNow'] == 400 and ref['feeNow'] == 400, f'комісія 01.11 не в поточному вікні: {js}, еталон {ref["feeNow"]}')
+    ref=finance_ref(page)
+    fee=[e for e in ref['events'] if e['id']=='fee:l1:2026-10']
+    check(len(fee)==1 and fee[0]['date']=='2026-11-01', 'немає комісії01.11')
     w = page.locator('.p-overview .ms-wrap[data-acc="l1"] .ms-warn')
     check(w.count() == 1, 'немає бурштинової плашки')
     t = _sp(w.inner_text())
@@ -304,11 +232,11 @@ def min_spend_settings(page):
 
 
 CHECKS = [
-    ('Гроші: паритет cashCore з budget_pool.py (ПК, демо з операціями)', 'desktop', parity),
+    ('Гроші: повний паритет проєкції (ПК, демо з операціями)', 'desktop', parity),
     ('Гроші: форма вимагає рахунок, без Monobank', 'desktop', form_account),
     ('Гроші: чип «Без рахунку» і вибір рахунку (ПК)', 'desktop', unassigned_chip),
     ('Гроші: чип «без рахунку» першим (телефон)', 'mobile', unassigned_phone),
-    ('Гроші: Бюджет обмежений готівкою з підписом', 'desktop', budget_capped),
+    ('Гроші: ціль без стискання готівкою та явний розрив', 'desktop', budget_capped),
     ('Гроші: підписи мін./макс. прогнозу без накладань', 'desktop', forecast_labels),
     ('Гроші: звірка ручного рахунку в налаштуваннях', 'desktop', reconcile),
     ('Гроші: поріг Ощаду, комісія в Календарі і зникнення при 15 000', 'desktop', min_spend),

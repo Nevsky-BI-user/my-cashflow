@@ -2,6 +2,8 @@
 # порядок цілей, банер-підказка. Рухи справжнім дотиком через CDP (helpers.touch_drag), а не мишею.
 from helpers import SHOTS, TABS, check, center, go_tab, touch_drag
 
+# головна картка Огляду v142 (раніше .o-hero): підсумок доступних коштів угорі екрана
+HERO = '.p-overview .projection-summary'
 ACTIVE_TAB = "[...document.querySelectorAll('.tab-bar .tab-btn')].findIndex(b=>b.style.color==='var(--indigo)')"
 FAB = "()=>{const b=document.querySelector('button.fab');const r=b.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]}"
 ADD = '.sheet:has-text("Нова транзакція")'
@@ -19,7 +21,7 @@ def tab_idx(page):
 
 def swipe_tabs(page):
     check(tab_idx(page) == 0, 'старт не з Огляду')
-    x, y = center(page, '.o-hero')
+    x, y = center(page, HERO)
     # свайп вліво: наступна вкладка; кадр посеред анімації зсуву (150 мс)
     touch_drag(page, x + 120, y, x - 120, y + 8, after=40)
     vshot(page, 'gest-swipe-375.jpg')
@@ -32,7 +34,7 @@ def swipe_tabs(page):
     page.wait_for_timeout(300)
     check(tab_idx(page) == 0, 'свайп вправо не повернув на Огляд')
     # короткий рух (менше 60px) і вертикальний рух не перемикають
-    x, y = center(page, '.o-hero')
+    x, y = center(page, HERO)
     touch_drag(page, x + 25, y, x - 25, y)
     check(tab_idx(page) == 0, 'рух на 50px перемкнув вкладку')
     touch_drag(page, x + 40, y - 100, x - 40, y + 100)

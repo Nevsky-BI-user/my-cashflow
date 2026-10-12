@@ -85,18 +85,18 @@ def _pairs(page, items):
 
 
 def _contrast_desktop(page, theme):
-    # ПК, 6 пар: підпис KPI (muted), «через N дн.» (muted2), борг у KPI, баланс після операції, сума витрати, сума зелена «Відкладаємо»
+    # Сім реальних пар: підпис і сума плану, строк, факт доходу/витрати, баланс і денний план.
     page.evaluate(f"document.documentElement.setAttribute('data-theme','{theme}')")
     page.wait_for_timeout(150)
     print(f'      тема {theme}')
-    lbl = page.evaluate_handle("[...document.querySelectorAll('.dv-kpi div')].find(e=>/вільно до виплати/i.test(e.innerText)&&!e.children.length)")
+    lbl = page.evaluate_handle("[...document.querySelectorAll('.dv-kpi div')].find(e=>/доступно після виплати/i.test(e.innerText)&&!e.children.length)")
     fut = page.evaluate_handle("[...document.querySelectorAll('.dv-near .dv-ev span span')].find(e=>/^через /.test(e.innerText))")
-    _pairs(page, [('підпис KPI', lbl), ('«через N дн.»', fut), ('борг у KPI', '.dv-debt .dv-kpi-v')])
+    _pairs(page, [('підпис KPI', lbl), ('«через N дн.»', fut), ('доступно після виплати', '.dv-free .dv-kpi-v')])
     go_tab(page, 2)
     _pairs(page, [('баланс після операції', '.flow-bal'), ('сума витрати', ".flow-row.tx[data-type=out] .flow-amt")])
-    go_tab(page, 4)
-    sav = page.evaluate_handle("[...document.querySelectorAll('.p-goals.desk *')].find(e=>/₴\\/міс$/.test(e.innerText.trim())&&!e.children.length&&e.style.color==='var(--green-t)')")
-    _pairs(page, [('сума зелена в KPI «Відкладаємо»', sav)])
+    _pairs(page, [('фактичне надходження', '.flow-row.tx[data-type=in] .flow-amt')])
+    go_tab(page, 1)
+    _pairs(page, [('план щоденних витрат', '.bud-day .bud-kpi-v')])
     go_tab(page, 0)
 
 
@@ -121,7 +121,7 @@ CHECKS = [
     ('Фокус повертається на ініціатор після Esc', 'desktop', focus_return),
     ('Tab не виходить із відкритого шита', 'mobile', tab_trap_mobile),
     ('Видимий контур фокуса на кнопці панелі', 'desktop', focus_visible),
-    ('Контраст 6 пар на ПК (світла тема) ≥ 4.5', 'desktop', contrast_desktop),
-    ('Контраст 6 пар на ПК (темна тема) ≥ 4.5', 'desktop', contrast_desktop_dark),
+    ('Контраст 7 пар на ПК (світла тема) ≥ 4.5', 'desktop', contrast_desktop),
+    ('Контраст 7 пар на ПК (темна тема) ≥ 4.5', 'desktop', contrast_desktop_dark),
     ('Контраст табки і сум на телефоні (світла тема) ≥ 4.5', 'mobile', contrast_mobile),
 ]

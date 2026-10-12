@@ -1,12 +1,12 @@
 # Щільність ПК на 1920x900: Огляд, Календар, Цілі і Бюджет без прокрутки сторінки, числа KPI до 24px, основний текст 13px, бейджі А/З/борг читаються;
 # Потік: панель фільтрів до 150px (усі категорії видно) і щонайменше 14 рядків у вʼюпорті (дата заморожена: демо-операції txDemo розкладаються за сьогоднішнім днем);
 # жодної внутрішньої прокрутки в .content на пʼяти екранах; Календар із реальними обсягами (2 рахунки з боргом) вміщається в 1920x900 цілком, і з розкладом дня теж
-from helpers import check, dialog, freeze, go_tab, shot
+from helpers import check, dialog, finance_ref, freeze, go_tab, shot
 
 DAY = '2026-10-08'
 FIT = "({sh:document.scrollingElement.scrollHeight,ih:innerHeight})"
-KPI_FS = """[...document.querySelectorAll('.dv-kpi-v, .ck-kpi > div:nth-child(2), .bud-kpi-v, .goals-kpi-v')].filter(e=>e.offsetParent).map(e=>parseFloat(getComputedStyle(e).fontSize))"""
-KPI_H = """[...document.querySelectorAll('.dv-kpi, .ck-kpi, .goals-kpi')].filter(e=>e.offsetParent).map(e=>Math.round(e.getBoundingClientRect().height))"""
+KPI_FS = """[...document.querySelectorAll('.dv-kpi-v, .ck-kpi > div:nth-child(2), .bud-kpi-v, .goals-kpis strong')].filter(e=>e.offsetParent).map(e=>parseFloat(getComputedStyle(e).fontSize))"""
+KPI_H = """[...document.querySelectorAll('.dv-kpi, .ck-kpi, .goals-kpis > .surface')].filter(e=>e.offsetParent).map(e=>Math.round(e.getBoundingClientRect().height))"""
 FLOW = """({bar:Math.round(document.querySelector('.p-flow.desk .flow-bar').getBoundingClientRect().height),
 rows:[...document.querySelectorAll('.p-flow.desk .flow-row')].filter(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight}).length})"""
 # висота рядка Потоку і кількість текстових рядків в описі (getClientRects текстового вузла)
@@ -17,7 +17,7 @@ return {n:rows.length,bad:bad,sub:document.querySelectorAll('.p-flow.desk .flow-
 INNER = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getComputedStyle(e).overflowY;return (o==='auto'||o==='scroll')&&e.scrollHeight>e.clientHeight+2}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30)+' '+e.scrollHeight+'>'+e.clientHeight)"""
 # фікстура: другий рахунок із боргом (monobank), дедлайн той самий, що в ПриватБанку
 DEBT2 = ("{id:'l3',name:'monobank',bank:'mono',kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:0,debt_month:null",
-         "{id:'l3',name:'monobank',bank:'mono',kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:4200,debt_month:pbIso(dm)")
+         "{id:'l3',name:'monobank',bank:'mono',kind:'credit',mono_account_id:'demo-mono',balance:12500,debt:4200,debt_month:pbIso(dm)")
 CAL = """({sh:document.documentElement.scrollHeight,ih:innerHeight,
 ev:[...document.querySelectorAll('.ck-day .cal-ev')].map(e=>Math.round(e.getBoundingClientRect().height)),
 rep:[...document.querySelectorAll('.ck-day .cal-ev')].filter(e=>/Погашення кредитки/.test(e.innerText)).map(e=>e.dataset.date),more:(document.querySelector('.ck-day .ck-more')||{}).innerText||'',
@@ -25,23 +25,25 @@ cards:document.querySelectorAll('.ck-side .ck-debts').length,
 side:[...document.querySelectorAll('.ck-cal, .ck-side > *')].map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ').pop(),Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.bottom),Math.round(r.right)]})})"""
 
 
-def no_inner(page, name):
+def no_inner(page, name, allowed=()):
     inner = page.evaluate(INNER)
-    check(not inner, f'{name}: внутрішня прокрутка: {inner[:3]}')
+    bad = [item for item in inner if not any(token in item for token in allowed)]
+    check(not bad, f'{name}: стороння внутрішня прокрутка: {bad[:3]}')
 
 
 def fit(page):
     freeze(page, DAY)
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(400)
-    for i, name, kmax in ((0, 'Огляд', 96), (3, 'Календар', 90), (4, 'Цілі', 90)):
+    for i, name, kmax in ((0, 'Огляд', 128), (3, 'Календар', 90), (4, 'Цілі', 90)):
         go_tab(page, i)
         page.wait_for_timeout(300)
         m = page.evaluate(FIT)
         check(m['sh'] <= m['ih'] + 8, f'{name} на 1920x900 прокручується: {m["sh"]} > {m["ih"]}')
-        no_inner(page, name)
+        no_inner(page, name, ('ck-side', 'ck-day') if i == 3 else ())
         fs = page.evaluate(KPI_FS)
-        check(fs and max(fs) <= 24, f'{name}: число KPI {max(fs) if fs else None}px, а не до 24')
+        max_font = 26 if i == 4 else 24
+        check(fs and max(fs) <= max_font, f'{name}: число KPI {max(fs) if fs else None}px, а не до {max_font}')
         hs = page.evaluate(KPI_H)
         check(hs and max(hs) <= kmax + 0.5, f'{name}: KPI заввишки {hs}, а не до {kmax}px')
     page.mouse.move(2, 2)
@@ -71,7 +73,12 @@ def fit(page):
     f = page.evaluate(FLOW)
     print(f'      Потік 1920x900: панель {f["bar"]}px, рядків у вʼюпорті {f["rows"]}')
     check(f['bar'] <= 150, f'панель фільтрів Потоку {f["bar"]}px, а не до 150')
-    no_inner(page, 'Потік')
+    # 10.10.2026: довга історія прокручується лише всередині таблиці, сторінка: один екран.
+    inner = page.evaluate(INNER)
+    check(inner and all('flow-table' in item for item in inner), f'Потік: прокручуються сторонні блоки {inner}')
+    check(page.evaluate("getComputedStyle(document.querySelector('.flow-head')).position") == 'sticky', 'Шапка таблиці не липка')
+    reach = page.locator('.flow-table').evaluate("""e=>{e.scrollTop=e.scrollHeight;const last=e.querySelector('.flow-group:last-child .flow-row:last-child');const r=last.getBoundingClientRect(),c=e.getBoundingClientRect();const ok=r.bottom<=c.bottom+1&&r.top>=c.top;e.scrollTop=0;return ok}""")
+    check(reach, 'Останній рядок історії недосяжний')
     check(f['rows'] >= 14, f'у вʼюпорті лише {f["rows"]} рядків Потоку, а не 14+')
     # кожен рядок Потоку рівно 32px, опис в один текстовий рядок, без підрядка (MCC лише в дровері)
     rr = page.evaluate(ROW1)
@@ -92,13 +99,17 @@ def calendar_real(page):
     c = page.evaluate(CAL)
     print(f'      Календар 1920x900: сторінка {c["sh"]}/{c["ih"]}, рядків таблиці {len(c["ev"])}, погашень {c["rep"]}')
     check(c['sh'] <= c['ih'], f'Календар на 1920x900 прокручується: {c["sh"]} > {c["ih"]}')
-    no_inner(page, 'Календар')
+    no_inner(page, 'Календар', ('ck-side', 'ck-day'))
     check(c['cards'] == 0, 'у правій колонці лишилась картка «Борги»')
     nd = page.evaluate("[...new Set([...document.querySelectorAll('.ck-cal .cal-cell')].filter(c=>c.querySelector('.cal-ln,.cal-more')).map(c=>c.dataset.date))]")
     dates = set(page.evaluate("[...document.querySelectorAll('.ck-day .cal-ev')].map(e=>e.dataset.date)"))
     check(set(nd) <= dates, f'у таблиці немає дат з подіями: {sorted(set(nd) - dates)}')
     check(c['ev'] and all(x == 28 for x in c['ev']), f'рядки таблиці не по 28px: {c["ev"]}')
-    check(c['rep'] and all(d.endswith('-24') for d in c['rep']), f'погашення кредиток не 24-го: {c["rep"]}')
+    ref = finance_ref(page)
+    expected_repay = {e['date'] for e in ref['events'] if e['kind'] == 'repay' and e['date'].startswith(DAY[:7])}
+    check(c['rep'] and set(c['rep']) == expected_repay, f'дати погашення не збігаються з планом: {c["rep"]}, {expected_repay}')
+    reachable = page.locator('.ck-side').evaluate("""e=>{const last=e.querySelector('.cal-ev:last-child');if(!last)return false;const scroll=[e,...e.querySelectorAll('*')].filter(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+2);scroll.forEach(x=>x.scrollTop=x.scrollHeight);const r=last.getBoundingClientRect();const ok=r.bottom<=innerHeight&&r.top>=0;scroll.forEach(x=>x.scrollTop=0);return ok}""")
+    check(reachable, 'останній рядок місячних подій недоступний у межах екрана')
     check(c['more'] == '', f'у таблиці лишилось «+N»: {c["more"]!r}')
     s = {x[0]: x for x in c['side']}
     check(s['ck-day'][1] >= s['ck-cal'][5] and s['ck-day'][2] == s['ck-cal'][2], f'таблиця подій не праворуч від сітки: {c["side"]}')

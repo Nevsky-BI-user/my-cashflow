@@ -4,7 +4,7 @@
 import re
 from datetime import date, timedelta
 
-from helpers import check, freeze, go_tab, num, open_payout, pool_ref, shot
+from helpers import check, finance_ref, freeze, go_tab, num, open_payout, pool_ref, shot
 
 DAY = '2026-10-08'
 MON = {'СІЧНЯ': 1, 'ЛЮТОГО': 2, 'БЕРЕЗНЯ': 3, 'КВІТНЯ': 4, 'ТРАВНЯ': 5, 'ЧЕРВНЯ': 6, 'ЛИПНЯ': 7, 'СЕРПНЯ': 8, 'ВЕРЕСНЯ': 9,
@@ -12,9 +12,12 @@ MON = {'СІЧНЯ': 1, 'ЛЮТОГО': 2, 'БЕРЕЗНЯ': 3, 'КВІТНЯ': 
 
 
 def _ref(page):
-    snap = page.evaluate('window.__cashSnap()')
-    d, _ = open_payout(date.fromisoformat(DAY))
-    return pool_ref(snap, str(d - timedelta(days=1)), DAY)
+    r = finance_ref(page)
+    n = r['nextPlan']; c = r['currentPeriod']; snap = r['snapshot']
+    before = [d for d in r['days'] if d['date'] < n['start']][-1]
+    return dict(r, startCash=snap['cashCents']/100, cashBeforePayout=before['closingCashCents']/100,
+                ownDebit=snap['positiveOwnCents']/100, unassigned=snap['unassignedAdjustmentCents']/100,
+                debt=snap['creditDebtCents']/100, varPoolCur=c['targetCents']/100, varPoolNext=n['targetCents']/100)
 
 
 def money(text):
@@ -27,11 +30,8 @@ def money(text):
 
 def _bal_at(ref, iso):
     """Каса на кінець дня iso за еталоном: баланс останньої події не пізніше дати, інакше стартова каса."""
-    b = ref['startCash']
-    for e in ref['timeline']:
-        if e['date'] <= iso:
-            b = e['balance']
-    return b
+    rows = [d for d in ref['days'] if d['date'] <= iso]
+    return rows[-1]['closingCashCents']/100 if rows else ref['startCash']
 
 
 def overview(page):
@@ -41,15 +41,11 @@ def overview(page):
     freeze(page, DAY)
     ref = _ref(page)
     go_tab(page, 0)
-    k = page.locator('.dv-kpi.dv-cash')
-    check(k.count() == 1, 'на Огляді немає KPI «Залишок до виплати»')
-    kt = k.inner_text()
-    print(f'      KPI: {kt!r}; еталон cashBeforePayout {ref["cashBeforePayout"]:.2f} ({ref["daysToPayout"]} дн.), до зарплати {ref["cashBeforeSalary"]}')
-    check('залишок до виплати' in kt.lower(), f'підпис KPI: {kt!r}')
-    v = num(page.inner_text('.dv-kpi.dv-cash .dv-kpi-v'))
-    check(abs(v - ref['cashBeforePayout']) <= 1, f'KPI {v}, еталон {ref["cashBeforePayout"]:.2f}')
-    check(f'{ref["daysToPayout"]} дн.' in kt and 'до зарплати' in kt, f'KPI без днів або рядка «до зарплати»: {kt!r}')
-    check(page.locator('.dv-kpi').count() == 4, f'KPI {page.locator(".dv-kpi").count()}, а не 4')
+    k = page.locator('.dv-kpi.dv-free')
+    check(k.count() == 1, 'немає головного плану')
+    check('доступно після виплати' in k.inner_text().lower(), 'неправильна назва головної суми')
+    check(abs(num(k.locator('.dv-kpi-v').inner_text())-ref['nextPlan']['baseAvailableCents']/100)<=1, 'головна сума не відповідає проєкції')
+    check(page.locator('.dv-kpi').count() == 4, 'не чотири KPI')
     bal = page.evaluate("Object.fromEntries([...document.querySelectorAll('.dv-bal [data-b]')].map(e=>[e.dataset.b,e.innerText]))")
     print(f'      Баланс: {bal}')
     for key in ('own', 'debt', 'avail', 'rem', 'net'):
@@ -77,7 +73,7 @@ def overview_mobile(page):
     order = page.evaluate("[...document.querySelector('.p-overview').children].map(e=>String(e.className))")
     ia = next((i for i, c in enumerate(order) if 'o-accs' in c), -1)
     ib = next((i for i, c in enumerate(order) if 'o-bal' in c), -1)
-    check(ia >= 0 and ib == ia + 1, f'«Баланс» не одразу після рахунків: {order}')
+    check(ia >= 0 and next((i for i, c in enumerate(order) if 'o-next' in c), -1) == ia + 1 and ib > ia + 1, f'«Баланс» не після найближчих платежів: {order}')
     cash = page.inner_text('.o-bal [data-b="cash"]')
     print(f'      телефон: {cash!r}')
     check('Залишок до виплати' in cash, f'рядок каси: {cash!r}')
@@ -178,19 +174,13 @@ def month_mode(page):
     go_tab(page, 1)
     check('Жовтень' in page.inner_text('.side-pname'), f'після перезавантаження не місяць: {page.inner_text(".side-pname")!r}')
     note = page.inner_text('.bud-month')
-    parts = re.findall(r'(зарплата|аванс) (\d\d\.\d\d) ([\d  ]+) ₴', note)
-    print(f'      {note!r}')
-    check(len(parts) == 2, f'у примітці не два періоди: {parts}')
-    got = {k: int(re.sub(r'\D', '', v)) for k, _, v in parts}
-    want = {'зарплата': ref['varPoolCur'], 'аванс': ref['varPoolNext']}
-    for k in want:
-        check(abs(got[k] - want[k]) <= 1, f'{k}: {got[k]}, еталон {want[k]:.2f}')
-    pool = round(ref['varPoolCur'] + ref['varPoolNext'], 2)
-    bt = page.inner_text('.content')
-    check('бюджет місяця' in bt.lower(), 'немає підпису «Бюджет місяця»')
-    shown = [num(x) for x in re.findall(r'\d[\d  ]{2,} ₴', bt)]
-    check(any(abs(x - pool) <= 1 for x in shown), f'на екрані немає суми бюджету місяця {pool:.2f}')
-    print(f'      бюджет місяця {pool:.2f} = {ref["varPoolCur"]:.2f} + {ref["varPoolNext"]:.2f}')
+    check('денний план за датами цього місяця' in note, 'місячний бюджет не пояснює денну агрегацію')
+    projection=finance_ref(page)
+    inp=page.evaluate('window.__financeInput')
+    planned=sum(d['variableCents'] for d in projection['days'] if d['date'].startswith('2026-10'))
+    actual=sum(round(t['amount']*100) for t in inp['transactions'] if t['type']=='expense' and not t.get('fixed_id') and '2026-10-01'<=t['date']<=DAY)
+    pool=(planned+actual)/100
+    check(abs(num(page.inner_text('.bud-pool .bud-kpi-v'))-pool)<=1, 'бюджет місяця не дорівнює факту + майбутнім дням')
     page.mouse.move(2, 2)
     shot(page, 'v139-budget-month-1920.jpg', full=False)
     go_tab(page, 2)
@@ -206,10 +196,10 @@ def month_mode(page):
 
 
 CHECKS = [
-    ('Огляд: «Залишок до виплати» і блок «Баланс» за еталоном, 1920x1080 без прокрутки', 'desktop', overview),
+    ('Огляд: наступний план і фактичний баланс за проєкцією, 1920x1080', 'desktop', overview),
     ('Огляд на телефоні: блок «Баланс» після рахунків', 'mobile', overview_mobile),
     ('Потік: «Сума», потім «Баланс після», сірий прогноз за еталоном', 'desktop', flow),
     ('Картка кредитки: мінус борг, доступно, закрити до 24-го', 'desktop', credit_card),
     ('Жодного «до 25.MM» на вкладках', 'desktop', no_25),
-    ('Режим «Календарний місяць»: localStorage, бюджет місяця = сума періодів', 'desktop', month_mode),
+    ('Режим «Календарний місяць»: localStorage, факт + план днів місяця', 'desktop', month_mode),
 ]

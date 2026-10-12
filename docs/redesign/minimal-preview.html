@@ -1,0 +1,270 @@
+<div id="cashflow-minimal-preview" class="viz-carousel" aria-label="Сімейний Кешфлоу: дизайн для компʼютера й телефона" data-previous-label="Попередній вигляд" data-next-label="Наступний вигляд">
+  <section data-variant="Компʼютер" aria-label="Компʼютер">
+    <div style="container:cashflow-stage / inline-size;width:100%"><div id="cashflow-minimal-desktop" data-theme="light"></div></div>
+  </section>
+  <section data-variant="Телефон" aria-label="Телефон" hidden>
+    <div class="viz-dotted-background"><div style="container:cashflow-stage / inline-size;max-width:390px;margin:auto"><div id="cashflow-minimal-phone" data-theme="light"></div></div></div>
+  </section>
+</div>
+<template id="cashflow-minimal-product">
+  <style>
+
+:host{--bg:#f5f5f7;--cf-card:#fff;--inset:#f7f7f9;--ink:#18181b;--muted:#707077;--line:#e9e9ed;--strong:#d0d0d7;--mint:#23795e;--mintbg:#ecf6f1;--amber:#916522;--amberbg:#faf3e5;--red:#b35454;--glass:rgba(245,245,247,.85);--shadow:0 16px 40px -24px #20202b35,0 3px 8px -5px #20202b24,0 1px 2px #20202b05;--cols:#606b72,#879298,#a4aeb1,#bbc1c3,#cbd0d1,#dce0e0}
+:host([data-theme=dark]){--bg:#0d0d0f;--cf-card:#18181b;--inset:#232327;--ink:#f2f2f4;--muted:#a2a2aa;--line:#2a2a30;--strong:#46464e;--mint:#91d3b4;--mintbg:#1c3028;--amber:#d4b07b;--amberbg:#30291e;--red:#e29a9a;--glass:rgba(13,13,15,.88);--shadow:0 20px 40px -18px #0009,0 3px 8px #0005,inset 0 1px #ffffff05;color-scheme:dark}
+*{box-sizing:border-box}.cf-preview-body{margin:0;background:radial-gradient(ellipse at 76% -12%,#fff9,transparent 60%),var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}:host([data-theme=dark]) .cf-preview-body{background:radial-gradient(ellipse at 72% -10%,#33333966,transparent 58%),var(--bg)}.cf-preview-body:before{content:"";position:fixed;pointer-events:none;inset:0;background:radial-gradient(ellipse at 55% -20%,#ffffff12,transparent 65%);z-index:-1}button,input,select{font:inherit;color:inherit}button{cursor:pointer}button,a,input,select{ -webkit-tap-highlight-color:transparent}button{border:0;background:none}button:active{transform:scale(.975)}button,a{transition:background 160ms,transform 160ms,opacity 160ms}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--muted);outline-offset:4px}svg{display:block}button svg{flex-shrink:0}h1,h2,h3,p{margin:0}h1{font-size:30px;letter-spacing:-1px;font-weight:650}h2{font-size:17px;letter-spacing:-.35px;font-weight:650}h3{font-size:15px;font-weight:600}small,.muted{color:var(--muted)}small{font-size:12px}a{color:inherit}.sidebar{position:fixed;inset:0 auto 0 0;width:208px;border-right:1px solid var(--line);padding:30px 16px;display:flex;flex-direction:column;background:var(--bg);z-index:30}.brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:700;letter-spacing:-.6px;padding:0 12px 42px}.brandmark{width:30px;height:30px;background:var(--ink);color:var(--cf-card);border-radius:9px;display:grid;place-items:center;box-shadow:0 3px 6px #0002}.cf-nav{display:flex;flex-direction:column;gap:6px}.cf-nav button{display:flex;gap:12px;align-items:center;padding:12px 14px;border-radius:12px;text-align:left;color:var(--muted);font-weight:550}.cf-nav button[aria-current=page]{background:var(--cf-card);color:var(--ink);box-shadow:var(--shadow)}.cf-nav button:hover{color:var(--ink);background:var(--cf-card)}.sidebar-note{margin-top:auto;padding:18px 12px 0;font-size:11px;color:var(--muted)}.sidebar-note b{display:block;color:var(--ink);font-size:12px;margin-bottom:4px}.shell{margin-left:208px}.toolbar{position:sticky;top:0;height:76px;background:var(--bg);background:var(--glass);backdrop-filter:blur(20px);border-bottom:1px solid var(--line);z-index:20;padding:0 40px;display:flex;align-items:center;justify-content:space-between;gap:15px}.crumb{color:var(--muted);font-size:12px;display:flex;gap:12px;align-items:center}.crumb b{color:var(--ink);font-weight:500}.tools{display:flex;gap:10px;align-items:center}.iconbtn{width:38px;height:38px;display:grid;place-items:center;border:1px solid var(--line);border-radius:12px;background:var(--cf-card);box-shadow:0 2px 3px #00000004}.badge{font-size:11px;letter-spacing:.15px;color:var(--muted);background:var(--inset);padding:5px 9px;border-radius:7px;border:1px solid var(--line)}main{max-width:1540px;margin:auto;padding:34px 40px 40px}.heading{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:26px}.heading p{color:var(--muted);margin-top:5px}.period{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--cf-card);white-space:nowrap}.grid{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:22px;align-items:start}.maincol,.sidecol{display:grid;gap:22px;min-width:0}.cf-card{background:var(--cf-card);border:1px solid var(--line);border-radius:23px;box-shadow:var(--shadow);padding:26px;min-width:0}.cardhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:23px}.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:1.35px;font-weight:650;color:var(--muted)}.hero{background:radial-gradient(ellipse at 92% 0%,#e9edf17d,transparent 65%),linear-gradient(145deg,var(--cf-card),var(--inset));padding:30px 30px 24px;position:relative;overflow:hidden}:host([data-theme=dark]) .hero{background:radial-gradient(ellipse at 100% 0%,#43434d66,transparent 70%),linear-gradient(145deg,#202024,#18181b)}.hero:before{content:"";position:absolute;right:-65px;top:-100px;width:330px;height:330px;border-radius:50%;border:45px solid var(--inset);opacity:.7;pointer-events:none}.hero>*{position:relative}.hero-top{display:flex;align-items:center;justify-content:space-between;gap:12px}.amount{font-size:clamp(40px,4.5vw,64px);line-height:1.13;letter-spacing:-2.8px;font-weight:600;margin:16px 0 8px}.amount span{font-size:.54em;font-weight:450;letter-spacing:-.8px;color:var(--muted)}.hero-description{font-size:13px;color:var(--muted);max-width:380px}.hero-bottom{border-top:1px solid var(--line);margin-top:26px;padding-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:20px}.metric strong{font-size:21px;font-weight:600;letter-spacing:-.5px;display:block;margin-top:4px}.metric small{display:flex;align-items:center;gap:6px}.dot{width:6px;height:6px;background:var(--mint);border-radius:50%;display:inline-block}.textbtn{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:550;padding:6px 0;color:var(--muted)}.textbtn:hover{color:var(--ink)}.row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}.row-left{display:flex;align-items:center;gap:12px;min-width:0}.tile{width:38px;height:38px;background:var(--inset);border:1px solid var(--line);border-radius:12px;display:grid;place-items:center;flex-shrink:0}.row b{font-weight:600}.money{white-space:nowrap;font-weight:600}.row small{display:block;margin-top:2px}.positive{color:var(--mint)}.negative{color:var(--red)}.risk{color:var(--amber)}.inset{background:var(--inset);border:1px solid var(--line);border-radius:15px;padding:16px}.notice{background:var(--amberbg);color:var(--amber);border-radius:13px;padding:14px 16px;font-size:12px;line-height:1.6}.notice strong{display:block;font-size:13px;margin-bottom:3px}.cf-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:11px 16px;border-radius:11px;background:var(--ink);color:var(--cf-card);font-weight:550;font-size:13px;min-height:42px}.cf-btn.secondary{background:var(--inset);color:var(--ink);border:1px solid var(--line)}.wide{width:100%}.stack{display:grid;gap:14px}.space{margin-top:20px}.chart{width:100%;height:auto;overflow:visible;touch-action:pan-y}.chart text{fill:var(--muted);font-size:11px;font-family:inherit}.chart .gridline{stroke:var(--line);stroke-width:1}.chart .balance{stroke:var(--ink);stroke-width:2.5;fill:none;stroke-linejoin:round}.chart-caption{color:var(--muted);font-size:12px;margin-top:-15px;margin-bottom:16px;max-width:480px}.legend{display:flex;gap:10px 17px;flex-wrap:wrap;margin:15px 0;font-size:11px;color:var(--muted)}.legend span{display:flex;align-items:center;gap:6px}.legend i{width:7px;height:7px;border-radius:2px;display:inline-block}.chartread{display:flex;justify-content:space-between;gap:12px;margin-top:14px;align-items:center}.chartread strong{font-size:18px;font-weight:600;display:block}.chartread label{font-size:11px;color:var(--muted);display:grid;gap:4px}.chartread select{max-width:135px}select,input{background:var(--cf-card);border:1px solid var(--strong);padding:9px 10px;border-radius:9px;min-width:0;max-width:100%}input[type=number]{width:90px}.datebox{text-align:center;width:40px;flex-shrink:0;color:var(--muted);font-size:10px}.datebox b{display:block;font-size:20px;line-height:1.2;color:var(--ink)}.paymentrow{font-size:12px}.paymentrow .money{font-size:13px}.progress{height:6px;background:var(--inset);border-radius:6px;overflow:hidden}.progress span{height:100%;display:block;background:var(--ink);border-radius:6px}.goal-detail{display:flex;justify-content:space-between;gap:10px;margin:14px 0 9px;font-size:12px}.footnote{font-size:11px;color:var(--muted);margin:22px 0 0;display:flex;gap:8px;align-items:center}.mobilebrand{display:none}.view{animation:enter 180ms ease-out}.categories{display:grid;gap:2px}.category{display:grid;grid-template-columns:1fr auto auto;gap:15px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}.category:last-child{border:0}.category-name{display:flex;align-items:center;gap:10px}.category-name i{width:9px;height:9px;border-radius:3px;flex-shrink:0}.pct{font-size:12px;color:var(--muted);min-width:33px;text-align:right}.allocation{height:16px;display:flex;gap:3px;border-radius:5px;overflow:hidden;margin:20px 0 8px}.allocation span{min-width:0}.tabs{display:flex;gap:4px;background:var(--inset);border:1px solid var(--line);border-radius:11px;padding:4px;width:max-content;max-width:100%;margin-bottom:20px}.tabs button{padding:8px 15px;font-size:12px;color:var(--muted);border-radius:8px}.tabs button.active{background:var(--cf-card);box-shadow:var(--shadow);color:var(--ink)}.searchbar{display:flex;gap:12px;margin-bottom:16px}.searchbar input{flex:1;width:0}.goals-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}.goal-icon{height:55px;width:55px;border-radius:18px;background:var(--inset);border:1px solid var(--line);display:grid;place-items:center;margin-bottom:25px}.goal-amount{font-size:30px;letter-spacing:-1px;font-weight:600;margin:18px 0 4px}.edit-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0}.edit-row label{flex:1}.error{color:var(--red);font-size:13px;min-height:20px;margin:12px 0}.empty{padding:40px 10px;text-align:center;color:var(--muted)}.demo-select{font-size:11px;padding:6px 8px}.demo-label{font-size:11px;color:var(--muted);display:flex;gap:6px;align-items:center}.pageintro{max-width:640px}.summary-pair{display:grid;grid-template-columns:1fr 1fr;gap:15px}.summary-pair .inset strong{font-size:24px;letter-spacing:-.7px;display:block;margin:6px 0}.readcats{display:flex;flex-wrap:wrap;gap:7px 12px;font-size:11px;color:var(--muted);margin-top:12px}.readcats span{white-space:nowrap}dialog{background:var(--cf-card);color:var(--ink);border:1px solid var(--line);border-radius:24px;padding:26px;width:min(460px,calc(100% - 28px));max-height:90dvh;box-shadow:0 30px 100px #0005;animation:enter 180ms ease-out}dialog::backdrop{background:#0006;backdrop-filter:blur(6px)}dialog .cardhead{margin-bottom:18px}dialog p{color:var(--muted);font-size:13px}.dialogfooter{display:flex;gap:12px;margin-top:22px}.dialogfooter .cf-btn{flex:1}#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:100;max-width:calc(100% - 30px);background:var(--ink);color:var(--cf-card);padding:12px 18px;border-radius:13px;box-shadow:var(--shadow);font-size:12px}#toast:empty{display:none}
+.hero-period{font-size:12px;color:var(--muted);margin:0 0 9px}.hero-risk{display:inline-block;font-size:12px;color:var(--amber);background:var(--amberbg);border:1px solid color-mix(in srgb,var(--amber) 12%,transparent);border-radius:10px;padding:9px 12px;margin-top:17px;line-height:1.6}.hero-risk b{font-weight:600;white-space:nowrap}
+@keyframes enter{from{opacity:.5;transform:translateY(5px)}to{opacity:1;transform:none}}
+@container cashflow-stage (min-width:1500px){main{padding-top:44px}.grid{grid-template-columns:minmax(0,1fr) 350px;gap:26px}.cf-card{padding:30px}.hero{padding:36px}.maincol,.sidecol{gap:26px}.chart{max-height:340px}}
+@container cashflow-stage (max-width:1190px){.toolbar{padding:0 26px}main{padding:28px 26px}.grid{grid-template-columns:minmax(0,1fr) 280px;gap:18px}.cf-card{padding:22px}.maincol,.sidecol{gap:18px}}
+@container cashflow-stage (max-width:999px){.sidebar{width:80px;padding:28px 10px}.brand{padding:0 14px 34px}.brand>span,.cf-nav button span,.sidebar-note{display:none}.cf-nav button{justify-content:center;padding:14px}.shell{margin-left:80px}.grid{grid-template-columns:minmax(0,1.2fr) minmax(240px,.8fr)}.hero-bottom{gap:12px}.hero .amount{font-size:46px}.heading{align-items:start}.period{font-size:11px}.cf-card{padding:20px}.hero-description{max-width:250px}.money{font-size:13px}.crumb{font-size:11px}}
+@container cashflow-stage (max-width:679px){.sidebar{inset:auto 0 0;width:100%;height:calc(73px + env(safe-area-inset-bottom));padding:7px 5px env(safe-area-inset-bottom);border:0;border-top:1px solid var(--line);background:var(--glass);backdrop-filter:blur(20px)}.brand{display:none}.cf-nav{flex-direction:row;gap:0;justify-content:space-around}.cf-nav button{flex:1;min-width:0;flex-direction:column;gap:4px;padding:6px 1px;font-size:9px;border-radius:10px}.cf-nav button span{display:block;white-space:nowrap}.cf-nav button[aria-current=page]{box-shadow:none;background:var(--inset)}.cf-nav svg{width:21px;height:21px}.shell{margin-left:0}.toolbar{height:64px;padding:0 20px}.crumb{display:none}.mobilebrand{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:650;letter-spacing:-.5px}.mobilebrand .brandmark{width:26px;height:26px;border-radius:8px}.toolbar .badge{font-size:9px;padding:4px 6px}.tools{gap:8px}.iconbtn{height:34px;width:34px;border-radius:10px}main{padding:26px 18px 105px}.heading{margin-bottom:21px}.heading h1{font-size:27px}.heading p{font-size:12px}.period{display:none}.grid{display:flex;flex-direction:column;gap:18px}.maincol,.sidecol{display:contents}.cf-card{width:100%;padding:22px;border-radius:21px}.hero{order:0;padding:25px}.hero .amount{font-size:54px;letter-spacing:-2.5px}.hero-description{max-width:260px;font-size:12px}.hero-bottom{margin-top:23px;padding-top:17px}.hero-bottom strong{font-size:20px}.upcoming{order:1}.forecast{order:2}.reserve{order:3}.recent{order:4}.overview-goal{order:5}.cardhead{margin-bottom:19px}.chart-caption{font-size:11px;margin-top:-10px}.chartread{align-items:flex-start}.chartread strong{font-size:16px}.chartread small{font-size:10px}.chartread select{font-size:11px;max-width:116px;padding:7px}.legend{font-size:10px;gap:7px 13px}.notice{padding:12px 13px;font-size:11px}.notice strong{font-size:12px}.demo-label{font-size:10px}.demo-select{font-size:10px;max-width:140px}.goals-grid{grid-template-columns:1fr}.summary-pair{gap:10px}.summary-pair .inset{padding:13px}.summary-pair .inset strong{font-size:23px}.tabs button{padding:7px 11px}.searchbar{gap:8px}.searchbar select{max-width:112px;font-size:12px}.row{gap:10px}.row-left{gap:10px}.row b{font-size:12px}.category{gap:10px;font-size:12px}.category .money{font-size:12px}#toast{bottom:90px}.readcats{font-size:10px}}
+@container cashflow-stage (max-width:359px){main{padding-left:12px;padding-right:12px}.toolbar{padding:0 14px}.cf-card{padding:18px}.hero{padding:22px}.hero .amount{font-size:48px}.hero-bottom strong{font-size:18px}.badge{display:none}.row-left{gap:8px}.tile{height:32px;width:32px}.chartread{gap:7px}.chartread strong{font-size:14px}.cf-nav button{font-size:8px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+  :host{display:block;position:relative;min-width:0}
+  .cf-preview-body{position:relative;min-width:0;min-height:0}
+  .cf-preview-body:before{position:absolute}
+  .sidebar{position:absolute}
+  .shell{min-height:0}
+  .cf-card{border-radius:var(--cf-preview-radius,24px)}
+  @container cashflow-stage (max-width:679px){
+    .sidebar{position:sticky;inset:auto;bottom:0;max-width:100%}
+    main{padding-bottom:24px}
+  }
+  </style>
+  <div class="cf-preview-body">
+<aside class="sidebar"><div class="brand"><div class="brandmark">≋</div><span>Кешфлоу</span></div><cf-nav class="cf-nav" aria-label="Основна навігація"></cf-nav><div class="sidebar-note"><b>Ваші гроші. Спільний план.</b>Ескіз · вигадані дані<br>Лише локальний перегляд</div></aside>
+<div class="shell"><header class="toolbar"><div class="crumb">Сімейний простір <span>/</span> <b id="breadcrumb">Огляд</b></div><div class="mobilebrand"><div class="brandmark">≋</div>Кешфлоу</div><div class="tools"><span class="badge">Ескіз · вигадані дані</span><button id="theme" class="iconbtn" aria-label="Увімкнути темну тему"></button></div></header><main id="content"></main></div>
+<dialog id="dialog" aria-labelledby="dialog-title"></dialog><div id="toast" role="status"></div>
+</div>
+</template>
+<script>
+(function (root, factory) {
+  'use strict';
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.CashflowForecast = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+  const DAY = 86400000;
+  const MAX = BigInt(Number.MAX_SAFE_INTEGER);
+
+  function cents(value, label) {
+    if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(label + ' must be safe nonnegative integer cents');
+    return value;
+  }
+
+  function safe(value, label) {
+    if (value > MAX || value < -MAX) throw new RangeError(label + ' exceeds safe integer cents');
+    return Number(value);
+  }
+
+  function date(value, label) {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new RangeError(label + ' must be YYYY-MM-DD');
+    const time = Date.parse(value + 'T00:00:00.000Z');
+    if (!Number.isFinite(time) || new Date(time).toISOString().slice(0, 10) !== value) throw new RangeError(label + ' must be a valid calendar date');
+    return time;
+  }
+
+  // Найбільші залишки; рівні залишки розвʼязуємо за id, незалежно від порядку входу.
+  function allocate(total, units, categories) {
+    const sum = units.reduce((acc, unit) => acc + unit, 0n);
+    if (total === 0) return units.map(() => 0);
+    const rows = units.map((unit, index) => {
+      const product = BigInt(total) * unit;
+      return { index, amount: Number(product / sum), remainder: product % sum };
+    });
+    let left = total - rows.reduce((acc, row) => acc + row.amount, 0);
+    rows.sort((a, b) => a.remainder === b.remainder
+      ? (categories[a.index].id < categories[b.index].id ? -1 : 1)
+      : (a.remainder > b.remainder ? -1 : 1));
+    for (let i = 0; i < left; i++) rows[i].amount++;
+    const result = units.map(() => 0);
+    rows.forEach(row => { result[row.index] = row.amount; });
+    return result;
+  }
+
+  // Прототип касового плану після резервування: без фактичних банківських проводок.
+  // Ваги: 0..10000, максимум 4 десяткові знаки; сума не мусить дорівнювати 100.
+  function planPeriod(input) {
+    if (!input || typeof input !== 'object') throw new RangeError('planPeriod input is required');
+    const startTime = date(input.start, 'start');
+    const endTime = date(input.end, 'end');
+    const days = (endTime - startTime) / DAY;
+    if (days < 1 || days > 366) throw new RangeError('period must contain 1..366 calendar days, end exclusive');
+    const own = cents(input.ownCents, 'ownCents');
+    const payout = cents(input.payoutCents, 'payoutCents');
+    const mandatory = cents(input.mandatoryCents, 'mandatoryCents');
+    const debt = cents(input.debtCents, 'debtCents');
+    const minimum = cents(input.minCents === undefined ? 1500000 : input.minCents, 'minCents');
+    if (!Array.isArray(input.categories) || input.categories.length < 1 || input.categories.length > 20) throw new RangeError('categories must contain 1..20 entries');
+    const ids = new Set();
+    const categories = input.categories.map(category => {
+      if (!category || typeof category.id !== 'string' || !category.id.trim() || ids.has(category.id)) throw new RangeError('category ids must be unique nonempty strings');
+      ids.add(category.id);
+      const weight = category.weight;
+      if (!Number.isFinite(weight) || weight < 0 || weight > 10000 || Math.abs(weight * 10000 - Math.round(weight * 10000)) > 0.000001) throw new RangeError('weight must be 0..10000 with at most 4 decimal places');
+      return { id: category.id, name: category.name, weight };
+    });
+    const units = categories.map(category => BigInt(Math.round(category.weight * 10000)));
+    if (units.every(unit => unit === 0n)) throw new RangeError('category weights must have a positive sum');
+    // Контроль також проміжних грошових сум, а не лише кінцевого залишку.
+    const incoming = safe(BigInt(own) + BigInt(payout), 'incoming');
+    const reserved = safe(BigInt(mandatory) + BigInt(debt), 'reserved');
+    const baseAvailableCents = safe(BigInt(incoming) - BigInt(reserved), 'baseAvailableCents');
+    const targetCents = Math.max(minimum, baseAvailableCents);
+    const initialGap = safe(BigInt(targetCents) - BigInt(baseAvailableCents), 'initialGap');
+    let transferCents = 0;
+    let repaymentDate = null;
+    if (input.credit !== undefined && input.credit !== null) {
+      const credit = input.credit;
+      if (typeof credit !== 'object') throw new RangeError('credit must be an object');
+      const requested = cents(credit.requestedCents, 'requestedCents');
+      const eligible = credit.eligibleCents == null ? null : cents(credit.eligibleCents, 'eligibleCents');
+      const limit = credit.limitCents == null ? null : cents(credit.limitCents, 'limitCents');
+      if (credit.repaymentDate != null) {
+        if (date(credit.repaymentDate, 'repaymentDate') < startTime) throw new RangeError('repaymentDate must be on or after start');
+        repaymentDate = credit.repaymentDate;
+      }
+      if (eligible !== null && limit !== null && repaymentDate !== null) transferCents = Math.min(requested, eligible, limit, initialGap);
+    }
+    const availableCents = safe(BigInt(baseAvailableCents) + BigInt(transferCents), 'availableCents');
+    const gapCents = safe(BigInt(Math.max(0, minimum)) - BigInt(Math.min(minimum, availableCents)), 'gapCents');
+    const totals = allocate(targetCents, units, categories);
+    const remaining = totals.slice();
+    let cash = availableCents;
+    let debtAtEndCents = transferCents;
+    const quotient = Math.floor(targetCents / days);
+    const extra = targetCents % days;
+    const schedule = Array.from({ length: days }, (_, day) => {
+      const dayDate = new Date(startTime + day * DAY).toISOString().slice(0, 10);
+      const spendCents = quotient + (day < extra ? 1 : 0);
+      const amounts = day === days - 1 ? remaining.slice() : allocate(spendCents, remaining.map(BigInt), categories);
+      amounts.forEach((amount, index) => { remaining[index] -= amount; });
+      const repaymentCents = dayDate === repaymentDate ? transferCents : 0;
+      debtAtEndCents -= repaymentCents;
+      cash = safe(BigInt(cash) - BigInt(spendCents) - BigInt(repaymentCents), 'remainingCents');
+      return { date: dayDate, spendCents, repaymentCents, remainingCents: cash,
+        byCategory: categories.map((category, index) => ({ id: category.id, name: category.name, amountCents: amounts[index] })) };
+    });
+    return { days, start: input.start, end: input.end, baseAvailableCents, availableCents, targetCents,
+      gapCents, transferCents, newDebtCents: transferCents, debtAtEndCents, repaymentDate,
+      averageDailyCents: targetCents / days, endingCents: cash,
+      categories: categories.map((category, index) => ({ ...category, totalCents: totals[index] })), schedule };
+  }
+
+  return { planPeriod };
+});
+
+(() => {
+  const root = document.getElementById('cashflow-minimal-preview');
+  const template = document.getElementById('cashflow-minimal-product');
+  const names = {overview:'house',budget:'chart-column',operations:'arrow-right-left',payments:'calendar-days',savings:'heart',arrow:'chevron-right',sun:'sun',moon:'moon',close:'x',bag:'shopping-bag',plus:'plus',info:'info',shield:'shield-check',home:'house',check:'check'};
+  const iconBank = document.createElement('span');
+  iconBank.hidden = true;
+  iconBank.setAttribute('aria-hidden','true');
+  for (const [name,lucideName] of Object.entries(names)) {
+    const item=document.createElement('span');
+    item.dataset.productIcon=name;
+    const icon=document.createElement('i');
+    icon.dataset.lucide=lucideName;
+    item.append(icon);iconBank.append(item);
+  }
+  root.append(iconBank);
+  if(globalThis.lucide)lucide.createIcons({attrs:{width:20,height:20,'stroke-width':1.6}});
+  function productIcon(name,size=20){
+    const source=iconBank.querySelector('[data-product-icon="'+(names[name]?name:'bag')+'"] svg');
+    if(!source)return '';
+    const icon=source.cloneNode(true);icon.setAttribute('width',size);icon.setAttribute('height',size);icon.setAttribute('aria-hidden','true');
+    return icon.outerHTML;
+  }
+  function initialize(appRoot, host, bodyRoot) {
+
+'use strict';
+
+const icon=productIcon;
+const pages=[['overview','Огляд'],['budget','Бюджет'],['operations','Операції'],['payments','Платежі'],['savings','Заощадження']];
+const colors=['#647279','#87959b','#a2adb1','#b7c0c3','#cbd1d3','#dce1e2'];
+let categories=[{id:'food',name:'Продукти',weight:40},{id:'transport',name:'Транспорт',weight:20},{id:'home',name:'Дім',weight:15},{id:'health',name:'Здоровʼя',weight:10},{id:'leisure',name:'Дозвілля',weight:10},{id:'other',name:'Інше',weight:5}];
+let ownCents=280000;
+let page='overview',example='normal',credit=false,selectedDay=0,paymentTab='planned',opFilter='all',query='',toastTimer;
+const goals=[{name:'Фінансова подушка',description:'Спокій на непередбачувані обставини',current:4200000,target:10000000,icon:'shield'},{name:'Спільна подорож',description:'Нові місця й час разом',current:1850000,target:6000000,icon:'savings'}];
+const transactions=[{name:'Продуктова крамниця',category:'Продукти',date:'10 жовтня',amount:-84500,icon:'bag'},{name:'Міський транспорт',category:'Транспорт',date:'10 жовтня',amount:-8000,icon:'operations'},{name:'Кавʼярня біля дому',category:'Кафе',date:'9 жовтня',amount:-16000,icon:'sun'},{name:'Книжкова полиця',category:'Дозвілля',date:'8 жовтня',amount:-42000,icon:'bag'},{name:'Зарплата',category:'Дохід',date:'7 жовтня',amount:3000000,icon:'operations'},{name:'Інтернет',category:'Звʼязок',date:'6 жовтня',amount:-30000,icon:'home'}];
+const payments=[{name:'Житло й комунальні',detail:'Обовʼязкові витрати',day:'23',month:'жов',amount:1800000,status:'planned'},{name:'Платіж за кредитом',detail:'Погашення боргу',day:'25',month:'жов',amount:1600000,status:'planned'},{name:'Сімейні зобовʼязання',detail:'Обовʼязкові витрати',day:'02',month:'лис',amount:1000000,status:'planned'},{name:'Інтернет',detail:'Сплачено 6 жовтня',day:'06',month:'жов',amount:30000,status:'paid'}];
+const money=(cents,decimals=false)=>new Intl.NumberFormat('uk-UA',{minimumFractionDigits:decimals?2:0,maximumFractionDigits:decimals?2:0}).format(cents/100)+' ₴';
+const dateLabel=date=>new Intl.DateTimeFormat('uk-UA',{day:'numeric',month:'long',timeZone:'UTC'}).format(new Date(date+'T12:00:00Z'));
+function plan(){return CashflowForecast.planPeriod({start:'2026-10-21',end:'2026-11-06',ownCents,payoutCents:example==='rich'?6800000:example==='negative'?3900000:5000000,mandatoryCents:2800000,debtCents:1600000,minCents:1500000,categories,credit:credit?{requestedCents:620000,eligibleCents:620000,limitCents:620000,repaymentDate:'2026-11-06'}:undefined})}
+const head=(title,subtitle)=>`<div class="heading"><div class="pageintro"><h1>${title}</h1><p>${subtitle}</p></div><div class="period">${icon('payments',15)}21 жовтня — 6 листопада</div></div>`;
+const row=(t)=>`<div class="row"><div class="row-left"><div class="tile">${icon(t.icon,18)}</div><div><b>${t.name}</b><small>${t.category} · ${t.date}</small></div></div><span class="money ${t.amount>0?'positive':''}">${t.amount>0?'+':''}${money(t.amount)}</span></div>`;
+function paymentRows(items){return items.map(p=>`<div class="row paymentrow"><div class="row-left"><div class="datebox"><b>${p.day}</b>${p.month}</div><div><b>${p.name}</b><small>${p.detail}</small></div></div><span class="money">${money(p.amount)}</span></div>`).join('')}
+function exampleSelect(){return `<label class="demo-label">Приклад<select class="demo-select" id="example"><option value="normal" ${example==='normal'?'selected':''}>Базовий</option><option value="rich" ${example==='rich'?'selected':''}>Вищий дохід</option><option value="negative" ${example==='negative'?'selected':''}>Нестача коштів</option></select></label>`}
+function hero(p){return `<section class="cf-card hero"><div class="hero-top"><span class="eyebrow">Доступно після виплати</span><button class="iconbtn" data-action="formula" aria-label="Як розраховано доступну суму">${icon('info',17)}</button></div><div class="amount ${p.availableCents<0?'negative':''}" id="hero-value">${money(p.availableCents).replace(' ₴','')} <span>₴</span></div><p class="hero-period">21 жовтня — 5 листопада</p><p class="hero-description">Після резерву на обовʼязкові платежі та погашення боргу.</p>${p.gapCents>0?`<p class="hero-risk">До бюджету <b>${money(p.targetCents)}</b> бракує <b>${money(p.gapCents)}</b></p>`:''}<div class="hero-bottom"><div class="metric"><small>План на день</small><strong>${money(p.averageDailyCents,true)}</strong></div><div class="metric"><small><span class="dot"></span>До наступної виплати</small><strong>${p.days} днів</strong></div></div></section>`}
+function chartCard(p){return `<section class="cf-card forecast"><div class="cardhead"><h2>До наступної виплати</h2>${exampleSelect()}</div><p class="chart-caption">Залишок на щоденні витрати. Після резервування коштів на обовʼязкові платежі й погашення боргу.</p><div id="chart-holder"></div><div class="legend"><span><i style="background:var(--ink)"></i>Залишок</span>${categories.map((c,i)=>`<span><i style="background:${colors[i]}"></i>${c.name}</span>`).join('')}</div><div class="chartread inset"><div><small>Залишок наприкінці дня</small><strong id="day-remaining"></strong></div><label>Обрати день<select id="day-select">${p.schedule.map((d,i)=>`<option value="${i}" ${i===selectedDay?'selected':''}>${dateLabel(d.date)}</option>`).join('')}</select></label></div><div class="readcats" id="day-categories"></div><div class="space ${p.endingCents<0?'notice':'inset'}"><strong>${p.endingCents<0?'До 6 листопада бракуватиме '+money(-p.endingCents):'План повністю покрито'}</strong>${p.endingCents<0?' План щоденних витрат — '+money(p.targetCents)+' на весь період.':' Витрати розподілено до наступної виплати.'}</div></section>`}
+function overview(p){return head('Гроші під контролем','Один погляд на спільний план.')+`<div class="grid"><div class="maincol">${hero(p)}${chartCard(p)}<section class="cf-card recent"><div class="cardhead"><h2>Останні операції</h2><button class="textbtn" data-page="operations">Усі ${icon('arrow',13)}</button></div>${transactions.slice(0,3).map(row).join('')}</section></div><div class="sidecol"><section class="cf-card upcoming"><div class="cardhead"><h2>Найближчі платежі</h2><button class="textbtn" data-page="payments" aria-label="Усі платежі">${icon('arrow',16)}</button></div>${paymentRows(payments.slice(0,3))}<p class="footnote">${icon('shield',13)}44 000 ₴ уже враховано в резерві</p></section><section class="cf-card reserve"><div class="cardhead"><h2>Баланс періоду</h2>${icon('budget',18)}</div><div class="row"><span class="muted">Власні кошти</span><b>${money(ownCents)}</b></div><div class="row"><span class="muted">Очікувана виплата</span><b class="positive">+${money(example==='rich'?6800000:example==='negative'?3900000:5000000)}</b></div><div class="row"><span class="muted">Обовʼязкові витрати</span><b>−${money(2800000)}</b></div><div class="row"><span class="muted">Погашення боргу</span><b>−${money(1600000)}</b></div><button class="textbtn space" data-action="credit">${credit?'Переглянути сценарій із кредитом':'Розглянути кредитний сценарій'} ${icon('arrow',13)}</button></section><section class="cf-card overview-goal"><div class="cardhead"><h2>Фінансова подушка</h2>${icon('shield',20)}</div><p class="muted" style="font-size:12px">Резерв для впевненості в завтрашньому дні.</p><div class="goal-detail"><b>${money(goals[0].current)}</b><span class="muted">${Math.round(goals[0].current/goals[0].target*100)}%</span></div><div class="progress"><span style="width:${Math.min(100,goals[0].current/goals[0].target*100)}%"></span></div><button class="textbtn space" data-page="savings">До заощаджень ${icon('arrow',13)}</button></section></div></div>`}
+function budget(p){return head('Бюджет без зайвого','Кожній гривні — своє місце.')+`<div class="grid"><div class="maincol"><section class="cf-card"><div class="cardhead"><h2>Щоденні витрати</h2><button class="textbtn" data-action="edit">Змінити частки ${icon('arrow',13)}</button></div><div class="summary-pair"><div class="inset"><small>На весь період</small><strong>${money(p.targetCents)}</strong><small>21 жовтня — 5 листопада</small></div><div class="inset"><small>У середньому на день</small><strong>${money(p.averageDailyCents,true)}</strong><small>${p.days} днів у плані</small></div></div><div class="allocation">${p.categories.map((c,i)=>`<span style="width:${c.weight}%;background:${colors[i]}"></span>`).join('')}</div><div class="categories">${p.categories.map((c,i)=>`<div class="category"><span class="category-name"><i style="background:${colors[i]}"></i>${c.name}</span><span class="pct">${c.weight}%</span><b class="money">${money(c.totalCents)}</b></div>`).join('')}</div></section>${chartCard(p)}</div><div class="sidecol"><section class="cf-card"><div class="cardhead"><h2>Як працює план</h2>${icon('info',18)}</div><div class="stack"><p class="muted">Спочатку відкладаємо кошти на обовʼязкові платежі й борг.</p><p class="muted">Решту ділимо між категоріями. Мінімальний план на життя — 15 000 ₴.</p><div class="notice"><strong>${p.gapCents>0?'Непокрита частина: '+money(p.gapCents):'Дохід покриває план'}</strong>${p.gapCents>0?'Розподіл показує потребу, а не додаткові гроші на рахунку.':'Увесь доступний залишок розподілено на щоденні витрати.'}</div><button class="cf-btn secondary" data-action="formula">Переглянути розрахунок</button></div></section></div></div>`}
+function operationRows(){const items=transactions.filter(t=>(opFilter==='all'||(opFilter==='income'?t.amount>0:t.amount<0))&&(t.name+' '+t.category).toLocaleLowerCase('uk').includes(query.toLocaleLowerCase('uk')));return items.length?items.map(row).join(''):'<p class="empty">За цим запитом операцій немає.</p>'}
+function operations(){return head('Історія в деталях','Усі рухи коштів в одному місці.')+`<section class="cf-card"><div class="cardhead"><h2>Операції</h2><span class="badge">Демонстраційна історія</span></div><div class="searchbar"><input id="search" type="search" placeholder="Знайти операцію" aria-label="Пошук операцій" value=""><select id="op-filter" aria-label="Тип операцій"><option value="all">Усі</option><option value="expense">Витрати</option><option value="income">Доходи</option></select></div><div id="operation-rows">${operationRows()}</div></section>`}
+function paymentsPage(){return head('Нічого не пропустити','Важливі дати й зобовʼязання.')+`<div class="grid"><section class="cf-card"><div class="cardhead"><h2>Платежі</h2>${icon('payments',20)}</div><div class="tabs" aria-label="Статус платежів"><button data-payment="planned" class="${paymentTab==='planned'?'active':''}" aria-pressed="${paymentTab==='planned'}">Заплановані</button><button data-payment="paid" class="${paymentTab==='paid'?'active':''}" aria-pressed="${paymentTab==='paid'}">Сплачені</button></div>${paymentRows(payments.filter(p=>p.status===paymentTab))}${credit&&paymentTab==='planned'?paymentRows([{day:'06',month:'лис',name:'Новий кредитний борг',detail:'Окремо від поточного резерву',amount:plan().newDebtCents}]):''}</section><section class="cf-card"><div class="cardhead"><h2>Резерв на платежі</h2>${icon('shield',20)}</div><div class="goal-amount">44 000 ₴</div><p class="muted">28 000 ₴ на зобовʼязання та 16 000 ₴ на погашення поточного боргу.</p><div class="inset space"><small>Наступна виплата</small><h3 style="margin-top:4px">6 листопада</h3></div><p class="footnote">Ескіз показує графік. Гроші не списуються.</p></section></div>`}
+function savings(){return head('На те, що важливо','Невеликі кроки до спільних цілей.')+`<div class="goals-grid">${goals.map((g,i)=>`<section class="cf-card"><div class="goal-icon">${icon(g.icon,27)}</div><h2>${g.name}</h2><p class="muted" style="margin-top:6px">${g.description}</p><div class="goal-amount">${money(g.current)}</div><small>із ${money(g.target)}</small><div class="goal-detail"><span class="muted">Накопичено</span><b>${Math.round(g.current/g.target*100)}%</b></div><div class="progress"><span style="width:${Math.min(100,g.current/g.target*100)}%"></span></div><button class="cf-btn secondary wide space" data-goal="${i}">${icon('plus',17)}Додати внесок</button></section>`).join('')}</div><p class="footnote">${icon('info',14)}Демонстраційні внески діють до перезавантаження сторінки.</p>`}
+function render(){const p=plan();selectedDay=Math.min(selectedDay,p.days-1);appRoot.querySelector('.cf-nav').innerHTML=pages.map(([id,label])=>`<button data-page="${id}" aria-label="${label}" ${page===id?'aria-current="page"':''}>${icon(id)}<span>${label}</span></button>`).join('');appRoot.getElementById('breadcrumb').textContent=pages.find(x=>x[0]===page)[1];appRoot.getElementById('content').innerHTML=`<div class="view">${page==='overview'?overview(p):page==='budget'?budget(p):page==='operations'?operations():page==='payments'?paymentsPage():savings()}<footer class="footnote">Ескіз · вигадані дані · жовтень 2026</footer></div>`;if(chartObserver)chartObserver.disconnect();if(appRoot.getElementById('chart-holder'))drawChart(p);if(page==='operations'){appRoot.getElementById('search').value=query;appRoot.getElementById('op-filter').value=opFilter}updateThemeButton()}
+let chartObserver;
+function drawChart(p){
+const holder=appRoot.getElementById('chart-holder');if(!holder)return;
+const w=Math.max(230,Math.round(holder.getBoundingClientRect().width)),h=304,left=44,right=10,top=18,lineH=135,barTop=218,barH=57,plotW=w-left-right;
+const max=Math.max(p.availableCents,0),min=Math.min(p.endingCents,0),range=max-min||1,y=v=>top+(max-v)/range*lineH,x=i=>left+i/p.days*plotW;
+let body='';
+for(const v of [...new Set([max,0,min])])body+=`<line class="gridline" x1="${left}" x2="${w-right}" y1="${y(v)}" y2="${y(v)}"/><text x="${left-6}" y="${y(v)+4}" text-anchor="end">${new Intl.NumberFormat('uk-UA',{maximumFractionDigits:1}).format(v/100000)} тис.</text>`;
+const path=`M${x(0)},${y(p.availableCents)} `+p.schedule.map((d,i)=>`L${x(i+1)},${y(d.remainingCents)}`).join(' ');
+body+=`<path class="balance" d="${path}"/><text x="${left}" y="${top+lineH+23}">21 жов.</text><text x="${x(8)}" y="${top+lineH+23}" text-anchor="middle">29 жов.</text><text x="${w-right}" y="${top+lineH+23}" text-anchor="end">6 лис.</text><text x="0" y="${barTop-17}">Щоденні витрати · ${money(p.averageDailyCents,true)} / день</text>`;
+const dailyMax=Math.max(...p.schedule.map(d=>d.spendCents),1);
+body+=`<text x="${left-6}" y="${barTop+4}" text-anchor="end">${Math.round(dailyMax/100)}</text><text x="${left-6}" y="${barTop+barH+4}" text-anchor="end">0 ₴</text><line class="gridline" x1="${left}" x2="${w-right}" y1="${barTop+barH}" y2="${barTop+barH}"/>`;
+p.schedule.forEach((d,i)=>{let cum=0;d.byCategory.forEach((c,j)=>{const bh=c.amountCents/dailyMax*barH;body+=`<rect x="${x(i)+2}" y="${barTop+barH-cum-bh}" width="${Math.max(2,plotW/p.days-4)}" height="${bh}" fill="${colors[j]}"/>`;cum+=bh})});
+body+=`<line id="chart-cursor" x1="${x(selectedDay+1)}" x2="${x(selectedDay+1)}" y1="${top}" y2="${top+lineH}" stroke="var(--muted)" stroke-dasharray="3 4"/><circle id="chart-point" cx="${x(selectedDay+1)}" cy="${y(p.schedule[selectedDay].remainingCents)}" r="4" fill="var(--cf-card)" stroke="var(--ink)" stroke-width="2"/>`;
+holder.innerHTML=`<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Прогноз залишку та щоденні витрати на окремих шкалах у гривнях">${body}</svg>`;
+const svg=holder.querySelector('.chart');svg.addEventListener('pointerdown',event=>{const r=svg.getBoundingClientRect();selectDay(Math.max(0,Math.min(p.days-1,Math.round(((event.clientX-r.left)/r.width*w-left)/plotW*p.days)-1)))});
+function selectDay(i){selectedDay=i;appRoot.getElementById('day-select').value=i;updateDay(p);appRoot.getElementById('chart-cursor').setAttribute('x1',x(i+1));appRoot.getElementById('chart-cursor').setAttribute('x2',x(i+1));appRoot.getElementById('chart-point').setAttribute('cx',x(i+1));appRoot.getElementById('chart-point').setAttribute('cy',y(p.schedule[i].remainingCents))}
+appRoot.getElementById('day-select').onchange=e=>selectDay(Number(e.target.value));updateDay(p);
+if(chartObserver)chartObserver.disconnect();chartObserver=new ResizeObserver(entries=>{if(Math.round(entries[0].contentRect.width)!==w)drawChart(plan())});chartObserver.observe(holder);
+}
+function updateDay(p){const d=p.schedule[selectedDay];appRoot.getElementById('day-remaining').textContent=money(d.remainingCents,true);appRoot.getElementById('day-remaining').className=d.remainingCents<0?'negative':'';appRoot.getElementById('day-categories').innerHTML=`<span><b>За день ${money(d.spendCents,true)}</b></span>`+d.byCategory.map(c=>`<span>${c.name} ${money(c.amountCents,true)}</span>`).join('')}
+function updateThemeButton(){const dark=host.dataset.theme==='dark';appRoot.getElementById('theme').innerHTML=icon(dark?'sun':'moon',18);appRoot.getElementById('theme').setAttribute('aria-label',dark?'Увімкнути світлу тему':'Увімкнути темну тему')}
+let restoreFocus;
+function openDialog(title,body){restoreFocus=appRoot.activeElement;const d=appRoot.getElementById('dialog');d.innerHTML=`<div class="cardhead"><h2 id="dialog-title">${title}</h2><button class="iconbtn" data-action="close" aria-label="Закрити діалог">${icon('close',18)}</button></div>${body}`;d.showModal()}
+appRoot.getElementById('dialog').addEventListener('close',()=>{if(restoreFocus&&restoreFocus.isConnected)restoreFocus.focus()});
+function showFormula(){const p=plan();openDialog('Звідки ця сума',`<p>План на 21 жовтня — 5 листопада. Наступна виплата — 6 листопада.</p><div class="row"><span>Власні кошти</span><b>${money(ownCents)}</b></div><div class="row"><span>Очікувана виплата</span><b class="positive">+${money(example==='rich'?6800000:example==='negative'?3900000:5000000)}</b></div><div class="row"><span>Обовʼязкові платежі</span><b>−${money(2800000)}</b></div><div class="row"><span>Погашення боргу</span><b>−${money(1600000)}</b></div><div class="row"><b>Доступно після виплати</b><b>${money(p.baseAvailableCents)}</b></div>${credit?`<div class="row"><span>Кредитний сценарій</span><b>+${money(p.transferCents)}</b></div>`:''}<div class="inset space"><div class="row"><span>План на ${p.days} днів</span><b>${money(p.targetCents)}</b></div><div class="row"><span>Непокрита частина</span><b class="risk">${money(p.gapCents)}</b></div></div><p class="space">Залишок на картках може відрізнятися: тут кошти на платежі вже зарезервовано.</p>`)}
+function showCredit(){const p=plan();openDialog('Сценарій із кредитом',`<p>Перевірте, як змінився б план за використання кредитних коштів. Жодних переказів не буде.</p><div class="row"><span>До щоденного бюджету</span><b>+${money(Math.min(620000,p.gapCents+p.transferCents))}</b></div><div class="row"><span>Новий борг</span><b>${money(Math.min(620000,p.gapCents+p.transferCents))}</b></div><div class="row"><span>Дата погашення</span><b>6 листопада</b></div><div class="notice space"><strong>Кредит потрібно повернути</strong>Новий борг не входить у поточний резерв 16 000 ₴. Його слід врахувати в наступному періоді.</div><div class="dialogfooter"><button class="cf-btn secondary" data-action="credit-off">Без кредиту</button><button class="cf-btn" data-action="credit-on">Показати сценарій</button></div>`)}
+function showEdit(){openDialog('Частки щоденного бюджету',`<p>Розподіліть 100% між категоріями. Сума бюджету не зміниться.</p><form id="weights-form">${categories.map(c=>`<div class="edit-row"><label for="weight-${c.id}">${c.name}</label><input id="weight-${c.id}" name="${c.id}" type="number" min="1" max="100" step="1" required value="${c.weight}" aria-label="${c.name}, частка у відсотках"><span>%</span></div>`).join('')}<div class="error" id="weights-error" role="alert"></div><button class="cf-btn wide" type="submit">Застосувати частки</button></form>`)}
+function showGoal(i){const g=goals[i];openDialog('Внесок: '+g.name,`<p>Демонстраційний внесок із власних коштів. Зараз доступно ${money(ownCents)}. Сума зменшить власний залишок і збільшить заощадження.</p><form id="goal-form" data-index="${i}"><div class="edit-row"><label for="contribution">Сума, ₴</label><input id="contribution" type="number" min="0.01" max="${Math.min(ownCents,g.target-g.current)/100}" step="0.01" required placeholder="500"></div><div id="goal-error" class="error" role="alert"></div><button class="cf-btn wide" type="submit">Додати демовнесок</button></form>`)}
+function toast(text){appRoot.getElementById('toast').textContent=text;clearTimeout(toastTimer);toastTimer=setTimeout(()=>appRoot.getElementById('toast').textContent='',3500)}
+appRoot.addEventListener('click',event=>{const b=event.target.closest('button');if(!b)return;if(b.dataset.page){page=b.dataset.page;render();void 0;return}if(b.id==='theme'){host.dataset.theme=host.dataset.theme==='light'?'dark':'light';updateThemeButton();return}if(b.dataset.payment){paymentTab=b.dataset.payment;render();return}if(b.dataset.goal!==undefined){showGoal(Number(b.dataset.goal));return}const a=b.dataset.action;if(a==='formula')showFormula();if(a==='credit')showCredit();if(a==='edit')showEdit();if(a==='close')appRoot.getElementById('dialog').close();if(a==='credit-on'||a==='credit-off'){credit=a==='credit-on';appRoot.getElementById('dialog').close();render();appRoot.querySelector('[data-action=credit]')?.focus();toast(credit?'Сценарій увімкнено. Реальних переказів немає.':'Повернули план без кредиту.')}});
+appRoot.addEventListener('change',event=>{if(event.target.id==='example'){example=event.target.value;credit=false;render()}if(event.target.id==='op-filter'){opFilter=event.target.value;appRoot.getElementById('operation-rows').innerHTML=operationRows()}});
+appRoot.addEventListener('input',event=>{if(event.target.id==='search'){query=event.target.value;appRoot.getElementById('operation-rows').innerHTML=operationRows()}if(event.target.closest('#weights-form')){const total=[...appRoot.querySelectorAll('#weights-form input')].reduce((s,x)=>s+Number(x.value),0);appRoot.getElementById('weights-error').textContent=total===100?'':`Разом ${total}%. Потрібно 100%.`}});
+appRoot.addEventListener('submit',event=>{if(event.target.id==='weights-form'){event.preventDefault();const next=categories.map(c=>({...c,weight:Number(appRoot.getElementById('weight-'+c.id).value)}));if(next.some(c=>!Number.isInteger(c.weight)||c.weight<=0)||next.reduce((s,c)=>s+c.weight,0)!==100){appRoot.getElementById('weights-error').textContent='Частки мають бути додатними цілими числами й разом складати 100%.';return}categories=next;appRoot.getElementById('dialog').close();render();appRoot.querySelector('[data-action=edit]')?.focus();toast('Частки застосовано до демонстраційного плану.')}if(event.target.id==='goal-form'){event.preventDefault();const g=goals[Number(event.target.dataset.index)],amount=Math.round(Number(appRoot.getElementById('contribution').value)*100);if(!Number.isFinite(amount)||amount<=0||amount>Math.min(ownCents,g.target-g.current)){appRoot.getElementById('goal-error').textContent='Укажіть додатну суму в межах власних коштів і залишку до цілі.';return}g.current+=amount;ownCents-=amount;appRoot.getElementById('dialog').close();render();appRoot.querySelector('[data-goal=\"'+event.target.dataset.index+'\"]')?.focus();toast('Демонстраційний внесок додано.')}});
+render();
+
+    return render;
+  }
+  const refreshers=[];
+  for (const id of ['cashflow-minimal-desktop', 'cashflow-minimal-phone']) {
+    const host = root.querySelector('#' + id);
+    const appRoot = host.attachShadow({mode:'open'});
+    appRoot.append(template.content.cloneNode(true));
+    const bodyRoot=appRoot.querySelector('.cf-preview-body');
+    bodyRoot.append(appRoot.querySelector('.sidebar'));
+    refreshers.push(initialize(appRoot, host, bodyRoot));
+    if(globalThis.Tweak){
+      const state={radius:24};
+      const tweak=new Tweak({container:host,onChange:()=>host.style.setProperty('--cf-preview-radius',state.radius+'px')});
+      tweak.addSlider(state,'radius',{label:'Заокруглення поверхонь',min:16,max:30,unit:'px'});
+    }
+  }
+  // Runtime може вставити піктограми після першого виконання фрагмента.
+  const iconObserver=new MutationObserver(()=>{
+    if(iconBank.querySelectorAll('svg').length===Object.keys(names).length){
+      iconObserver.disconnect();refreshers.forEach(refresh=>refresh());
+    }
+  });
+  if(iconBank.querySelectorAll('svg').length<Object.keys(names).length)
+    iconObserver.observe(iconBank,{childList:true,subtree:true});
+})();
+</script>

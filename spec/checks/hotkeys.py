@@ -1,4 +1,6 @@
 # Гарячі клавіші на ПК: N, Esc, S, T, ?, і поле вводу їх не віддає
+import re
+
 from helpers import check, dialog, go_tab
 
 ADD = '.sheet:has-text("Нова транзакція")'
@@ -63,10 +65,11 @@ def tour(page):
 
 
 def field_keeps_keys(page):
-    go_tab(page, 4)
-    # поле «Що як» на ПК-Цілях (налаштування % накопичень тепер у вікні «Налаштувати накопичення»)
-    inp = page.locator('input[type=text][aria-label="Відкладати більше на місяць"]')
-    check(inp.count() == 1, 'на екрані Цілі немає поля «Відкладати більше на місяць»')
+    # поле пошуку на ПК-Операціях (v142: поле «Що як» на Заощадженнях прибрано разом із прогнозом строків,
+    # docs/redesign/projection-contract.md); цифри й літери в полі не перемикають екран і не відкривають вікон
+    go_tab(page, 2)
+    inp = page.locator('.content input[type=search][aria-label="Пошук операцій"]')
+    check(inp.count() == 1, 'на екрані Операції немає поля «Пошук операцій»')
     inp.click()
     inp.press('End')
     before = inp.input_value()
@@ -74,11 +77,11 @@ def field_keeps_keys(page):
     for k in ('Digit1', 'n', 's', 't'):
         page.keyboard.press(k)
     page.wait_for_timeout(300)
-    check(page.inner_text('.dtitle h1').strip() == 'Цілі', 'клавіша 1 у полі перемкнула екран')
+    check(page.inner_text('.dtitle h1').strip() == 'Операції', 'клавіша 1 у полі перемкнула екран')
     check(page.locator(ADD).count() == 0 and dialog(page, 'Налаштування').count() == 0 and page.locator('.set-page').count() == 0,
           'N або S у полі відкрили вікно')
     check(page.evaluate("localStorage.getItem('theme')") == theme0, 'T у полі змінила тему')
-    check(inp.input_value() != before and '1' in inp.input_value(), f'цифра не потрапила в поле: {inp.input_value()!r}')
+    check(inp.input_value() == before + '1nst', f'символи не потрапили в поле: {inp.input_value()!r}')
 
 
 def form_keys(page):
@@ -126,38 +129,51 @@ def form_keys(page):
     check(page.locator(ADD).count() == 0, 'Esc не закрив форму')
 
 
+# найближчий предок із власною вертикальною прокруткою (або документ): колесо над повзунком не має його прокрутити
+SCROLLER = """e=>{for(let x=e.parentElement;x;x=x.parentElement){const o=getComputedStyle(x).overflowY;if((o==='auto'||o==='scroll')&&x.scrollHeight>x.clientHeight)return x.scrollTop}return document.scrollingElement.scrollTop}"""
+
+
 def wheel_and_arrows(page):
-    go_tab(page, 4)
-    inp = page.locator('input[type=text][aria-label="Відкладати більше на місяць"]')
-    rng = page.locator('input[type=range][aria-label="Відкладати більше на місяць: повзунок"]')
-    check(rng.count() == 1, 'немає повзунка «Що як»')
+    # NumField «Ставка на місяць» на сторінці налаштувань (v142: повзунок «Що як» прибрано разом із прогнозом строків)
+    page.keyboard.press('s')
+    page.wait_for_timeout(400)
+    page.locator('.set-page nav button', has_text='Зарплата').first.click()
+    page.wait_for_timeout(300)
+    inp = page.locator('.set-page input[type=text][aria-label="Ставка на місяць"]')
+    rng = page.locator('.set-page input[type=range][aria-label="Ставка на місяць: повзунок"]')
+    check(inp.count() == 1, 'немає поля «Ставка на місяць»')
+    check(rng.count() == 1, 'немає повзунка «Ставка на місяць»')
     step = float(rng.get_attribute('step') or 1)
-    v0 = float(inp.input_value())
+    num = lambda: float(re.sub(r'\s', '', inp.input_value()).replace(',', '.'))
+    v0 = num()
     rng.scroll_into_view_if_needed()
     rng.hover()
-    y0 = page.evaluate('scrollY')
+    y0 = rng.evaluate(SCROLLER)
     page.mouse.wheel(0, -100)
     page.wait_for_timeout(200)
-    v1 = float(inp.input_value())
+    v1 = num()
     check(v1 == v0 + step, f'колесо вгору над повзунком: {v0} -> {v1}, крок {step}')
-    check(page.evaluate('scrollY') == y0, 'колесо над повзунком прокрутило сторінку')
+    check(rng.evaluate(SCROLLER) == y0, 'колесо над повзунком прокрутило сторінку')
     page.mouse.wheel(0, 100)
     page.wait_for_timeout(200)
-    check(float(inp.input_value()) == v0, 'колесо вниз не повернуло значення')
-    # поза повзунком колесо значення не міняє
-    page.mouse.move(700, 120)
+    check(num() == v0, 'колесо вниз не повернуло значення')
+    # поза повзунком (над заголовком сторінки) колесо значення не міняє
+    hb = page.locator('.dtitle h1').bounding_box()
+    rb = rng.bounding_box()
+    check(hb and rb and (hb['y'] + hb['height'] <= rb['y'] or hb['x'] + hb['width'] <= rb['x']), 'заголовок перекривається з повзунком')
+    page.mouse.move(hb['x'] + hb['width'] / 2, hb['y'] + hb['height'] / 2)
     page.mouse.wheel(0, -100)
     page.wait_for_timeout(200)
-    check(float(inp.input_value()) == v0, 'колесо поза повзунком змінило значення')
+    check(num() == v0, 'колесо поза повзунком змінило значення')
     # ↑/↓ у текстовому полі NumField: крок, з Shift більше
     inp.click()
     inp.press('ArrowUp')
     page.wait_for_timeout(150)
-    check(float(inp.input_value()) == v0 + step, f'↑ у полі: {inp.input_value()}')
+    check(num() == v0 + step, f'↑ у полі: {inp.input_value()}')
     inp.press('ArrowDown')
     inp.press('Shift+ArrowUp')
     page.wait_for_timeout(150)
-    big = float(inp.input_value()) - v0
+    big = num() - v0
     check(big >= 100 and big >= 10 * step, f'Shift+↑ змінив лише на {big}')
 
 

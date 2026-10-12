@@ -1,0 +1,76 @@
+<div id="cashflow-minimal-preview" class="viz-carousel" aria-label="Сімейний Кешфлоу: дизайн для компʼютера й телефона" data-previous-label="Попередній вигляд" data-next-label="Наступний вигляд">
+  <section data-variant="Компʼютер" aria-label="Компʼютер">
+    <div style="container:cashflow-stage / inline-size;width:100%"><div id="cashflow-minimal-desktop" data-theme="light"></div></div>
+  </section>
+  <section data-variant="Телефон" aria-label="Телефон" hidden>
+    <div class="viz-dotted-background"><div style="container:cashflow-stage / inline-size;max-width:390px;margin:auto"><div id="cashflow-minimal-phone" data-theme="light"></div></div></div>
+  </section>
+</div>
+<template id="cashflow-minimal-product">
+  <style>
+/* PRODUCT_CSS */
+  :host{display:block;position:relative;min-width:0}
+  .cf-preview-body{position:relative;min-width:0;min-height:0}
+  .cf-preview-body:before{position:absolute}
+  .sidebar{position:absolute}
+  .shell{min-height:0}
+  .cf-card{border-radius:var(--cf-preview-radius,24px)}
+  @container cashflow-stage (max-width:679px){
+    .sidebar{position:sticky;inset:auto;bottom:0;max-width:100%}
+    main{padding-bottom:24px}
+  }
+  </style>
+  <div class="cf-preview-body"><!-- PRODUCT_MARKUP --></div>
+</template>
+<script>
+/* FORECAST_MODEL */
+(() => {
+  const root = document.getElementById('cashflow-minimal-preview');
+  const template = document.getElementById('cashflow-minimal-product');
+  const names = {overview:'house',budget:'chart-column',operations:'arrow-right-left',payments:'calendar-days',savings:'heart',arrow:'chevron-right',sun:'sun',moon:'moon',close:'x',bag:'shopping-bag',plus:'plus',info:'info',shield:'shield-check',home:'house',check:'check'};
+  const iconBank = document.createElement('span');
+  iconBank.hidden = true;
+  iconBank.setAttribute('aria-hidden','true');
+  for (const [name,lucideName] of Object.entries(names)) {
+    const item=document.createElement('span');
+    item.dataset.productIcon=name;
+    const icon=document.createElement('i');
+    icon.dataset.lucide=lucideName;
+    item.append(icon);iconBank.append(item);
+  }
+  root.append(iconBank);
+  if(globalThis.lucide)lucide.createIcons({attrs:{width:20,height:20,'stroke-width':1.6}});
+  function productIcon(name,size=20){
+    const source=iconBank.querySelector('[data-product-icon="'+(names[name]?name:'bag')+'"] svg');
+    if(!source)return '';
+    const icon=source.cloneNode(true);icon.setAttribute('width',size);icon.setAttribute('height',size);icon.setAttribute('aria-hidden','true');
+    return icon.outerHTML;
+  }
+  function initialize(appRoot, host, bodyRoot) {
+/* PRODUCT_SCRIPT */
+    return render;
+  }
+  const refreshers=[];
+  for (const id of ['cashflow-minimal-desktop', 'cashflow-minimal-phone']) {
+    const host = root.querySelector('#' + id);
+    const appRoot = host.attachShadow({mode:'open'});
+    appRoot.append(template.content.cloneNode(true));
+    const bodyRoot=appRoot.querySelector('.cf-preview-body');
+    bodyRoot.append(appRoot.querySelector('.sidebar'));
+    refreshers.push(initialize(appRoot, host, bodyRoot));
+    if(globalThis.Tweak){
+      const state={radius:24};
+      const tweak=new Tweak({container:host,onChange:()=>host.style.setProperty('--cf-preview-radius',state.radius+'px')});
+      tweak.addSlider(state,'radius',{label:'Заокруглення поверхонь',min:16,max:30,unit:'px'});
+    }
+  }
+  // Runtime може вставити піктограми після першого виконання фрагмента.
+  const iconObserver=new MutationObserver(()=>{
+    if(iconBank.querySelectorAll('svg').length===Object.keys(names).length){
+      iconObserver.disconnect();refreshers.forEach(refresh=>refresh());
+    }
+  });
+  if(iconBank.querySelectorAll('svg').length<Object.keys(names).length)
+    iconObserver.observe(iconBank,{childList:true,subtree:true});
+})();
+</script>

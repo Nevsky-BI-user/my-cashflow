@@ -1,4 +1,6 @@
 # Карта цілей: рівна сітка на ПК (3 колонки) і стек на телефоні
+import re
+
 from helpers import check, dialog, go_tab, shot
 
 LAYOUT = r"""()=>{const g=document.querySelector('.board-d');if(!g)return null;return [...g.children].map(e=>{const r=e.getBoundingClientRect();
@@ -68,15 +70,19 @@ def delete_one(page):
 
 
 def columns(page):
-    # ПК-Цілі: ліворуч карта і горизонт, праворуч «Що як», історія, фактичні накопичення; між колонками 24px
+    # ПК-Заощадження v142: ліворуч карта цілей, праворуч фактичні накопичення; між колонками 12-14px.
+    # «Горизонт подій», «Що як» та «Історія накопичень» прибрано свідомо: це прогноз строків зі старої
+    # формули надлишку (docs/redesign/projection-contract.md, розділ «Заощадження»)
     main = page.locator('.goals-main').inner_text().lower()
     side = page.locator('.goals-side').inner_text().lower()
     check(page.locator('.goals-main .board-d').count() == 1, 'карта цілей не в лівій колонці')
-    check('горизонт подій' in main and 'горизонт подій' not in side, '«Горизонт подій» не в лівій колонці')
-    for t in ('Що як', 'Історія накопичень', 'Фактичні накопичення'):
-        check(t.lower() in side and t.lower() not in main, f'«{t}» не в правій колонці')
+    check('фактичні накопичення' in side and 'фактичні накопичення' not in main, '«Фактичні накопичення» не в правій колонці')
+    page_txt = page.locator('.p-goals').inner_text().lower()
+    for t in ('Горизонт подій', 'Що як', 'Історія накопичень'):
+        # межі слова: «що якщо» в інших текстах не рахується
+        check(not re.search(r'\b' + t.lower() + r'\b', page_txt), f'на екрані лишився прогноз строків «{t}»')
     gap = page.evaluate("getComputedStyle(document.querySelector('.goals-cols')).columnGap")
-    check(gap == '24px', f'проміжок між колонками {gap}')
+    check(12 <= float(gap.removesuffix('px')) <= 14, f'проміжок між колонками {gap}')
 
 
 def desktop(page):
