@@ -110,13 +110,29 @@ export function balanceChartSvg(s: BalanceSeries): ChartModel {
   const tY = above ? todayXY[1] - 52 : todayXY[1] + 46;
   out.push(text(tX, tY, sameAsToday ? 'Сьогодні, мінімум' : 'Сьогодні', { size: 22, fill: C.muted, anchor: 'middle', halo: true }));
   out.push(text(tX, tY + 30, money(s.today.cents), { size: 30, weight: 600, fill: s.today.cents < 0 ? C.neg : C.text, anchor: 'middle', halo: true }));
+  // Кожна виплата це локальний пік: число над точкою (або під нею), якщо не налазить на вже підписані сьогодні, мін і макс
+  const busy: [number, number][] = [[tX, tY + 15]];
+  if (!sameAsToday) busy.push([clampX(minXY[0], 230), minXY[1] + 78 < T + ph + 4 ? minXY[1] + 42 : minXY[1] - 52]);
+  if (s.max.date !== s.today.date && s.max.date !== s.min.date) busy.push([clampX(maxXY[0], 230), maxXY[1] - 40 > T - 10 ? maxXY[1] - 24 : maxXY[1] + 42]);
+  for (const p of s.payouts) {
+    if (p.date === s.today.date || p.date === s.min.date || p.date === s.max.date) continue;
+    const px = clampX(X(p.date), 230), py = Y(p.cents);
+    const spot = [py - 24, py + 42].filter((y) => y > T - 10 && y < T + ph + 4)
+      .find((y) => busy.every(([bx, by]) => Math.abs(bx - px) > 210 || Math.abs(by - y) > 40));
+    if (spot == null) continue;
+    busy.push([px, spot]);
+    out.push(text(px, spot, money(p.cents), { size: 28, weight: 600, fill: C.max, anchor: 'middle', halo: true }));
+  }
   out.push('</svg>');
   return { svg: out.join(''), todayXY, minXY, maxXY, yZero };
 }
 
 // ---------- Кільце категорій ----------
-const PALETTE = ['#6366f1', '#14b8a6', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#84cc16', '#f97316', '#64748b', '#0ea5e9'];
-export type DonutSeg = BudgetRow & { share: number; pct: number; color: string };
+// Насичені градієнтні пари в дусі монобанку (від, до); колір категорії з БД пастельний, тому тут не береться
+const GRADS: [string, string][] = [['#7c3aed', '#c026d3'], ['#06b6d4', '#3b82f6'], ['#f97316', '#f43f5e'], ['#10b981', '#14b8a6'],
+  ['#f59e0b', '#facc15'], ['#ec4899', '#f472b6'], ['#3b82f6', '#6366f1'], ['#84cc16', '#22c55e'], ['#0ea5e9', '#22d3ee']];
+const GRAD_OTHER: [string, string] = ['#64748b', '#94a3b8'];
+export type DonutSeg = BudgetRow & { share: number; pct: number; color: string; grad: [string, string] };
 
 // Як budDonutData застосунку: категорії з фактом, дрібні (менше 3%) зливаються в «Інші», якщо їх дві й більше
 export function donutSegments(rows: BudgetRow[]): { total: number; segs: DonutSeg[] } {
@@ -132,13 +148,10 @@ export function donutSegments(rows: BudgetRow[]): { total: number; segs: DonutSe
   const raw = base.map((x) => x.fact / total * 100), fl = raw.map(Math.floor);
   let left = 100 - fl.reduce((n, v) => n + v, 0);
   raw.map((v, i) => [v - fl[i], i]).sort((a, b) => b[0] - a[0]).forEach((q) => { if (left > 0) { fl[q[1]]++; left--; } });
-  const used = new Set<string>();
+  let k = 0;
   const segs = base.map((x, i) => {
-    let color = /^#[0-9a-f]{6}$/i.test(String(x.color || '')) && !used.has(String(x.color).toLowerCase()) ? String(x.color) : '';
-    if (x.id === '__other' || x.id === '__none') color = '#a0a6b8';
-    if (!color) color = PALETTE.find((p) => !used.has(p)) || PALETTE[i % PALETTE.length];
-    used.add(color.toLowerCase());
-    return { ...x, share: x.fact / total, pct: fl[i], color };
+    const grad = x.id === '__other' || x.id === '__none' ? GRAD_OTHER : GRADS[k++ % GRADS.length];
+    return { ...x, share: x.fact / total, pct: fl[i], color: grad[0], grad };
   });
   return { total, segs };
 }
@@ -149,20 +162,21 @@ export function donutSvg(m: BudgetModel): string {
   const out: string[] = [`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`,
     `<rect width="${W}" height="${H}" fill="${C.bg}"/>`, `<rect x="20" y="20" width="${W - 40}" height="${H - 40}" rx="28" fill="${C.card}"/>`,
     text(48, 80, `Витрати за категоріями, ${day(m.start)}-${day(m.end)}`, { size: 32, weight: 600 })];
+  out.push('<defs>' + segs.map((s, i) => `<linearGradient id="g${i}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${s.grad[0]}"/><stop offset="1" stop-color="${s.grad[1]}"/></linearGradient>`).join('') + '</defs>');
   if (!segs.length) {
     out.push(`<circle cx="${cx}" cy="${cy}" r="${(Ro + Ri) / 2}" fill="none" stroke="${C.grid}" stroke-width="${Ro - Ri}"/>`);
     out.push(text(cx, cy + 10, 'Витрат ще немає', { size: 28, fill: C.muted, anchor: 'middle' }));
   } else if (segs.length === 1) {
-    out.push(`<circle cx="${cx}" cy="${cy}" r="${(Ro + Ri) / 2}" fill="none" stroke="${segs[0].color}" stroke-width="${Ro - Ri}"/>`);
+    out.push(`<circle cx="${cx}" cy="${cy}" r="${(Ro + Ri) / 2}" fill="none" stroke="url(#g0)" stroke-width="${Ro - Ri}"/>`);
   } else {
     const gap = 0.018;
     let a = -Math.PI / 2;
     const pt = (r: number, t: number) => `${r1(cx + r * Math.cos(t))} ${r1(cy + r * Math.sin(t))}`;
-    for (const s of segs) {
+    for (const [i, s] of segs.entries()) {
       const a0 = a + gap / 2, a1 = a + Math.max(s.share * Math.PI * 2 - gap / 2, gap);
       a += s.share * Math.PI * 2;
       const lg = a1 - a0 > Math.PI ? 1 : 0;
-      out.push(`<path d="M${pt(Ro, a0)} A${Ro} ${Ro} 0 ${lg} 1 ${pt(Ro, a1)} L${pt(Ri, a1)} A${Ri} ${Ri} 0 ${lg} 0 ${pt(Ri, a0)} Z" fill="${s.color}"/>`);
+      out.push(`<path d="M${pt(Ro, a0)} A${Ro} ${Ro} 0 ${lg} 1 ${pt(Ro, a1)} L${pt(Ri, a1)} A${Ri} ${Ri} 0 ${lg} 0 ${pt(Ri, a0)} Z" fill="url(#g${i})"/>`);
     }
   }
   out.push(text(cx, cy - 34, 'витрачено', { size: 24, fill: C.muted, anchor: 'middle' }));
@@ -171,12 +185,12 @@ export function donutSvg(m: BudgetModel): string {
   // легенда праворуч: до 9 рядків
   const lx = 600;
   let ly = 160;
-  for (const s of segs.slice(0, 9)) {
+  for (const [i, s] of segs.slice(0, 9).entries()) {
     const name = s.name.length > 20 ? s.name.slice(0, 19) + '…' : s.name;
-    out.push(`<rect x="${lx}" y="${ly - 22}" width="24" height="24" rx="7" fill="${s.color}"/>`);
+    out.push(`<rect x="${lx}" y="${ly - 22}" width="24" height="24" rx="7" fill="url(#g${i})"/>`);
     out.push(text(lx + 38, ly, name, { size: 25, weight: 600 }));
     out.push(text(W - 56, ly, `${s.pct}%`, { size: 25, weight: 600, fill: C.muted, anchor: 'end' }));
-    const note = s.noPlan ? 'без плану' : s.over ? `понад план ${money(s.plan)}` : `план ${money(s.plan)}`;
+    const note = s.noPlan ? 'без плану' : s.over ? `план ${money(s.plan)} · понад ${money(Math.round(s.fact - s.plan))}` : `план ${money(s.plan)}`;
     out.push(text(lx + 38, ly + 28, `${money(s.fact)} · ${note}`, { size: 21, fill: s.over ? C.neg : C.muted }));
     ly += 60;
   }

@@ -204,8 +204,13 @@ export function weekModel(pr: P, today: string): WeekModel {
     from: today, to, events, variableCents: days.reduce((n: number, d: P) => n + (d.variableCents || 0), 0),
     endBalanceCents: last ? last.closingCashCents - last.debtCents + shift : null, endCashCents: last ? last.closingCashCents : null,
     gap: neg ? { date: neg.date, cents: -neg.minCashCents } : null,
-    // Кожен день: щоденні витрати за бюджетом і баланс на кінець дня (сьогодні поточний, далі прогноз) за формулою застосунку
-    days: days.map((d: P) => ({ date: d.date, spendCents: d.variableCents || 0, balanceCents: d.closingCashCents - d.debtCents + shift })),
+    // Кожен день: усі витрати дня (щоденні за бюджетом + обовʼязкові платежі й комісії; погашення кредитки це переказ, не витрата)
+    // і баланс на кінець дня (сьогодні поточний, далі прогноз) за формулою застосунку
+    days: days.map((d: P) => ({
+      date: d.date, balanceCents: d.closingCashCents - d.debtCents + shift,
+      spendCents: (d.variableCents || 0) + events.filter((e: { date: string; kind: string; cents: number }) => e.date === d.date && (e.kind === 'mandatory' || e.kind === 'fee') && e.cents < 0)
+        .reduce((n: number, e: { cents: number }) => n - e.cents, 0),
+    })),
   };
 }
 
@@ -223,7 +228,8 @@ export function weekTable(m: WeekModel): string {
     return `${d.date === m.from ? '▸' : ' '}${wd} ${day(d.date)} ${uah(d.spendCents).padStart(7)} ${uah(d.balanceCents).padStart(9)}`;
   });
   if (!rows.length) return '';
-  return '<pre>' + [' День     Витрати    Баланс', ...rows].join('\n') + '</pre>';
+  const total = (m.days || []).reduce((n, d) => n + d.spendCents, 0);
+  return '<pre>' + [' День     Витрати    Баланс', ...rows, ` Разом    ${uah(total).padStart(7)}`].join('\n') + '</pre>';
 }
 
 // HTML (parse_mode HTML): таблиця днів, далі події тижня
@@ -231,11 +237,11 @@ export function formatWeek(m: WeekModel): string {
   const lines = [`📅 Тиждень ${day(m.from)}-${day(m.to)}`];
   const table = weekTable(m);
   if (table) lines.push('', 'Баланс на кінець дня: сьогодні поточний, далі прогноз, ₴', table);
+  // Під таблицею: які саме платежі, погашення й виплати в ці дні (щоденні вже в колонці й у «Разом»)
   if (m.events.length) {
     lines.push('');
     for (const e of m.events) lines.push(`${day(e.date)} · ${esc(e.name)}: ${signed(e.cents)}${e.conditional ? ' (умовно)' : ''}`);
-  } else lines.push('', 'Обовʼязкових платежів, погашень і виплат немає.');
-  if (m.variableCents > 0) lines.push('', `Щоденні витрати за бюджетом: ${money(m.variableCents)} за тиждень`);
+  }
   return lines.join('\n');
 }
 
