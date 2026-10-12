@@ -104,6 +104,15 @@ export function repayDate(month: string, now: string): string {
   return now&&s<now?now:s;
 }
 
+// v151: розподіл виплати за правилом власника; одна функція для рушія, плитки «Бюджет періоду», старту періоду і «За планом»
+// (вбудовується в index.html разом із financeProjection). У день погашення (виплата 21-го) спершу належне, далі максимум, лишаючи
+// 15 000 ₴, але не більше власні мінус резерв; A = власні − резерв − погашення; бюджет min(20 000, A), якщо A > 15 000, інакше 15 000.
+// Інша виплата (аванс): без погашення.
+export function payoutBudget(ownCents: number, reserveCents: number, debtCents: number, dueCents: number, repayDay: boolean): {repayCents: number; availableCents: number; targetCents: number} {
+  const free=ownCents-reserveCents,repayCents=repayDay?Math.min(Math.max(dueCents,Math.min(debtCents,Math.max(0,free-1500000))),free):0,availableCents=free-repayCents;
+  return {repayCents,availableCents,targetCents:availableCents>1500000?Math.min(2000000,availableCents):1500000};
+}
+
 // Канонічна проєкція: вхід у гривнях, вихід у копійках; без I/O та мутації входу.
 // Функція самодостатня, щоб автономний фронтенд міг вбудувати той самий алгоритм.
 export function financeProjection(data: NextPeriodInput, options: {asof: string; through: string; scenario?: {selections: {occurrenceId: string; accountId: string | number; amountCents: number}[]} | null}) {
@@ -164,7 +173,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   const cashCents=sum([...accounts.map(a=>a.balanceCents),adjustment]);
   // Борг усіх карток, і кредитних, і дебетових з боргом (як Mono з лімітом); кожен кошик має одну подію погашення.
   const creditDebtCents=sum(accounts.map(a=>a.debtCents));
-  const snapshot={positiveOwnCents,cashCents,unassignedAdjustmentCents:adjustment,creditDebtCents,accounts,warnings:[]};
+  const snapshot={positiveOwnCents,cashCents,unassignedAdjustmentCents:adjustment,creditDebtCents,accounts,warnings:[] as Record<string,any>[]};
   const cfg: Record<string,any>|null|undefined=data.salary;
   const valid=cfg&&[cfg.advance_day,cfg.salary_day,cfg.split_day].every(v=>Number.isInteger(Number(v))&&Number(v)>=1&&Number(v)<=31);
   const monthIndex=(s: string)=>Number(s.slice(0,4))*12+Number(s.slice(5,7))-1;
@@ -217,7 +226,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     for(const t of txs.filter(t=>String(t.account_id)===String(a.id)&&t.type==='expense'&&txDate(t).slice(0,7)===asof.slice(0,7)).sort((a,b)=>cmp(txDate(a),txDate(b))||cmp(String(a.created_at),String(b.created_at))||cents(a.amount)-cents(b.amount))){spent+=cents(t.amount);if(metOn==null&&spent>=cents(a.min_spend))metOn=txDate(t);}
     minSpend.push({accountId:a.id,month:asof.slice(0,7),spent:spent/100,min:cents(a.min_spend)/100,fee:cents(a.min_spend_fee)/100,left:Math.max(0,cents(a.min_spend)-spent)/100,...(metOn?{metOn}:{})});
   }
-  const order: Record<string,number>={payout:0,income:1,repay:2,mandatory:3,fee:4,variable:5};
+  const order: Record<string,number>={payout:0,income:1,arrears:2,repay:3,savings:4,mandatory:5,fee:6,variable:7};
   const compareEvents=(a: Record<string,any>,b: Record<string,any>)=>cmp(a.date,b.date)||order[a.kind]-order[b.kind]||cmp(a.id,b.id);
   const scenario: {selectedCents:number;newDebtCents:number;cashPlanCents:number;gapCents:number;repayments:Record<string,any>[];errors:string[]}|null=options.scenario?{selectedCents:0,newDebtCents:0,cashPlanCents:0,gapCents:0,repayments:[],errors:[]}:null;
   // Перевірка ліміту на дату вибраної події враховує попередні погашення та позики.
@@ -282,21 +291,87 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     const start=payoutDates.filter(d=>d<=asof).pop()||asof,actualVariableCents=sum(txs.filter(t=>t.type==='expense'&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start).map(t=>cents(t.amount))),mandatoryCentsNow=mandatory(asof,nextDate),available=safe(cashCents-mandatoryCentsNow),periodDays=distance(start,nextDate),leftDays=Math.max(0,distance(plus(asof,1),nextDate)),floorLeft=periodDays>0?Math.floor(1500000*leftDays/periodDays):0,freeLeft=Math.max(0,untilPayout?untilPayout.cents:0),remaining=leftDays>0?Math.max(floorLeft,freeLeft):0,target=actualVariableCents+remaining,caps=categories.map(c=>c.limitAbsCents==null?0:Math.max(0,c.limitAbsCents-sum(txs.filter(t=>t.type==='expense'&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start&&t.category_id!=null&&String(t.category_id)===c.id).map(t=>cents(t.amount))))),dist=distribution(remaining,plus(asof,1),nextDate,available,caps);
     currentPeriod={start,end:nextDate,actualVariableCents,targetCents:target,remainingTargetCents:remaining,periodDays,leftDays,dailyCents:leftDays>0?remaining/leftDays:0,futureSchedule:dist.schedule};
     periods.push({start,end:nextDate,basis:'current',openingCashCents:cashCents,payoutCents:0,mandatoryCents:mandatoryCentsNow,debtReserveCents:0,availableCents:available,targetCents:target,gapCents:Math.max(0,remaining-available),...dist});
-    // Обчислення періодів послідовне: знак залишку зберігається.
-    const futureDates=payoutDates.filter(d=>d>asof);
-    for(let i=0;i<futureDates.length-1&&futureDates[i]<=through;i++){
-      const start=futureDates[i],end=futureDates[i+1],opening=safe(cashCents+sum(events.filter(e=>e.date>=asof&&e.date<start).map(e=>e.cashDeltaCents))-sum(periods.flatMap(p=>p.schedule).filter(d=>d.date<start).map(d=>d.spendCents))),entries=between(start,end),payoutCents=sum(entries.filter(e=>e.kind==='payout').map(e=>e.amountCents)),mandatoryCents=mandatory(start,end),scheduledRepay=sum(entries.filter(e=>e.kind==='repay').map(e=>e.amountCents)),outstandingDebt=safe(creditDebtCents+sum(events.filter(e=>e.date<start).map(e=>e.debtDeltaCents))),newRepay=sum(entries.filter(e=>e.kind==='repay'&&e.id.startsWith('scenario-repay:')&&events.some(v=>v.funding==='credit'&&v.date>=start&&v.date<end&&e.id==='scenario-repay:'+v.occurrenceId+':'+String(v.accountId))).map(e=>e.amountCents)),debtReserveCents=outstandingDebt+newRepay,availableCents=safe(opening+sum(entries.map(e=>e.cashDeltaCents))+scheduledRepay-debtReserveCents),targetCents=i===0?nextPlan.targetCents:Math.max(1500000,availableCents);
-      periods.push({start,end,basis:i===0?'headline':'projected',openingCashCents:opening,payoutCents,mandatoryCents,debtReserveCents,availableCents,targetCents,gapCents:Math.max(0,targetCents-availableCents),...distribution(targetCents,start,end,availableCents)});
-    }
   }
-  if(scenario){const base=nextPlan?.baseAvailableCents??0;const gain=nextPlan?sum(events.filter(e=>e.funding==='credit'&&e.date>=nextPlan.start&&e.date<nextPlan.end).map(e=>e.amountCents))-sum(scenario.repayments.filter(e=>e.date>=nextPlan.start&&e.date<nextPlan.end).map(e=>e.amountCents)):0;scenario.cashPlanCents=safe(base+gain);scenario.gapCents=Math.max(0,(nextPlan?.targetCents??1500000)-scenario.cashPlanCents);}
+  // v151 (власник: «власні кошти не можуть бути мінусові»): послідовна симуляція від asof. Власні (дебетові й готівка) не нижче 0.
+  // Витрата понад вільні власні йде в борг: спершу Mono (рахунок з mono_account_id), далі інші картки з кредитним лімітом, кожна до свого ліміту.
+  // Обовʼязковий платіж лише з дебетової (credit_ok=false) і комісія кредиту не беруть: непокрите стає нестачею (попередження), яку гасить наступне надходження.
+  // Виплата в день погашення (repayDate попереднього місяця): резерв дебетових обовʼязкових до наступної виплати, погашення
+  // min(борг, max(0, власні − резерв − 15 000)), але не менше належного на цю дату (спершу належне, далі інші картки, далі Mono);
+  // A = власні − резерв − погашення; бюджет min(20 000, A), якщо A > 15 000, інакше 15 000; надлишок A − бюджет понад 10 000 іде в накопичення;
+  // готівка 3 000, решта на Mono і спершу гасить борг Mono. Інша виплата (аванс): без погашення, накопичень і переказу; бюджет за тим самим правилом.
+  for(let i=events.length-1;i>=0;i--)if(events[i].kind==='repay')events.splice(i,1);
+  const limitOf=(a: Record<string,any>)=>a.credit_limit==null?0:Math.max(0,cents(a.credit_limit));
+  const lenders=[...accounts.filter(a=>a.mono_account_id&&limitOf(a)>0),...accounts.filter(a=>!a.mono_account_id&&limitOf(a)>0)];
+  const book: Record<string,Record<string,number>>={};
+  for(const a of accounts){book[String(a.id)]={};for(const [m,v] of a.debt_months)book[String(a.id)][m]=(book[String(a.id)][m]||0)+cents(v);}
+  const debtOf=(a: Record<string,any>)=>sum(Object.values(book[String(a.id)]));
+  const debtAll=()=>sum(accounts.map(debtOf));
+  const prevMonth=(d: string)=>{const [y,m]=ym(monthIndex(d)-1);return date(y,m,1).slice(0,7);};
+  const debitOnly=(e: Record<string,any>)=>e.kind==='fee'||(e.kind==='mandatory'&&e.creditEligible!==true&&e.funding!=='credit');
+  const simEnd=hasPlan&&nextDate>through?nextDate:through;
+  const byDate: Record<string,Record<string,any>[]>={};
+  const put=(e: Record<string,any>)=>{(byDate[e.date]=byDate[e.date]||[]).push(e);};
   for(const p of periods)for(const d of p.schedule)for(const c of d.byCategory)if(c.amountCents>0)events.push(make('variable:'+d.date+':'+c.id,d.date,c.name,'variable',c.amountCents,{categoryId:c.id}));
-  const visible=events.filter(e=>e.date>=asof&&e.date<=through).sort(compareEvents);
-  let cash=cashCents,debt=creditDebtCents;const days=[];
-  for(let d=asof;d<=through;d=plus(d,1)){const opening=cash,today=visible.filter(e=>e.date===d),byCategory=[];let minimum=cash,variable=0;
-    for(const e of today){cash=safe(cash+e.cashDeltaCents);debt=safe(debt+e.debtDeltaCents);e.cashAfterCents=cash;e.debtAfterCents=debt;minimum=Math.min(minimum,cash);if(e.kind==='variable'){variable+=e.amountCents;byCategory.push({id:e.categoryId,name:e.name,amountCents:e.amountCents});}}
-    days.push({date:d,openingCashCents:opening,closingCashCents:cash,debtCents:debt,netCents:cash-debt,variableCents:variable,byCategory,minCashCents:minimum,shortfallCents:Math.max(0,-minimum),eventIds:today.map(e=>e.id)});
+  for(const e of events)if(e.date>=asof&&e.date<=simEnd)put(e);
+  const debitBetween=(start: string,end: string)=>sum(events.filter(e=>e.date>=start&&e.date<end&&debitOnly(e)).map(e=>e.amountCents));
+  // Старт: власні як у плитці (positiveOwnCents); мінусові залишки рахунків і мінусова поправка стають нестачею, яку гасить перше надходження
+  let own=positiveOwnCents,arrears=positiveOwnCents-cashCents;
+  let reserved=Math.min(own,nextDate?debitBetween(asof,nextDate):0);
+  const days=[];let head: Record<string,any>|null=null,debtRun=creditDebtCents;
+  // Погашення кошиків рахунку: належні (дата погашення не пізніше d) або всі за FIFO; повертає суми за місяцями
+  const repayFrom=(a: Record<string,any>,limit: number,d: string,onlyDue: boolean,out: Record<string,number>)=>{let left=limit;const b=book[String(a.id)];
+    for(const m of Object.keys(b).sort()){if(left<=0)break;if(b[m]<=0||(onlyDue&&repayDate(m,asof)>d))continue;const n=Math.min(left,b[m]);b[m]-=n;if(!b[m])delete b[m];left-=n;const k=String(a.id)+'|'+m;out[k]=(out[k]||0)+n;}
+    return limit-left;};
+  const dueOn=(d: string)=>sum(accounts.flatMap(a=>Object.entries(book[String(a.id)]).filter(([m])=>repayDate(m,asof)<=d).map(([,v])=>v)));
+  // Перше погашення кошика має id repay:<рахунок>:<місяць> (за ним шукає бот), наступні часткові: з датою в кінці
+  const usedRepay=new Set<string>();
+  const emitRepays=(d: string,out: Record<string,number>,list: Record<string,any>[])=>{for(const k of Object.keys(out).sort()){if(out[k]<=0)continue;const cut=k.lastIndexOf('|'),aid=k.slice(0,cut),m=k.slice(cut+1),a=accounts.find(v=>String(v.id)===aid)!,planned=repayDate(m,asof);
+    const base='repay:'+aid+':'+m,id=usedRepay.has(base)?base+':'+d:base;usedRepay.add(base);
+    const e=make(id,d,a.name||'Погашення кредитки','repay',out[k],{accountId:a.id,debtDeltaCents:-out[k],contractualDueDate:dueFor(m),plannedRepaymentDate:planned});events.push(e);list.push(e);}};
+  const borrow=(n: number,d: string)=>{let left=n;for(const a of lenders){if(left<=0)break;const k=Math.min(left,Math.max(0,limitOf(a)-debtOf(a)));if(k>0){const b=book[String(a.id)],m=d.slice(0,7);b[m]=(b[m]||0)+k;left-=k;}}return n-left;};
+  for(let d=asof;d<=simEnd;d=plus(d,1)){
+    const opening=own,openArrears=arrears,list: Record<string,any>[]=(byDate[d]||[]).slice().sort(compareEvents),gen: Record<string,any>[]=[];
+    for(const e of list)if(e.kind==='payout'||e.kind==='income'){own=safe(own+e.amountCents);e.cashDeltaCents=e.amountCents;e.debtDeltaCents=0;}
+    if(arrears>0&&own>0&&list.some(e=>e.kind==='payout'||e.kind==='income')){const n=Math.min(own,arrears);own-=n;arrears-=n;const e=make('arrears:'+d,d,'Сплата нестачі','arrears',n);events.push(e);gen.push(e);}
+    const payout=list.filter(e=>e.kind==='payout'),end=payoutDates.find(v=>v>d)||'';
+    if(payout.length&&end){
+      const repayDay=repayDate(prevMonth(d),'')===d,ownAt=own,reserve=Math.min(own,debitBetween(d,end)),out: Record<string,number>={};let repay=0,savings=0,cashOut=0,toMono=0,offset=0;
+      if(repayDay){let left=payoutBudget(own,reserve,debtAll(),dueOn(d),true).repayCents;
+        for(const a of accounts){if(left<=0)break;left-=repayFrom(a,left,d,true,out);}
+        for(const a of accounts.filter(a=>!a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}
+        for(const a of accounts.filter(a=>a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}
+        repay=sum(Object.values(out));}
+      const available=own-reserve-repay,target=payoutBudget(available,0,0,0,false).targetCents;
+      if(repayDay){savings=available-target>1000000?available-target:0;cashOut=Math.min(300000,Math.max(0,available-savings));toMono=Math.max(0,available-savings-cashOut);
+        let left=toMono;for(const a of accounts.filter(a=>a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}offset=toMono-left;}
+      own-=repay+offset+savings;
+      emitRepays(d,out,gen);
+      if(savings>0){const e=make('savings:'+d,d,'Накопичення','savings',savings);events.push(e);gen.push(e);}
+      reserved=reserve;
+      const rec: Record<string,any>={start:d,end,basis:head?'projected':'headline',openingCashCents:opening,payoutCents:sum(payout.map(e=>e.amountCents)),mandatoryCents:mandatory(d,end),debtReserveCents:repay+offset,availableCents:available,targetCents:target,gapCents:Math.max(0,target-available),ownCents:ownAt,reserveCents:reserve,repayCents:repay+offset,savingsCents:savings,cashOutCents:cashOut,toMonoCents:toMono,monoOffsetCents:offset,...distribution(target,d,end,available)};
+      if(!head)head=rec;
+      if(d<=through)periods.push(rec);
+      for(const s of rec.schedule)for(const c of s.byCategory)if(c.amountCents>0){const e=make('variable:'+s.date+':'+c.id,s.date,c.name,'variable',c.amountCents,{categoryId:c.id});events.push(e);if(s.date<=simEnd)put(e);}
+    }else{const due=dueOn(d);if(due>0){const out: Record<string,number>={};let left=Math.min(due,Math.max(0,own-reserved));for(const a of accounts){if(left<=0)break;left-=repayFrom(a,left,d,true,out);}const n=sum(Object.values(out));own-=n;emitRepays(d,out,gen);}}
+    for(const e of (byDate[d]||[]).filter(e=>e.date===d&&!list.includes(e)))list.push(e);
+    list.sort(compareEvents);
+    for(const e of list){if(e.kind==='payout'||e.kind==='income')continue;const x=e.amountCents;
+      if(e.funding==='credit'&&e.accountId!=null){const b=book[String(e.accountId)];b[d.slice(0,7)]=(b[d.slice(0,7)]||0)+x;e.cashDeltaCents=0;e.debtDeltaCents=x;continue;}
+      let fromOwn=0,borrowed=0,short=0;
+      if(debitOnly(e)){fromOwn=Math.min(own,x);reserved=Math.max(0,reserved-fromOwn);short=x-fromOwn;}
+      else{fromOwn=Math.min(Math.max(0,own-reserved),x);borrowed=borrow(x-fromOwn,d);const r=Math.min(own-fromOwn,x-fromOwn-borrowed);fromOwn+=r;reserved=Math.max(0,reserved-r);short=x-fromOwn-borrowed;}
+      own-=fromOwn;arrears+=short;e.cashDeltaCents=fromOwn?-fromOwn:0;e.debtDeltaCents=borrowed;
+      if(short>0){e.shortCents=short;if(d<=through&&e.kind!=='variable')snapshot.warnings.push({kind:'shortage',date:d,eventId:e.id,name:e.name,amountCents:x,shortCents:short});}
+    }
+    const all=[...list,...gen].sort(compareEvents);let cash=opening,debt=debtRun,owed=openArrears,minimum=opening,variable=0;const byCategory=[];
+    // arrearsAfterCents: нестача після події (росте на непокриту частину, гаситься подією arrears), щоб баланс після події = власні − борг − нестача
+    for(const e of all){cash=safe(cash+e.cashDeltaCents);debt=safe(debt+e.debtDeltaCents);owed=safe(owed+(e.kind==='arrears'?-e.amountCents:(e.shortCents||0)));e.cashAfterCents=cash;e.debtAfterCents=debt;e.arrearsAfterCents=owed;minimum=Math.min(minimum,cash);if(e.kind==='variable'){variable+=e.amountCents;byCategory.push({id:e.categoryId,name:e.name,amountCents:e.amountCents});}}
+    if(cash!==own||debt!==debtAll()||owed!==arrears)throw new RangeError('Projection state mismatch');debtRun=debt;
+    if(d<=through)days.push({date:d,openingCashCents:opening,closingCashCents:own,debtCents:debt,arrearsCents:arrears,netCents:own-debt-arrears,variableCents:variable,byCategory,minCashCents:minimum,shortfallCents:arrears,eventIds:all.map(e=>e.id)});
   }
+  if(nextPlan&&head)Object.assign(nextPlan,{baseAvailableCents:head.availableCents,targetCents:head.targetCents,gapCents:head.gapCents,averageDailyCents:head.targetCents/nextPlan.days,reserveCents:head.reserveCents,repayCents:head.repayCents,savingsCents:head.savingsCents,cashOutCents:head.cashOutCents,toMonoCents:head.toMonoCents,monoOffsetCents:head.monoOffsetCents,categories:head.categories,schedule:head.schedule});
+  if(scenario){const base=nextPlan?.baseAvailableCents??0;const gain=nextPlan?sum(events.filter(e=>e.funding==='credit'&&e.date>=nextPlan.start&&e.date<nextPlan.end).map(e=>e.amountCents))-sum(scenario.repayments.filter(e=>e.date>=nextPlan.start&&e.date<nextPlan.end).map(e=>e.amountCents)):0;scenario.cashPlanCents=safe(base+gain);scenario.gapCents=Math.max(0,(nextPlan?.targetCents??1500000)-scenario.cashPlanCents);}
+  const visible=events.filter(e=>e.date>=asof&&e.date<=through).sort(compareEvents);
   return {snapshot,nextPlan,reason:nextPlan?null:'no_next_payout',currentPeriod,untilPayout,periods,events:visible,days,scenario,minSpend};
 }
 

@@ -43,7 +43,9 @@ test('forecast continues today balance without a jump, also with a negative own 
   const acc=accounts();acc.push({id:2,name:'monobank',kind:'debit',mono_account_id:'m2',balance:bal,debt:0,balance_updated_at:stamp});
   const pr=financeProjection({accounts:acc,salary,fixed:[],credits:[],categories:[],transactions:[]},{asof:ASOF,through:'2027-01-10'});
   const d0=pr.days[0];assert.equal(d0.date,ASOF);
-  assert.equal(F.balanceAfterCents(pr,d0.closingCashCents,d0.debtCents),F.balanceNowCents(pr),'сьогодні без подій: прогноз = плитка');
+  assert.equal(F.balanceAfterCents(pr,d0.closingCashCents,d0.debtCents,d0.arrearsCents),F.balanceNowCents(pr),'сьогодні без подій: прогноз = плитка');
+  // v150: рушій стартує з власних, мінусовий рахунок стає нестачею; власні дня не мінусові
+  assert.equal(d0.closingCashCents,pr.snapshot.positiveOwnCents);assert.ok(pr.days.every(d=>d.closingCashCents>=0));
   if(bal<0)assert.notEqual(pr.snapshot.cashCents,pr.snapshot.positiveOwnCents,'фікстура з мінусовим рахунком');
   // погашення кредитки баланс не змінює: день погашення Привату 21.10 без змін від погашення
   const rep=pr.events.find(e=>e.kind==='repay'&&e.id.startsWith('repay:4:'));
@@ -51,25 +53,41 @@ test('forecast continues today balance without a jump, also with a negative own 
  }
 });
 
-// v148 «Бюджет періоду» на старт періоду (варіант А): власні на початок дня виплати + надходження цього дня − обовʼязкові періоду − борг кредиток на ту дату, не нижче 15 000 ₴
-test('period budget at period start: payout day income, mandatory paid inside the period still counted, debt at that date',async()=>{
- const financeProjection=await engine();
+// v148 «Бюджет періоду» на старт періоду: власні на початок дня виплати + надходження цього дня.
+// v151 (знахідка 2): далі той самий розподіл виплати, що в рушії (payoutBudget): резерв дебетових обовʼязкових періоду, у день погашення
+// (21-го) погашення спершу належного, далі максимум, лишаючи 15 000 ₴; A = власні − резерв − погашення; бюджет min(20 000, A), якщо A > 15 000,
+// інакше 15 000. Щоденні = Доступно / днів до кінця періоду включно з сьогодні (знахідка 4).
+const rule=a=>a>1500000?Math.min(2000000,a):1500000;
+test('period budget at period start: payout day income, debit-only mandatory reserved, repayment only on the 21st, engine rule 15/20',async()=>{
+ const E=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/budget.ts')).href),financeProjection=E.financeProjection;
  const lines=html.split(/\r?\n/),L=lines.find(l=>l.includes('const pbIso='));
  const pb=L.slice(L.indexOf('const pbIso='),L.indexOf('/*',L.indexOf('const pbIso=')));
- const G=new Function('financeProjection',[pb,...['pastOwnSeries','balShift','balanceNowCents','balancePast','periodBudgetStart'].map(line),'return {periodBudgetStart};'].join('\n'))(financeProjection);
+ const G=new Function('financeProjection','payoutBudget','repayDate',[pb,...['pastOwnSeries','balShift','balanceNowCents','balancePast','periodBudgetStart','perDayOf'].map(line),'return {periodBudgetStart};'].join('\n'))(financeProjection,E.payoutBudget,E.repayDate);
  const acc=accounts();acc[0].balance=60000;
  const fixed=[{id:'f1',name:'Інтернет',amount:300,day_of_month:8,type:'expense',active:true}];
  const credits=[{id:7,name:'Телефон',monthly_amount:4643,payment_day:12,start_year:2026,start_month:9,total_payments:12}];
+ // зарплата 06.10: погашення немає, борг кредиток бюджет не зменшує
  const txs=[tx(11,1,'income',51000,'2026-10-06'),{...tx(12,1,'expense',300,'2026-10-08'),fixed_id:'f1'},tx(13,3,'expense',1200,'2026-10-10')];
  const fi={accounts:acc,salary,fixed,credits,categories:[],transactions:txs};
  const pr=financeProjection(fi,{asof:ASOF,through:'2027-01-10'});
  assert.equal(pr.currentPeriod.start,'2026-10-06');
  const r=G.periodBudgetStart(pr,fi,txs,['1','3','4',''],['1',''],ASOF);
- const ownStart=6000000-5100000+30000,debtStart=3832700-120000,mand=30000+464300;
- assert.equal(r.own,ownStart,'власні на початок 06.10');assert.equal(r.income,5100000,'надходження 06.10');
- assert.equal(r.mandatory,mand,'обовʼязкові періоду, разом зі сплаченим 08.10');assert.equal(r.debt,debtStart,'борг кредиток на 06.10');
- assert.equal(r.raw,ownStart+5100000-mand-debtStart);assert.equal(r.budget,Math.max(1500000,r.raw));
- assert.equal(r.days,15);assert.equal(r.daily,Math.round(r.budget/15));assert.equal(r.avail,r.budget-pr.currentPeriod.actualVariableCents);
+ const ownStart=6000000-5100000+30000,debtStart=3832700-120000,reserve=30000+464300;
+ assert.equal(r.own,ownStart,'власні на початок 06.10');assert.equal(r.income,5100000,'надходження 06.10');assert.equal(r.ownAt,ownStart+5100000);
+ assert.equal(r.reserve,reserve,'резерв дебетових обовʼязкових періоду, разом зі сплаченим 08.10');assert.equal(r.debt,debtStart,'борг кредиток на 06.10');
+ assert.equal(r.repayDay,false);assert.equal(r.repay,0);assert.equal(r.A,r.ownAt-reserve);assert.equal(r.budget,rule(r.A));assert.equal(r.budget,2000000);
+ assert.equal(r.days,15);assert.equal(r.avail,r.budget-pr.currentPeriod.actualVariableCents);assert.equal(r.daily,Math.round(r.avail/9),'доступно / 9 днів 12.10-20.10');
+ // аванс 21.10 (день погашення): належне = борг на 20.10 мінус кредитні витрати жовтня до 20.10; гаситься максимум, лишаючи 15 000
+ const acc2=accounts().map(a=>({...a,balance_updated_at:'2026-10-25T07:00:00Z'}));acc2[0].balance=60000;
+ const txs2=[tx(21,1,'income',51000,'2026-10-21'),tx(22,3,'expense',2000,'2026-10-05'),tx(23,3,'expense',500,'2026-10-15'),tx(24,4,'expense',700,'2026-10-22')];
+ const fi2={accounts:acc2,salary,fixed,credits,categories:[],transactions:txs2},pr2=financeProjection(fi2,{asof:'2026-10-25',through:'2027-01-10'});
+ assert.equal(pr2.currentPeriod.start,'2026-10-21');
+ const r2=G.periodBudgetStart(pr2,fi2,txs2,['1','3','4',''],['1',''],'2026-10-25');
+ const debt2=3832700-70000;
+ assert.equal(r2.repayDay,true);assert.equal(r2.ownAt,6000000);assert.equal(r2.reserve,0);assert.equal(r2.debt,debt2);assert.equal(r2.due,debt2-250000);
+ assert.deepEqual(E.payoutBudget(r2.ownAt,r2.reserve,r2.debt,r2.due,true),{repayCents:r2.repay,availableCents:r2.A,targetCents:r2.budget});
+ assert.equal(r2.repay,debt2,'увесь борг: власних вистачає, лишаючи 15 000');assert.equal(r2.A,6000000-debt2);assert.equal(r2.budget,rule(r2.A));
+ assert.equal(r2.daily,Math.round(r2.avail/12),'доступно / 12 днів 25.10-05.11');
  // без власних грошей: підлога 15 000 ₴
  const fi0={...fi,accounts:accounts(),transactions:[]},pr0=financeProjection(fi0,{asof:ASOF,through:'2027-01-10'});
  assert.equal(G.periodBudgetStart(pr0,fi0,[],['1','3','4',''],['1',''],ASOF).budget,1500000);

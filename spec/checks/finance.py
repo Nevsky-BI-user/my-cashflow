@@ -26,14 +26,15 @@ def contract(page):
     fixture(page)
     r=finance_ref(page, verify_ts=True)
     n=r['nextPlan']
-    check([n[k] for k in ('baseAvailableCents','targetCents','gapCents','days','averageDailyCents')]==[880000,1500000,620000,16,93750], '8800/15000/6200/16/937.50 acceptance example failed')
-    check([c['totalCents'] for c in n['categories']]==[600000,300000,225000,150000,150000,75000], 'category allocation differs from 40/20/15/10/10/5')
+    check([n[k] for k in ('baseAvailableCents','targetCents','gapCents','days','averageDailyCents')]==[2680000,2000000,0,16,125000], '26800/20000/0/16/1250 acceptance example failed (v150: A після погашення 21.10, бюджет 15-20 тис.)')
+    check([c['totalCents'] for c in n['categories']]==[800000,400000,300000,200000,200000,100000], 'category allocation differs from 40/20/15/10/10/5')
     check(not any(e['funding']=='credit' for e in r['events']), 'base projection automatically used credit')
-    check(any(d['closingCashCents']<0 for d in r['days']), 'signed cash shortfall was hidden')
-    # v145: «доступно після виплати» живе в підказці плитки «Бюджет періоду»; кнопки там же
+    # v150 (модель «власні ≥ 0»): власні не мінус, нестача окремо (arrearsCents) і в балансі дня
+    check(all(d['closingCashCents']>=0 for d in r['days']) and any(d['arrearsCents']>0 and d['netCents']==d['closingCashCents']-d['debtCents']-d['arrearsCents'] for d in r['days']), 'cash shortfall was hidden or own funds went negative')
+    # v145: «доступно після виплати» живе в підказці плитки «Бюджет періоду»; кнопки там же; v151: це A рушія (рядок «Після виплати»)
     tip=_budget_tip(page)
-    m=re.search(r'= ([\d\s  ]+(?:,\d+)?) ₴ \(власні', tip)
-    check(m and num(m.group(1))==8800, f'overview does not show8800: {tip!r}')
+    m=re.search(r'= ([\d\s  ]+(?:,\d+)?) ₴ \(ліміт не дохід', tip)
+    check(m and num(m.group(1))==26800, f'overview does not show 26800: {tip!r}')
     page.locator('.kpi-tip[data-k=budget]').get_by_role('button',name='Як пораховано',exact=True).click()
     check('28' in page.locator('dialog[open]').inner_text(), 'explanation omits mandatory28000')
     page.locator('dialog[open]').get_by_role('button',name='Закрити',exact=True).click()
@@ -48,14 +49,14 @@ def scenario(page):
     d=page.locator('dialog[open]')
     d.get_by_label('Дозволений платіж').select_option('fixed:1:2026-10')
     d.get_by_label('Кредитний рахунок').select_option('2')
-    for amount,plan,gap in [(6200,1500000,0),(4000,1280000,220000)]:
+    for amount,plan,gap in [(6200,3300000,0),(4000,3080000,0)]:
         d.get_by_label('Сума перенесення',exact=True).fill(str(amount))
         d.get_by_role('button',name='Переглянути сценарій').click()
         r=finance_ref(page,verify_ts=True)
         s=r['scenario']
         check((s['newDebtCents'],s['cashPlanCents'],s['gapCents'])==(amount*100,plan,gap), 'scenario debt/plan/gap mismatch')
         check(s['repayments'][0]['date']=='2026-11-20' and not s['errors'], 'scenario repayment date or errors mismatch')
-        check(r['nextPlan']['baseAvailableCents']==880000, 'scenario replaced base headline')
+        check(r['nextPlan']['baseAvailableCents']==2680000, 'scenario replaced base headline')
     d.get_by_label('Сума перенесення',exact=True).fill('21000')
     d.get_by_role('button',name='Переглянути сценарій').click()
     r=finance_ref(page)

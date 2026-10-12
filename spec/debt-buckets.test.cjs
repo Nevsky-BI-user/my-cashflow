@@ -19,7 +19,10 @@ const salary={rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:510
 // Monobank-подібний рахунок: баланс з API, мітка сьогодні, збережений місяць боргу вересень (як було в проді)
 const mono=(extra={})=>({id:3,name:'Monobank',kind:'credit',mono_account_id:'m1',balance:0,debt:29070.45,credit_limit:50000,debt_month:'2026-09-01',balance_updated_at:'2026-10-12T07:00:00Z',...extra});
 const tx=(id,date,amount,extra={})=>({id,account_id:3,type:'expense',amount,date,created_at:date+'T08:00:00Z',source:'mono',...extra});
-const repay=r=>r.events.filter(e=>e.kind==='repay');
+// v151: виплата 21-го гасить і новіший борг (модель «власні >= 0»), тож перевіряємо кошики знімка: перша подія погашення кошика,
+// її плановий день (правило 21-го M+1), договірний строк і сума кошика; погашення не пізніше планового дня
+const buckets=r=>r.snapshot.accounts.flatMap(a=>a.debt_months.map(([m,v])=>{const id='repay:'+a.id+':'+m,e=r.events.find(e=>e.kind==='repay'&&(e.id===id||e.id.startsWith(id+':')));return {id,date:e&&e.date,plannedRepaymentDate:e&&e.plannedRepaymentDate,contractualDueDate:e&&e.contractualDueDate,amountCents:Math.round(v*100)};})).sort((x,y)=>String(x.plannedRepaymentDate).localeCompare(String(y.plannedRepaymentDate))||x.id.localeCompare(y.id));
+const repay=buckets;
 
 test('Mono: September spending repaid, October spending 29 070,45 is the October bucket due 24.11',()=>{
  const d={accounts:[{id:1,kind:'debit',balance:2519,debt:0},mono()],salary,fixed:[],credits:[],categories:[],

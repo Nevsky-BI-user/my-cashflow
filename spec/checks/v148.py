@@ -18,6 +18,11 @@ def _open(page):
         page.locator('.tab-bar .tab-btn').nth(5).click()
         page.wait_for_timeout(400)
         page.locator('.set-mpage button', has_text='Розподіл бюджету').first.click()
+        page.wait_for_timeout(500)
+        # v150: на телефоні розділ відкривається на всю сторінку з «Назад», без аркуша
+        sh = page.locator('.set-mpage .set-msec[data-sec=budget]')
+        check(sh.count() == 1 and dialog(page, 'Розподіл бюджету').count() == 0, 'сторінка «Розподіл бюджету» не відкрилась (або відкрився аркуш)')
+        return sh
     page.wait_for_timeout(500)
     sh = dialog(page, 'Розподіл бюджету')
     check(sh.count() == 1, 'аркуш «Розподіл бюджету» не відкрився')
@@ -25,7 +30,7 @@ def _open(page):
 
 
 def _total(sh):
-    m = re.search(r'Розподілено: (\d+)%', sh.inner_text())
+    m = re.search(r'Розподілено(?:: | [^(]*\()(\d+)%', sh.inner_text())
     return int(m[1]) if m else -1
 
 
@@ -91,14 +96,16 @@ def unlock_all_phone(page):
     check(locks.count() == 0 and sh.locator('.bud-unlock-all').count() == 0, f'після «Розблокувати всі» заблоковано {locks.count()}')
 
 
-# v148, кільце бюджету: пастельні сегменти без обводок, число в центрі всередині внутрішнього кола, підказка в межах вʼюпорту, легенда з контрастом AA
+# v148, кільце бюджету: сегменти без обводок (v150: насичені градієнти замість пастелі), число в центрі всередині внутрішнього кола, підказка в межах вʼюпорту, легенда з контрастом AA
 RING = r"""scope=>{const ring=document.querySelector(scope+' .bd-ring');if(!ring)return null;const r0=+ring.dataset.r0,c=ring.getBoundingClientRect(),cx=c.left+c.width/2,cy=c.top+c.height/2;
 const out=[...ring.querySelectorAll('.bd-c b,.bd-c span')].map(e=>{const r=e.getBoundingClientRect(),dx=Math.max(Math.abs(r.left-cx),Math.abs(r.right-cx)),dy=Math.max(Math.abs(r.top-cy),Math.abs(r.bottom-cy));return [e.textContent,Math.round(Math.hypot(dx,dy)*10)/10,r0,parseFloat(getComputedStyle(e).fontSize),e.scrollWidth<=e.clientWidth+1]});
 const rgb=s=>{const n=(s.match(/[\d.]+/g)||[]).map(Number);return /^color\(/.test(s)?n.map((v,i)=>i<3?v*255:v):n};const lum=a=>{const f=v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4)};return 0.2126*f(a[0])+0.7152*f(a[1])+0.0722*f(a[2])};
 const bgOf=e=>{const base=rgb(getComputedStyle(document.documentElement).backgroundColor);let n=e;while(n&&n!==document.documentElement){const b=rgb(getComputedStyle(n).backgroundColor);if(b.length>=3&&(b.length<4||b[3]>0)){const a=b.length>3?b[3]:1;return [0,1,2].map(i=>b[i]*a+(base[i]||0)*(1-a))}n=n.parentElement}return base};
 const cr=e=>{const f=lum(rgb(getComputedStyle(e).color)),b=lum(bgOf(e));return Math.round((Math.max(f,b)+0.05)/(Math.min(f,b)+0.05)*100)/100};
 const leg=[...document.querySelectorAll(scope+' .bd-sum,'+scope+' .bd-pct,'+scope+' .bd-nm')].filter(e=>e.offsetParent).map(e=>[e.className,e.textContent,cr(e)]);
-const segs=[...document.querySelectorAll(scope+' .bd-seg')].map(e=>{const s=getComputedStyle(e);const f=rgb(s.fill);const mx=Math.max(...f.slice(0,3)),mn=Math.min(...f.slice(0,3));return [e.dataset.id,s.fill,s.stroke,parseFloat(s.strokeWidth)||0,Math.round((mx+mn)/2/255*100)/100,Math.round((mx-mn)/255*100)/100]});
+const hsl=c=>{const f=rgb(c);const mx=Math.max(...f.slice(0,3)),mn=Math.min(...f.slice(0,3));return [Math.round((mx+mn)/2/255*100)/100,Math.round((mx-mn)/255*100)/100]};
+const segs=[...document.querySelectorAll(scope+' .bd-seg')].map(e=>{const s=getComputedStyle(e);const id=(s.fill.match(/url\("?#([^")]+)"?\)/)||[])[1];const g=id?document.getElementById(id):null;
+const stops=g?[...g.querySelectorAll('stop')].map(x=>hsl(getComputedStyle(x).stopColor)):[hsl(s.fill)];return [e.dataset.id,s.fill,s.stroke,parseFloat(s.strokeWidth)||0,stops,!!g]});
 return {out,leg,segs}}"""
 TIPBOX = """()=>{const t=document.querySelector('.bd-tip');if(!t)return null;const r=t.getBoundingClientRect(),h=t.querySelector('.bd-tip-h');return [Math.round(r.left),Math.round(r.top),Math.round(r.right),Math.round(r.bottom),document.documentElement.clientWidth,innerHeight,h?h.scrollWidth<=h.clientWidth+1:true,t.textContent]}"""
 
@@ -110,9 +117,12 @@ def _ring_state(page, scope, tag):
         check(dist <= r0 and whole, f'{tag}: «{txt}» виходить за внутрішнє коло: відстань кута {dist} > r0 {r0} (шрифт {fs})')
     for cls, txt, cr in st['leg']:
         check(cr >= 4.5, f'{tag}: контраст легенди {cls} «{txt}» {cr} < 4,5')
-    for sid, fill, stroke, sw, light, chroma in st['segs']:
+    for sid, fill, stroke, sw, stops, grad in st['segs']:
         check(sw == 0 or stroke in ('none', 'rgba(0, 0, 0, 0)'), f'{tag}: сегмент {sid} з обводкою {stroke} {sw}')
-        check(light >= 0.55 and chroma <= 0.45, f'{tag}: сегмент {sid} не пастельний {fill}: світлість {light}, насиченість {chroma}')
+        # v150 (власник: «кольори як у монобанку»): замість пастелі насичений градієнт; сегмент заливає власний градієнт з 2+ кольоровими зупинками
+        check(grad and len(stops) >= 2, f'{tag}: сегмент {sid} без градієнта {fill}: {stops}')
+        # службові сегменти (__none: без категорії) лишаються сірими навмисно
+        check(sid.startswith('__') or all(0.2 <= l <= 0.9 and c >= 0.2 for l, c in stops), f'{tag}: сегмент {sid}: зупинки градієнта не кольорові (світлість, насиченість) {stops}')
     return st
 
 
@@ -169,6 +179,6 @@ CHECKS = [
     ('v148: Розподіл бюджету: % / ₴ у рядку категорії', 'desktop', alloc_units),
     ('v148: Розподіл бюджету: % / ₴ у рядку категорії', 'mobile', alloc_units),
     ('v148: Розподіл бюджету: «Розблокувати всі» на телефоні', 'mobile', unlock_all_phone),
-    ('v148: кільце бюджету на ПК: пастель, центр у колі, підказка у вʼюпорті, контраст легенди', 'desktop', ring_readable),
-    ('v148: кільце бюджету на телефоні: пастель, центр у колі, підказка у вʼюпорті, контраст легенди', 'mobile', ring_readable),
+    ('v148: кільце бюджету на ПК: градієнт (v150), центр у колі, підказка у вʼюпорті, контраст легенди', 'desktop', ring_readable),
+    ('v148: кільце бюджету на телефоні: градієнт (v150), центр у колі, підказка у вʼюпорті, контраст легенди', 'mobile', ring_readable),
 ]

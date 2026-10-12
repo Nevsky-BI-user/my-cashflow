@@ -21,8 +21,9 @@ def _salary_root(page):
     page.wait_for_timeout(400)
     page.locator('.set-mpage button', has_text='Зарплата').first.click()
     page.wait_for_timeout(500)
-    root = '[role=dialog]:has(input.nf-range)'
-    check(page.locator(root).count() >= 1, 'пункт «Зарплата» не відкрив вікно з повзунком')
+    # v150: розділ «Зарплата» на всю сторінку налаштувань, без вікна
+    root = '.set-mpage .set-msec[data-sec=salary]:has(input.nf-range)'
+    check(page.locator(root).count() >= 1, 'пункт «Зарплата» не відкрив сторінку з повзунком')
     return page.locator(root).last
 
 
@@ -58,7 +59,7 @@ def budget(page):
     page.click('.dact')
     page.wait_for_timeout(500)
     sh = page.locator('.sheet').last
-    total = lambda: int((re.search(r'Розподілено: (\d+)%', sh.inner_text()) or [0, -1])[1])
+    total = lambda: int((re.search(r'Розподілено(?:: | [^(]*\()(\d+)%', sh.inner_text()) or [0, -1])[1])
     # повзунки категорій; «Відсоток» у тому ж вікні до розподілу не входить
     cat = 'input.nf-range:not([aria-label^="Відсоток"])'
     vals = lambda: [float(x) for x in sh.locator(cat).evaluate_all('a=>a.map(x=>x.value)')]

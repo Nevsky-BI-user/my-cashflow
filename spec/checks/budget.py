@@ -93,29 +93,44 @@ def desktop(page):
     lbl = page.locator('.side-pname').inner_text()
     check(lbl.startswith(str(start.day)), f'період у бічній панелі «{lbl}», очікували від {start}')
     v = num(kpi(page, 'bud-pool'))
-    check(abs(v - ref['varPoolCur']) <= 1, f'«Бюджет періоду» {v}, еталон budget_pool.py varPoolCur {ref["varPoolCur"]:.2f}')
+    # v150 (власник: «повний бюджет періоду»): плитка показує бюджет на весь період від виплати, а не ціль рушія від сьогодні;
+    # (periodBudgetStart, window.__periodBudget); v151 (знахідка 2): той самий розподіл виплати, що в рушії: A = власні на виплату − резерв − погашення,
+    # бюджет min(20 000, A), якщо A > 15 000, інакше 15 000
+    pb = page.evaluate("window.__periodBudget")
+    check(pb['A'] == pb['ownAt'] - pb['reserve'] - pb['repay'], f'A {pb["A"]} != власні {pb["ownAt"]} − резерв {pb["reserve"]} − погашення {pb["repay"]}')
+    check(pb['budget'] == (min(2000000, pb['A']) if pb['A'] > 1500000 else 1500000), f'бюджет {pb["budget"]} не за правилом від A {pb["A"]}')
+    check(pb is not None and pb['start'] == ref['payout']['date'], f'повний бюджет періоду не від виплати {ref["payout"]["date"]}: {pb and pb.get("start")}')
+    check(abs(v - pb['budget'] / 100) <= 1, f'«Бюджет періоду» {v}, повний бюджет періоду {pb["budget"] / 100:.2f}')
     check('обмежено готівкою' not in page.inner_text('.bud-pool'), 'план досі стискається готівкою')
-    sv = num(kpi(page, 'bud-sav'))
-    check(abs(sv-ref['gap'])<=1, 'нестача до цілі не відповідає проєкції')
     total = sum(spend.values())
     got = num(kpi(page, 'bud-spent'))
     check(got == round(total), f'«Витрачено» {got}, сума демо-операцій періоду {total}')
+    # v150: замість «Нестача» плитка «Доступно» = бюджет − витрачено
+    sv = num(kpi(page, 'bud-sav'))
+    check('доступно' in page.inner_text('.bud-sav').lower() and abs(sv - (v - got)) <= 1, f'«Доступно» {sv}, а бюджет {v} − витрачено {got}')
     left = (end - date.fromisoformat(DAY)).days
     pd = num(kpi(page, 'bud-day'))
-    want = ref['perDay']
-    check(abs(pd - want) <= 1, f'«На день лишилось» {pd}, еталон perDay {want:.2f}')
+    # v151 (знахідка 4): «План на день» = Доступно / днів до кінця періоду включно з сьогодні; те саме число, що «Щоденні витрати» на Огляді
+    want = (v - got) / left if left > 0 else 0
+    check(abs(pd - want) <= 1, f'«План на день» {pd}, а доступно {v - got} / {left} дн. = {want:.2f}')
+    check(abs(pd - pb['daily'] / 100) <= 1, f'«План на день» {pd} не дорівнює «Щоденні витрати» Огляду {pb["daily"] / 100}')
     # v144: категорії в групах; закриті групи розгортаємо, щоб побачити всі
     check(page.locator('.bud-grp').count() >= 2, 'немає груп категорій')
     expand_groups(page)
     rows = page.evaluate("""[...document.querySelectorAll('.bud-cat')].map(e=>({n:e.querySelector('.bud-name').textContent,
-f:e.querySelector('.bud-nums b').textContent,hot:e.classList.contains('hot'),idle:e.classList.contains('idle')}))""")
+f:e.querySelector('.bud-nums b').textContent,p:e.querySelector('.bud-nums').textContent.split('/')[1]||'',hot:e.classList.contains('hot'),idle:e.classList.contains('idle')}))""")
     check(len(rows) == page.evaluate('BCAT.length'), f'{len(rows)} категорій замість усіх')
     for r in rows:
         f = num(r['f'])
         check(f == round(spend.get(r['n'], 0)), f'{r["n"]}: факт {f}, сума операцій періоду {spend.get(r["n"], 0)}')
         check(r['idle'] == (f == 0), f'{r["n"]}: сірий стан не збігається з витратами')
-    check(not any(r['hot'] for r in rows), 'поточний факт помилково порівняно з планом від завтра')
-    check('факт / план від завтра' in page.inner_text('.bud-catcard'), 'не пояснено базу категорій')
+    # v150: план категорій від повного бюджету періоду, тож факт порівнюється з ним: «горить», коли факт > плану × (частка періоду + 10 %)
+    frac = min((end - start).days, (date.fromisoformat(DAY) - start).days + 1) / max(1, (end - start).days)
+    for r in rows:
+        f, pl = num(r['f']), num(r['p'])
+        want = f > 0 and (pl <= 0 or f / pl > frac + 0.1)
+        check(r['hot'] == want, f'{r["n"]}: «горить» {r["hot"]}, а факт {f} / план {pl} при {frac:.0%} періоду')
+    check('факт / план на період' in page.inner_text('.bud-catcard'), 'не пояснено базу категорій (v150: план від повного бюджету періоду)')
     check(page.locator('.bud-top .bud-row').count() >= 1, 'топ-5 місць порожній')
     shot(page, 'budget-1280.jpg')
     page.set_viewport_size({'width': 1920, 'height': 1080})

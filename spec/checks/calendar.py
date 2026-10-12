@@ -66,7 +66,7 @@ return{past:g('.ck-cal .cal-cell.past:not(.we)'),fut:g('.ck-cal .cal-cell.future
     repay=[e for e in projection['events'] if e['kind']=='repay' and e['date'][:7]==t.isoformat()[:7]]
     check(repay, 'немає погашення в поточному місяці')
     for e in repay:
-        check(page.locator('.cal-tbl .cal-ev[data-date="'+e['date']+'"]',has_text='Погашення кредитки').count()>=1, 'погашення не на плановій даті')
+        check(page.locator('.cal-tbl .cal-ev[data-date="'+e['date']+'"]',has_text=re.compile(r'Погашення .+? · (обовʼязкове|додатково|прострочене)')).count()>=1, 'погашення не на плановій даті')
     # v149 (власник: «менший шрифт другорядного»): назви в клітинках, баланс дня, факт і тихі мітки статусів від 11px, решта від 13px
     check(page.evaluate(MIN_FS, '.p-credits.desk .ck-cols') >= 11, f'текст у Календарі дрібніший за 11px: {page.evaluate(MIN_FS, ".p-credits.desk .ck-cols")}')
     check(page.evaluate(MIN_FS, '.p-credits.desk .cal-tbl .ce-a') >= 13 and page.evaluate(MIN_FS, '.p-credits.desk .cal-tbl .ce-b') >= 13, 'суми й баланс у таблиці дрібніші за 13px')

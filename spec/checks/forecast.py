@@ -88,9 +88,9 @@ def chart(page):
     vis = _visible(info['first'], t)
     check(chips == [[r, names[r]] for r in vis], f'чипи діапазону: {chips}, а не {vis}')
     check(info['pressed'] == ['q'], f'за замовчуванням не «3 міс.»: {info["pressed"]}')
-    # v148: крива в балансі (власні мінус борг кредиток), постійна мітка лише «Сьогодні: баланс»
-    bal, shift = snap['positiveOwnCents'] - snap['creditDebtCents'], snap['positiveOwnCents'] - snap['cashCents']
-    exp = 'Сьогодні: ' + _money(bal)
+    # v150 (модель «власні ≥ 0»): крива = власні кошти, мітка «Сьогодні: власні» (рядок «Власні» плитки «Баланс»); борг окремою лінією
+    own = snap['positiveOwnCents']
+    exp = 'Сьогодні: ' + _money(own)
     check(info['today'] == exp, f'мітка сьогодні {info["today"]!r}, а не {exp!r}')
     payouts = sorted({e['date'] for e in ref['events'] if e['kind'] == 'payout'})
     for r in vis:
@@ -109,7 +109,7 @@ def chart(page):
         pays = [d for d in (payouts if info['to'] <= ref['days'][-1]['date'] else _payouts_through(page, info['to'])) if _iso(t) < d <= info['to']]
         check(info['pays'] == len(pays), f'{r}: маркерів виплат {info["pays"]}, а не {len(pays)}')
         # мінімум у підсумку = червона точка; не вище каси прогнозу в діапазоні
-        mins = [d['netCents'] + shift for d in ref['days'] if _iso(t) < d['date'] <= info['to']] + [bal]  # v148: баланс, точка сьогодні = плитка «Баланс»
+        mins = [d['closingCashCents'] for d in ref['days'] if _iso(t) < d['date'] <= info['to']] + [own]  # v150: власні, точка сьогодні = власні
         check(info['minV'] <= min(mins), f'{r}: мінімум {info["minV"]} вище мінімуму прогнозу {min(mins)}')
         s = info['sum']
         check(re.match(r'^мін\. [−+][\d ]+ ₴ \d\d\.\d\d · макс\. [−+][\d ]+ ₴ \d\d\.\d\d · сьогодні −?[\d ]+ ₴', s), f'{r}: рядок підсумку {s!r}')
@@ -132,7 +132,7 @@ def chart(page):
         for _ in range((date.fromisoformat(rep['date']) - t).days - 1):
             page.keyboard.press('ArrowRight')
         box = page.inner_text('.dv-fc .fc-box')
-        check('Погашення кредитки' in box and 'прогноз' in box, f'бокс дня {rep["date"]} без погашення: {box!r}')
+        check(re.search(r'Погашення .+? · ', box) and 'прогноз' in box, f'бокс дня {rep["date"]} без погашення: {box!r}')
         page.keyboard.press('Escape')
     # «Найближче»: майбутні не приглушені, із строком
     rows = page.evaluate("[...document.querySelectorAll('.dv-near .dv-ev')].map(e=>({t:e.innerText,f:e.classList.contains('future'),o:getComputedStyle(e).opacity}))")
@@ -155,7 +155,7 @@ def calendar(page):
     projection = finance_ref(page)
     for e in projection['events']:
         if e['kind'] == 'repay' and e['date'][:7] == t.isoformat()[:7]:
-            check(page.locator('.cal-tbl .cal-ev[data-date="' + e['date'] + '"]', has_text='Погашення кредитки').count() >= 1, 'погашення відсутнє на плановій даті')
+            check(page.locator('.cal-tbl .cal-ev[data-date="' + e['date'] + '"]', has_text=re.compile(r'Погашення .+? · (обовʼязкове|додатково|прострочене)')).count() >= 1, 'погашення відсутнє на плановій даті')
     evs = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(e=>({d:e.dataset.date,p:e.classList.contains('past'),td:e.classList.contains('today'),b:e.dataset.bal}))")
     check(evs, 'у календарі немає таблиці подій')
     iso = t.isoformat()

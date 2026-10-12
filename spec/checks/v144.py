@@ -186,6 +186,14 @@ def limit_abs(page):
     page.keyboard.press('Escape')
     page.wait_for_timeout(250)
     s = page.locator('.bud-alloc-sum').inner_text()
+    # v150: у поточному періоді розподіляється повний бюджет періоду (плитка «Бюджет періоду»), а не план рушія від завтра;
+    # підсумок тоді з planSplit(повний бюджет, категорії) на тому самому вході (planSplit перевіряє spec/plan-split.test.cjs)
+    if 'повний бюджет' in s:
+        full = page.evaluate("(()=>{const pb=window.__periodBudget;return planSplit(pb.budget,window.__financeInput.categories)})()")
+        tot = sum(c['totalCents'] for c in full)
+        free = sum(c['totalCents'] for c in full if c['id'] == 'unallocated')
+        ff = next((c for c in full if c['id'] == 'food'), None)
+        check(ff is not None and ff['totalCents'] == min(500000, tot), f'повний план: Продукти {ff}, очікували ліміт 5 000 ₴ на період')
     parts = s.split('Розподілено ')[1]
     x, rest = parts.split(' з ', 1)
     tt, y = rest.split(', вільно ')

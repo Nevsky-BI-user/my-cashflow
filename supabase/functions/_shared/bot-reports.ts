@@ -48,10 +48,9 @@ export function kyivNow(now: Date): { date: string; hour: number } {
 }
 export const isKyivHour = (now: Date, hour: number) => kyivNow(now).hour === hour;
 
-// ---------- Баланс у часі (як графік «Гроші в часі» застосунку, v148) ----------
-// Баланс = власні мінус борг кредиток. Сьогодні: positiveOwnCents мінус creditDebtCents. Минуле: від сьогодні назад мінус
-// підписані операції всіх рахунків (витрата з кредитки зменшує баланс, погашення як пара операцій його не змінює).
-// Майбутнє: каса мінус борг на кінець дня рушія плюс зсув positiveOwnCents мінус cashCents.
+// ---------- Власні кошти в часі (як графік «Гроші в часі» застосунку, v150) ----------
+// Лінія = власні кошти (модель «власні ≥ 0»), борг кредиток окремо. Сьогодні: positiveOwnCents. Минуле: від сьогодні назад мінус
+// підписані операції власних (не кредитних) рахунків, як pastOwnSeries застосунку. Майбутнє: власні на кінець дня рушія (closingCashCents).
 export type Point = { date: string; cents: number };
 export type BalanceSeries = {
   from: string; to: string; today: Point; past: Point[]; future: Point[]; min: Point; max: Point;
@@ -79,14 +78,13 @@ export function pastSeries(txs: Tx[], ids: string[], anchorCents: number, fromIs
 
 export function balanceSeries(pr: P, txs: Tx[], accounts: P[], today: string, opts: { firstOwnDate?: string | null; salary?: SalaryCfg | null } = {}): BalanceSeries {
   const s = pr.snapshot;
-  const nowCents = s.positiveOwnCents - s.creditDebtCents, shift = s.positiveOwnCents - s.cashCents;
+  const nowCents = s.positiveOwnCents;
   const active = (accounts || []).filter((a) => a.active !== false);
   // histAll застосунку: операції без рахунку лише ручні й створені після найранішої мітки балансу ручного рахунку
   const stamps = active.filter((a) => !a.mono_account_id).map((a) => Date.parse(a.balance_updated_at || '')).filter(Number.isFinite);
   const stamp = stamps.length ? Math.min(...stamps) : null;
   const hist = uniq(txs).filter((t) => t.account_id != null || (stamp != null && t.source !== 'mono' && Date.parse(t.created_at || '') > stamp));
   const ownIds = active.filter((a) => a.kind !== 'credit').map((a) => String(a.id)).concat(['']);
-  const allIds = active.map((a) => String(a.id)).concat(['']);
   let first: string | null = opts.firstOwnDate || null;
   for (const t of hist) {
     const d = String(t.date || '').slice(0, 10);
@@ -94,9 +92,9 @@ export function balanceSeries(pr: P, txs: Tx[], accounts: P[], today: string, op
   }
   const lo = addMonths(today, -1), to = addMonths(today, 1);
   const from = !first ? today : lo > first ? lo : first;
-  const past = pastSeries(hist, allIds, nowCents, from, today);
+  const past = pastSeries(hist, ownIds, nowCents, from, today);
   const future = (pr.days || []).filter((d: P) => d.date > today && d.date <= to)
-    .map((d: P) => ({ date: d.date, cents: d.closingCashCents - d.debtCents + shift }));
+    .map((d: P) => ({ date: d.date, cents: d.closingCashCents }));
   const todayPt = { date: today, cents: nowCents };
   // Мінімум за весь видимий відрізок (минуле і прогноз), як «мін.» на графіку застосунку; за рівності перша дата
   let min: Point = past[0] || todayPt;
@@ -123,12 +121,12 @@ export function balanceSeries(pr: P, txs: Tx[], accounts: P[], today: string, op
   payouts.sort((a, b) => a.date < b.date ? -1 : 1);
   const next = pr.untilPayout?.end || null;
   const nd = next ? (pr.days || []).find((d: P) => d.date === next) : null;
-  const afterPayout = nd ? { date: next, cents: nd.closingCashCents - nd.debtCents + shift } : null;
+  const afterPayout = nd ? { date: next, cents: nd.closingCashCents } : null;
   return { from, to, today: todayPt, past, future, min, max, payouts, afterPayout };
 }
 
 export function chartCaption(s: BalanceSeries): string {
-  const parts = [`Баланс сьогодні ${money(s.today.cents)}`, `мінімум ${money(s.min.cents)} ${day(s.min.date)}`];
+  const parts = [`Власні сьогодні ${money(s.today.cents)}`, `мінімум ${money(s.min.cents)} ${day(s.min.date)}`];
   if (s.afterPayout) parts.push(`після виплати ${day(s.afterPayout.date)}: ${money(s.afterPayout.cents)}`);
   return parts.join(' · ');
 }
@@ -199,15 +197,16 @@ export function weekModel(pr: P, today: string): WeekModel {
     }));
   const days = (pr.days || []).filter((d: P) => d.date >= today && d.date <= to);
   const last = days[days.length - 1];
-  const neg = days.find((d: P) => d.minCashCents < 0);
+  // v150: власні не мінус; попередження про нестачу (платіж без права на кредит, який не покрито)
+  const neg = days.find((d: P) => (d.arrearsCents || 0) > 0);
   return {
     from: today, to, events, variableCents: days.reduce((n: number, d: P) => n + (d.variableCents || 0), 0),
-    endBalanceCents: last ? last.closingCashCents - last.debtCents + shift : null, endCashCents: last ? last.closingCashCents : null,
-    gap: neg ? { date: neg.date, cents: -neg.minCashCents } : null,
+    endBalanceCents: last ? last.netCents + shift : null, endCashCents: last ? last.closingCashCents : null,
+    gap: neg ? { date: neg.date, cents: neg.arrearsCents } : null,
     // Кожен день: усі витрати дня (щоденні за бюджетом + обовʼязкові платежі й комісії; погашення кредитки це переказ, не витрата)
     // і баланс на кінець дня (сьогодні поточний, далі прогноз) за формулою застосунку
     days: days.map((d: P) => ({
-      date: d.date, balanceCents: d.closingCashCents - d.debtCents + shift,
+      date: d.date, balanceCents: d.netCents + shift,
       spendCents: (d.variableCents || 0) + events.filter((e: { date: string; kind: string; cents: number }) => e.date === d.date && (e.kind === 'mandatory' || e.kind === 'fee') && e.cents < 0)
         .reduce((n: number, e: { cents: number }) => n - e.cents, 0),
     })),

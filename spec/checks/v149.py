@@ -55,20 +55,22 @@ return {k:t.dataset.k||t.className,top:Math.round(r.top),h:Math.round(r.height),
 
 
 def kpi_plan(page):
-    """п. 4: плитки KPI в одному ряду однакової висоти, вміст угорі; «За планом» у «Доступні кошти» = баланс + наступна виплата
-    − обовʼязкові платежі від неї до наступної (без погашень кредиток) = nextPlan.baseAvailableCents; розклад у підказці «i»."""
+    """п. 4: плитки KPI в одному ряду однакової висоти, вміст угорі; v151 (знахідка 2): «За планом» у «Доступні кошти» = бюджет
+    періоду з наступної виплати за правилом рушія: A = nextPlan.baseAvailableCents, бюджет min(20 000, A), якщо A > 15 000, інакше 15 000;
+    розклад у підказці «i»."""
     freeze(page, DAY)
     go_tab(page, 0)
     ref = finance_ref(page)
     n = ref['nextPlan']
-    plan = n['positiveOwnCents'] - n['debtCents'] + n['nextPayout']['amountCents'] - n['mandatoryCents']
-    check(plan == n['baseAvailableCents'], f'формула «За планом» {plan} не дорівнює baseAvailableCents {n["baseAvailableCents"]}')
+    a = n['baseAvailableCents']
+    plan = min(2000000, a) if a > 1500000 else 1500000
+    check(n['targetCents'] == plan, f'ціль наступного періоду {n["targetCents"]} не за правилом від A {a}')
     v = num(page.inner_text('.kpi-funds [data-r=plan] .kpi-rv'))
     check(abs(v - plan / 100) <= 1, f'«За планом» {v}, а за рушієм {plan / 100}')
     page.locator('.kpi-funds .kpi-i').click()
     page.wait_for_selector('.kpi-tip[data-k=funds]')
     tip = page.inner_text('.kpi-tip[data-k=funds]')
-    check('За планом: баланс сьогодні' in tip and 'Погашення кредиток окремо не віднімається' in tip, f'у підказці немає розкладу «За планом»: {tip!r}')
+    check('За планом: бюджет періоду' in tip and '= A ' in tip and 'інакше 15 000' in tip, f'у підказці немає розкладу «За планом»: {tip!r}')
     page.keyboard.press('Escape')
     rows = {}
     for t in page.evaluate(KPI):
@@ -78,7 +80,7 @@ def kpi_plan(page):
         check(len(ts) < 2 or max(hs) - min(hs) <= 1, f'плитки ряду {top} різної висоти {ts}')
         # вміст угорі: шапка біля верхнього краю, число одразу під шапкою (на телефоні довгий підпис може перенестися в два рядки)
         check(all(t['head'] <= 14 and 0 <= t['val'] - t['hb'] <= 10 for t in ts), f'вміст плиток не вгорі {ts}')
-    print(f'      «За планом» {v} ₴ = {n["positiveOwnCents"] - n["debtCents"]} + {n["nextPayout"]["amountCents"]} − {n["mandatoryCents"]} (коп.); рядів плиток {len(rows)}')
+    print(f'      «За планом» {v} ₴ = правило від A {a} (коп.); рядів плиток {len(rows)}')
 
 
 NEAR = r"""(()=>{const desk=!!document.querySelector('.dv-near');const rows=[...document.querySelectorAll(desk?'.dv-near .dv-ev':'.o-next .o-next-row')];
@@ -110,12 +112,14 @@ const n=s=>{const t=s.replace(/[\\s\\u00a0\\u202f]/g,'');const m=t.match(/\\d+/g
 const rows=[...b.querySelectorAll('.fc-tip-r')].map(r=>{const v=r.querySelector('.fc-tip-n'),l=r.querySelector('.fc-tip-l'),vr=v.getBoundingClientRect(),lr=l.getBoundingClientRect();
  return {c:r.className,l:l.textContent,v:v.textContent,nums:n(v.textContent),right:vr.right,vt:vr.top,lt:lr.top,vh:vr.height,lh:parseFloat(getComputedStyle(v).lineHeight)||vr.height,d:r.dataset.d!=null?+r.dataset.d:null}});
 return {k:b.dataset.k,i:+b.dataset.i,w:rb.width,l:rb.left,r:rb.right,vw:innerWidth,rows,
- bal:(()=>{const e=b.querySelector('.fc-tip-bal .fc-tip-n');if(!e)return null;const t=e.textContent;return (/[\u2212-]/.test(t)?-1:1)*+t.replace(/\\D/g,'')})()}})()"""
+ own:(()=>{const e=b.querySelector('.fc-tip-own .fc-tip-n');if(!e)return null;const t=e.textContent;return (/[\u2212-]/.test(t)?-1:1)*+t.replace(/\\D/g,'')})()}})()"""
 
 
 def tooltip(page):
     """v149 (власник: «цифри та підписи розʼїхалися»): тултіп графіка сіткою, у кожного рядка одне число, праві краї чисел збігаються (±1 px),
-    ширина від 200 px і в межах екрана; на днях прогнозу баланс(d-1) + сума подій(d) = баланс(d) (погашення кредитки 0, щоденні витрати окремим рядком)"""
+    ширина від 200 px і в межах екрана.
+    v150 (модель «власні ≥ 0»): перші рядки Власні, Кредитні, Баланс; на днях прогнозу власні(d-1) + сума подій(d) = власні(d): погашення кредитки
+    зменшує власні, частина в кредит і нестача сірими рядками з нулем; власні не мінус"""
     if page.viewport_size['width'] >= 1024:
         page.set_viewport_size({'width': 1920, 'height': 900})
     freeze(page, DAY)
@@ -136,20 +140,21 @@ def tooltip(page):
         check(all(r['vh'] <= r['lh'] * 1.5 for r in rows), f'день {t["i"]}: число переноситься {[(r["v"], r["vh"]) for r in rows if r["vh"] > r["lh"] * 1.5]}')
         check(all(abs(r['vt'] - r['lt']) <= 2 for r in rows), f'день {t["i"]}: число не в рядку свого підпису')
         cls = [r['c'] for r in rows[:3]]
-        check(all(s in c for s, c in zip(('fc-tip-bal', 'fc-tip-own', 'fc-tip-crd'), cls)), f'день {t["i"]}: перші рядки не Баланс, Власні, Кредитні: {cls}')
+        check(all(s in c for s, c in zip(('fc-tip-own', 'fc-tip-crd', 'fc-tip-bal'), cls)), f'день {t["i"]}: перші рядки не Власні, Кредитні, Баланс: {cls}')
+        check(t['own'] is not None and t['own'] >= 0, f'день {t["i"]}: власні мінус {t["own"]}')
         ev = rows[3:]
-        nv = sum(r['l'] == 'Щоденні витрати' for r in ev)
-        check(nv <= 1, f'день {t["i"]}: кілька рядків «Щоденні витрати»')
+        nv = sum(r['l'] in ('Щоденні витрати', 'Щоденні витрати · у кредит') for r in ev)
+        check(sum(r['l'] == 'Щоденні витрати' for r in ev) <= 1, f'день {t["i"]}: кілька рядків «Щоденні витрати»')
         var_rows += nv
         rp_rows += sum('fc-tip-rp' in r['c'] for r in ev)
         if t['k'] == 'f' and prev is not None and prev['k'] == 'f':
             s = sum(r['d'] for r in ev if r['d'] is not None)
-            check(abs(prev['bal'] + s / 100 - t['bal']) <= 1.01, f'день {t["i"]}: баланс {prev["bal"]} + події {s / 100} != {t["bal"]}: {[(r["l"], r["v"], r["d"]) for r in ev]}')
+            check(abs(prev['own'] + s / 100 - t['own']) <= 1.01, f'день {t["i"]}: власні {prev["own"]} + події {s / 100} != {t["own"]}: {[(r["l"], r["v"], r["d"]) for r in ev]}')
             chain += 1
         prev = t
         seen += 1
-    print(f'      днів {seen}, перевірено ланцюжком {chain}, рядків «Щоденні витрати» {var_rows}, погашень {rp_rows}')
-    check(chain >= 20, f'ланцюжок балансу перевірено лише на {chain} днях')
+    print(f'      днів {seen}, перевірено ланцюжком власних {chain}, рядків «Щоденні витрати» {var_rows}, погашень {rp_rows}')
+    check(chain >= 20, f'ланцюжок власних перевірено лише на {chain} днях')
     check(var_rows >= 10, f'рядок «Щоденні витрати» лише в {var_rows} днях прогнозу')
     page.keyboard.press('Escape')
 

@@ -115,15 +115,17 @@ def chart_today_own(page):
     check(own != cash, f'фікстура: каса {cash} дорівнює власним {own}')
     info = page.evaluate(INFO)
     bal = own - snap['creditDebtCents']
-    exp = 'Сьогодні: ' + _money(bal)
+    exp = 'Сьогодні: ' + _money(own)  # v150: крива = власні кошти
     check(_norm(info['today']) == exp, f'мітка {info["today"]!r}, а не {exp!r}')
     check(page.locator('.dv-fc .fc-today-bal').count() == 0, 'лишився окремий підпис «баланс» біля мітки')
-    check(_norm(info['sum']).rstrip().endswith('сьогодні ' + _money(bal)), f'підсумок {info["sum"]!r} без «сьогодні {_money(bal)}»')
+    check(_norm(info['sum']).rstrip().endswith('сьогодні ' + _money(own)), f'підсумок {info["sum"]!r} без «сьогодні {_money(own)}»')
     sr = _today_point(page)
-    want = 'баланс ' + _money(bal) + ', власні ' + _money(own) + ', кредитні ' + _money(-snap['creditDebtCents'])
+    want = 'власні ' + _money(own) + ', кредитні ' + _money(-snap['creditDebtCents']) + ', баланс ' + _money(bal)
     check('факт' in sr and sr.endswith(want), f'точка сьогодні {sr!r}, а не {want!r}')
     tile = num(page.locator('.kpi-balance .dv-kpi-v').inner_text())
-    check(abs(tile - bal / 100) <= 1, f'плитка «Баланс» {tile}, а графік {bal / 100:.2f}')
+    check(abs(tile - bal / 100) <= 1, f'плитка «Баланс» {tile}, а еталон {bal / 100:.2f}')
+    tile_own = num(page.locator('.kpi-balance [data-r=own] .kpi-rv').inner_text())
+    check(abs(tile_own - own / 100) <= 1, f'рядок «Власні» плитки {tile_own}, а точка сьогодні на графіку {own / 100:.2f}')
     kpi = num(page.locator('.kpi-funds [data-r=cards] .kpi-rv').inner_text()) + num(page.locator('.kpi-funds [data-r=cash] .kpi-rv').inner_text())
     check(abs(kpi - own / 100) <= 1, f'плитка: готівка + карти {kpi}, а власні {own / 100:.2f}')
 

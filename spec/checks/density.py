@@ -20,7 +20,7 @@ DEBT2 = ("{id:'l3',name:'monobank',bank:'mono',kind:'debit',mono_account_id:'dem
          "{id:'l3',name:'monobank',bank:'mono',kind:'credit',mono_account_id:'demo-mono',balance:12500,debt:4200,debt_month:pbIso(dm)")
 CAL = """({sh:document.documentElement.scrollHeight,ih:innerHeight,
 ev:[...document.querySelectorAll('.ck-day .cal-ev')].map(e=>Math.round(e.getBoundingClientRect().height)),
-rep:[...document.querySelectorAll('.ck-day .cal-ev')].filter(e=>/Погашення кредитки/.test(e.innerText)).map(e=>e.dataset.date),more:(document.querySelector('.ck-day .ck-more')||{}).innerText||'',
+rep:[...document.querySelectorAll('.ck-day .cal-ev')].filter(e=>/Погашення .+? · /.test(e.innerText)).map(e=>e.dataset.date),more:(document.querySelector('.ck-day .ck-more')||{}).innerText||'',
 cards:document.querySelectorAll('.ck-side .ck-debts').length,
 side:[...document.querySelectorAll('.ck-cal, .ck-side > *')].map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ').pop(),Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.bottom),Math.round(r.right)]})})"""
 

@@ -51,7 +51,7 @@ export function balanceChartSvg(s: BalanceSeries): ChartModel {
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`);
   out.push(`<rect width="${W}" height="${H}" fill="${C.bg}"/>`);
   out.push(`<rect x="20" y="20" width="${W - 40}" height="${H - 40}" rx="28" fill="${C.card}"/>`);
-  out.push(text(48, 74, 'Баланс: власні мінус борг кредиток', { size: 32, weight: 600 }));
+  out.push(text(48, 74, 'Власні кошти', { size: 32, weight: 600 }));
   // легенда
   let lx = 48;
   const ly = 112;

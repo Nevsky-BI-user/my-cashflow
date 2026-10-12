@@ -61,7 +61,7 @@ def payments(page):
 
 
 def categories(page):
-    """Категорії демо: кольори з палітри без повторів (витрати), Бюджет і Потік у тих самих кольорах, контраст палітри від 3:1."""
+    """Категорії демо: кольори з палітри без повторів (витрати), Потік у кольорах категорій, Бюджет у палітрі бюджету (v150), контраст палітри від 3:1."""
     page.set_viewport_size({'width': 1920, 'height': 900})
     # кінець періоду: більшість категорій уже мають витрати
     freeze(page, '2026-10-19')
@@ -72,23 +72,27 @@ def categories(page):
     check(len(set(cols)) == len(cols), f'кольори категорій повторюються: {cols}')
     check(all(c in pal for c in cols), 'колір категорії поза палітрою')
     _contrast(page, pal, 'палітра')
-    # Бюджет: тло значка категорії (колір категорії з прозорістю) і смуга (крім перевитрати й неактивних) у кольорі категорії
+    # Бюджет (v150, власник: «кращі сучасніші кольори для бюджету»): значок і смуга категорії з однієї палітри бюджету BUD_PAL
+    # (кільце, легенда й смуги одного кольору; color категорії лише запасний): тло значка = перший колір пари, смуга = градієнт пари
     go_tab(page, 1)
     expand_groups(page)  # v145: групи за замовчуванням згорнуті
     rows = page.locator('.bud-cat').evaluate_all(
         "els=>els.map(e=>{const b=e.querySelector('.bud-bar span');return{n:e.querySelector('.bud-name').textContent.trim(),hot:e.classList.contains('hot'),idle:e.classList.contains('idle'),"
-        "ico:getComputedStyle(e.querySelector('.bud-ico')).backgroundColor,bar:b?getComputedStyle(b).backgroundColor:null}})")
+        "ico:getComputedStyle(e.querySelector('.bud-ico')).backgroundColor,bar:b?getComputedStyle(b).backgroundImage:null}})")
     rgb = lambda c: tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
     num3 = lambda s: tuple(int(float(x)) for x in s.replace('rgba(', '').replace('rgb(', '').replace(')', '').split(',')[:3])
     want = {c['name']: rgb(c['color']) for c in cats}
+    bud = {k: [rgb(x) for x in v] for k, v in page.evaluate("Object.fromEntries(BCAT.filter(c=>!c.isIncome).map(c=>[c.name,budPal(c.id,c.color)]))").items()}
+    check(len({v[0] for v in bud.values()}) == min(len(bud), page.evaluate('BUD_PAL.length')), f'перші кольори палітри бюджету повторюються: {bud}')
     seen = 0
     for r in rows:
-        if r['idle'] or r['n'] not in want:
+        if r['idle'] or r['n'] not in bud:
             continue
         seen += 1
-        check(num3(r['ico']) == want[r['n']], f'значок «{r["n"]}» {r["ico"]}, очікували {want[r["n"]]}')
+        check(num3(r['ico']) == bud[r['n']][0], f'значок «{r["n"]}» {r["ico"]}, очікували {bud[r["n"]][0]}')
         if not r['hot']:
-            check(num3(r['bar']) == want[r['n']], f'смуга «{r["n"]}» {r["bar"]}, очікували {want[r["n"]]}')
+            stops = [tuple(int(float(x)) for x in m.split(',')[:3]) for m in __import__('re').findall(r'rgba?\(([^)]*)\)', r['bar'] or '')]
+            check(stops[:2] == bud[r['n']], f'смуга «{r["n"]}» {r["bar"]}, очікували градієнт {bud[r["n"]]}')
     print(f'      бюджет: перевірено категорій {seen} з {len(rows)}')
     check(seen >= 3, 'на сторінці Бюджету замало активних категорій для перевірки')
     page.mouse.move(2, 2)

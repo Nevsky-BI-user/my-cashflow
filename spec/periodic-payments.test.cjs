@@ -104,8 +104,8 @@ test('creditDebtCents sums every account debt and a debit card with debt is repa
  assert.equal(r.snapshot.creditDebtCents,r.snapshot.accounts.reduce((s,a)=>s+a.debtCents,0));
  assert.equal(r.snapshot.creditDebtCents,1650000);
  const repay=r.events.filter(e=>e.kind==='repay'&&e.accountId===3);
- assert.equal(repay.length,1);assert.equal(repay[0].amountCents,50000);/* v146: борг жовтня гаситься з виплати 21.11 (субота, виплата 20.11) */assert.equal(repay[0].date,'2026-11-20');
- assert.equal(r.days[r.days.length-1].debtCents,0);
+ /* v151: перше погашення кошика жовтня має id без дати, плановий день 20.11 (21.11 субота), гаситься не пізніше; id не повторюються */
+ assert.equal(repay[0].id,'repay:3:2026-10');assert.equal(repay[0].plannedRepaymentDate,'2026-11-20');assert.ok(repay[0].date<='2026-11-20');assert.equal(new Set(repay.map(e=>e.id)).size,repay.length);
  assert.equal(r.nextPlan.debtCents,1650000);
 });
 
@@ -288,8 +288,9 @@ test('fixed income raises cash on its date, is not mandatory and ends with end_d
  assert.deepEqual(inc.map(e=>e.id),['fixed:9:2026-10']);
  assert.equal(inc[0].kind,'income');assert.equal(inc[0].cashDeltaCents,90000);assert.equal(inc[0].creditEligible,false);
  const day=(x,iso)=>x.days.find(v=>v.date===iso);
- assert.equal(day(r,'2026-10-14').closingCashCents,day(plain,'2026-10-14').closingCashCents);
- assert.equal(day(r,'2026-10-15').closingCashCents-day(plain,'2026-10-15').closingCashCents,90000);
+ /* v151: дохід іде у власні, а витрати дня спершу з власних, тож різницю видно в net (власні − борг) */
+ assert.equal(day(r,'2026-10-14').netCents,day(plain,'2026-10-14').netCents);
+ assert.equal(day(r,'2026-10-15').netCents-day(plain,'2026-10-15').netCents,90000);
  assert.equal(r.nextPlan.mandatoryCents,plain.nextPlan.mandatoryCents,'income is not mandatory');
  assert.ok(r.events.filter(e=>e.kind==='mandatory').every(e=>!e.id.startsWith('fixed:9:')));
 });

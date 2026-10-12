@@ -19,7 +19,10 @@ const salary={rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:510
 const stamp='2026-10-12T07:00:00Z';
 const mono={id:3,name:'Monobank',kind:'credit',mono_account_id:'m1',balance:0,debt:29070.45,credit_limit:50000,debt_month:'2026-10-01',balance_updated_at:stamp};
 const privat={id:4,name:'ПриватБанк',kind:'credit',balance:0,debt:9256.55,credit_limit:30000,debt_month:'2026-09-01',balance_updated_at:stamp};
-const repay=r=>r.events.filter(e=>e.kind==='repay').map(e=>[e.id,e.date,e.contractualDueDate,e.amountCents]);
+// v151: виплата 21-го гасить і новіший борг (модель «власні >= 0»), тож перевіряємо кошики знімка: перша подія погашення кошика,
+// її плановий день (правило 21-го M+1), договірний строк і сума кошика; погашення не пізніше планового дня
+const buckets=r=>r.snapshot.accounts.flatMap(a=>a.debt_months.map(([m,v])=>{const id='repay:'+a.id+':'+m,e=r.events.find(e=>e.kind==='repay'&&(e.id===id||e.id.startsWith(id+':')));return {id,date:e&&e.date,plannedRepaymentDate:e&&e.plannedRepaymentDate,contractualDueDate:e&&e.contractualDueDate,amountCents:Math.round(v*100)};})).sort((x,y)=>String(x.plannedRepaymentDate).localeCompare(String(y.plannedRepaymentDate))||x.id.localeCompare(y.id));
+const repay=r=>buckets(r).map(e=>[e.id,e.plannedRepaymentDate,e.contractualDueDate,e.amountCents]);
 // дата виплати 21-го числа місяця M+1 з подій рушія (та сама подія, що на графіку і в боті)
 const payout21=(r,month)=>r.events.find(e=>e.kind==='payout'&&e.date.slice(0,7)===month&&Math.abs(Number(e.date.slice(8))-21)<=1).date;
 
@@ -28,7 +31,7 @@ test('October debt is repaid from the 21st payout of November, September debt fr
  assert.equal(payout21(r,'2026-11'),'2026-11-20','21.11.2026 субота: виплата в пʼятницю 20.11');
  assert.equal(payout21(r,'2026-10'),'2026-10-21','21.10.2026 середа');
  assert.deepEqual(repay(r),[['repay:4:2026-09','2026-10-21','2026-10-24',925655],['repay:3:2026-10','2026-11-20','2026-11-24',2907045]]);
- for(const e of r.events.filter(e=>e.kind==='repay'))assert.equal(e.date,payout21(r,e.contractualDueDate.slice(0,7)));
+ for(const e of buckets(r)){assert.equal(e.plannedRepaymentDate,payout21(r,e.contractualDueDate.slice(0,7)));assert.ok(e.date<=e.plannedRepaymentDate,e.id);}
 });
 
 test('the payout day 21 decides, not its name: salary_day 21 gives the same dates',()=>{

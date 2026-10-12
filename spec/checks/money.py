@@ -15,11 +15,11 @@ def parity(page):
     r=finance_ref(page,verify_ts=True)
     check(len(finance_state(page)['data']['transactions'])>=4, 'немає фікстурних операцій')
     check(r['snapshot']['unassignedAdjustmentCents']==-20000, 'без рахунку: 100-300=-200')
-    # v145: «доступно після виплати» у підказці плитки «Бюджет періоду»
+    # v145: «доступно після виплати» у підказці плитки «Бюджет періоду»; v151: це A рушія (власні на виплату − резерв − погашення)
     page.locator('.kpi-budget .kpi-i').click()
     tip=page.inner_text('.kpi-tip[data-k=budget]')
-    m=re.search(r'= (−?[\d\s  ]+(?:,\d+)?) ₴ \(власні', tip)
-    check(m and abs(num(m.group(1))-r['nextPlan']['baseAvailableCents']/100)<=1, f'головна сума не збігається з проєкцією: {[x for x in tip.split(chr(10)) if "Доступно після" in x]!r}')
+    m=re.search(r'= (−?[\d\s  ]+(?:,\d+)?) ₴ \(ліміт не дохід', tip)
+    check(m and abs(num(m.group(1))-r['nextPlan']['baseAvailableCents']/100)<=1, f'головна сума не збігається з проєкцією: {[x for x in tip.split(chr(10)) if "Після виплати" in x]!r}')
     page.keyboard.press('Escape')
     check(len({e['id'] for e in r['events']})==len(r['events']), 'події дублюються')
     shot(page,'money-parity-1920.jpg',full=False)
@@ -96,9 +96,14 @@ def budget_capped(page):
     c=r['currentPeriod']
     check(c['targetCents']==c['actualVariableCents']+c['remainingTargetCents'], 'ціль не дорівнює факту плюс прогноз')
     check(c['leftDays']==0 or c['remainingTargetCents']>=1500000*c['leftDays']//c['periodDays'], 'прогноз нижче мінімального темпу')
-    check(any(d['shortfallCents']>0 for d in r['days']), 'демо не показує розриву')
+    # v150 (модель «власні ≥ 0»): дефіцит власних іде в борг кредитки до ліміту, далі нестачею (shortfallCents); власні не мінус
+    d0 = r['days'][0]['debtCents']
+    check(all(d['closingCashCents']>=0 for d in r['days']), 'власні кошти пішли в мінус')
+    check(any(d['shortfallCents']>0 or d['debtCents']>d0 for d in r['days']), 'демо не показує розриву: ні боргу кредитки, ні нестачі')
     go_tab(page,1)
-    check(abs(num(page.inner_text('.bud-pool .bud-kpi-v'))-r['currentPeriod']['targetCents']/100)<=1, 'бюджет не є ціллю')
+    # v150: плитка «Бюджет періоду» = повний бюджет періоду від виплати (periodBudgetStart), не ціль рушія від сьогодні
+    pb=page.evaluate('window.__periodBudget')
+    check(abs(num(page.inner_text('.bud-pool .bud-kpi-v'))-pb['budget']/100)<=1, 'бюджет не є повним бюджетом періоду')
     check('обмежено готівкою' not in page.inner_text('.bud-pool'), 'мовчазне обмеження готівкою')
     shot(page,'budget-1920.jpg',full=False)
 

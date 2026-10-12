@@ -35,14 +35,15 @@ def mobile(page):
     miss = [s for s in SECTIONS[:-1] if s not in txt]
     check(not miss, f'у списку немає: {miss}')
     check('Версія cashflow-v' in txt, 'у списку немає рядка підказок із версією')
-    # Накопичення: окремий екран поверх меню
+    # v150: Накопичення на всю сторінку налаштувань з «← Назад», без вікна поверх меню
     d.locator('button', has_text='Накопичення').first.click()
     page.wait_for_timeout(400)
-    sv = dialog(page, 'Накопичення')
-    check(sv.count() == 1, '«Накопичення» не відкрило екран')
-    sv.locator('[aria-label="Закрити"]').first.click()
+    sv = d.locator('.set-msec[data-sec=savings]')
+    check(sv.count() == 1 and dialog(page, 'Накопичення').count() == 0, '«Накопичення» не відкрило сторінку розділу (або відкрило вікно)')
+    check('Накопичення' in sv.inner_text(), 'сторінка розділу без заголовка «Накопичення»')
+    d.locator('button', has_text='Назад').click()
     page.wait_for_timeout(300)
-    check(sv.count() == 0, 'екран «Накопичення» не закрився')
+    check(sv.count() == 0 and d.inner_text().split('\n')[0].strip() == 'Налаштування', 'сторінка «Накопичення» не повернулась до списку')
     # Інтеграції: другий рівень і повернення
     d.locator('button', has_text='Інтеграції').first.click()
     page.wait_for_timeout(300)
