@@ -76,6 +76,6 @@ test('bot message shows the same dates',async()=>{
  const {financeProjection}=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/budget.ts')).href);
  const {formatFinanceMessage}=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/finance-message.ts')).href);
  const lines=formatFinanceMessage(financeProjection(prod(),{asof:ASOF,through:'2027-01-10'})).split('\n').filter(l=>/борг/.test(l));
- assert.ok(lines.some(l=>l.includes('Monobank')&&l.includes('до 20.11')),lines.join('\n'));
- assert.ok(lines.some(l=>l.includes('ПриватБанк')&&l.includes('до 21.10')),lines.join('\n'));
+ assert.ok(lines.some(l=>l.includes('Monobank')&&l.includes('план погашення 20.11')),lines.join('\n'));
+ assert.ok(lines.some(l=>l.includes('ПриватБанк')&&l.includes('план погашення 21.10')),lines.join('\n'));
 });

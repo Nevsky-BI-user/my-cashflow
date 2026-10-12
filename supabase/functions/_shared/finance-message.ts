@@ -30,7 +30,7 @@ export function formatFinanceMessage(p: FinanceMessage, unassigned: {count: numb
       const parts = [`${a.name}: ${money(a.balanceCents || 0)}`];
       if (a.debtCents > 0) {
         const repay = p.events.find(e => e.kind === 'repay' && e.cashDeltaCents < 0 && String(e.id).startsWith(`repay:${a.id}:`));
-        parts.push(`борг ${money(a.debtCents)}` + (repay ? ` до ${day(repay.date)}` : ''));
+        parts.push(`борг ${money(a.debtCents)}` + (repay ? ` · план погашення ${day(repay.date)}` : ''));
       }
       if (Number(a.credit_limit) > 0) parts.push(`доступно ${money(Math.max(0, Math.round(Number(a.credit_limit) * 100) - (a.debtCents || 0)))}`);
       const ms = p.minSpend.find(m => String(m.accountId) === String(a.id));
