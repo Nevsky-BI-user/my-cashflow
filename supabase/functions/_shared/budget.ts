@@ -14,25 +14,27 @@ export type Account = {
 // Операція з привʼязкою до рахунку (для похідного балансу ручних рахунків)
 // source: 'mono' | 'telegram' | 'manual' (потрібен лише для unassignedAdj: операції Monobank без рахунку не рахуємо)
 // date: дата операції (YYYY-MM-DD), потрібна для порогу мінімальних витрат (без неї перші 10 знаків created_at)
-// fixed_id: операція оплачує постійний платіж (п. 13), див. fixedPaid
+// fixed_id: операція оплачує постійний платіж (п. 13), див. fixedPaid; credit_id: оплата розстрочки свого місяця
 export type AccTx = {
   id?: string | number; category_id?: string | number | null;
   account_id: number | string | null; type: string; amount: number | string; created_at: string; source?: string | null; date?: string | null;
-  fixed_id?: number | string | null;
+  fixed_id?: number | string | null; credit_id?: number | string | null;
 };
 // Поріг мінімальних витрат рахунку за календарний місяць (DESIGN.md, п. 11)
 export type MinSpendRow = { accountId: number; month: string; spent: number; min: number; fee: number; left: number; metOn?: string };
 // variable: сума змінна, amount = середня оцінка (п. 13; на розрахунок не впливає)
+// period: 'month' (день day_of_month) або 'week' (ISO-день weekday 1=пн..7=нд; без коректного weekday подій немає); bank: лише підпис
 export type Fixed = {
   id?: number | string; name: string; amount: number | string; day_of_month: number; type: string; active?: boolean;
   credit_ok?: boolean | null; variable?: boolean | null;
+  period?: string | null; weekday?: number | string | null; bank?: string | null;
 };
 export type Credit = {
-  name: string; monthly_amount: number | string; payment_day: number;
+  id?: number | string; name: string; monthly_amount: number | string; payment_day: number;
   start_year: number; start_month: number; total_payments: number; credit_ok?: boolean | null; source?: string | null;
 };
 export type SalaryCfg = { rate?: number | string | null; advance_amount?: number | string | null; salary_amount?: number | string | null; split_day: number; advance_day: number; salary_day: number; savings_pct?: number | null };
-// paid: ключі `${fixed_id}|YYYY-MM` оплачених постійних платежів (п. 13), будує fixedPaid з операцій
+// paid: ключі `${fixed_id}|YYYY-MM` і `${fixed_id}|W<понеділок YYYY-MM-DD>` оплачених постійних платежів (п. 13), будує fixedPaid з операцій
 export type Snapshot = { accounts: Account[]; fixed: Fixed[]; credits: Credit[]; salary: SalaryCfg; savings_pct?: number | null; paid?: string[] };
 
 export type Payout = { date: string; kind: 'advance' | 'salary'; amount: number };
@@ -45,6 +47,8 @@ const parse = (s: string) => new Date(s + 'T00:00:00Z');
 export const addDays = (s: string, n: number) => iso(new Date(parse(s).getTime() + n * DAY));
 export const diffDays = (a: string, b: string) => Math.round((parse(b).getTime() - parse(a).getTime()) / DAY);
 const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+// ISO-день тижня дати YYYY-MM-DD: 1=пн..7=нд
+const isoWeekday = (s: string) => (parse(s).getUTCDay() + 6) % 7 + 1;
 const round2 = (x: number) => Math.round(x * 100) / 100;
 const num = (x: unknown) => Number(x) || 0;
 
@@ -135,7 +139,8 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   const adjustment=stamps.length?sum(txs.filter(t=>t.account_id==null&&t.source!=='mono'&&Date.parse(t.created_at)>Math.min(...stamps)).map(t=>(t.type==='income'?1:-1)*cents(t.amount))):0;
   const positiveOwnCents=Math.max(0,sum([...accounts.map(a=>Math.max(0,a.balanceCents)),adjustment]));
   const cashCents=sum([...accounts.map(a=>a.balanceCents),adjustment]);
-  const creditDebtCents=sum(accounts.filter(a=>a.kind==='credit').map(a=>a.debtCents));
+  // Борг усіх карток, і кредитних, і дебетових з боргом (як Mono з лімітом); кожен кошик має одну подію погашення.
+  const creditDebtCents=sum(accounts.map(a=>a.debtCents));
   const snapshot={positiveOwnCents,cashCents,unassignedAdjustmentCents:adjustment,creditDebtCents,accounts,warnings:[]};
   const cfg: Record<string,any>|null|undefined=data.salary;
   const valid=cfg&&[cfg.advance_day,cfg.salary_day,cfg.split_day].every(v=>Number.isInteger(Number(v))&&Number(v)>=1&&Number(v)<=31);
@@ -161,14 +166,25 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   const events: Record<string,any>[]=[];
   const make=(id: string,d: string,name: string,kind: string,amount: number,extra: Record<string,any>={})=>({id,occurrenceId:id,date:d,name,kind,cashDeltaCents:kind==='income'||kind==='payout'?amount:-amount,debtDeltaCents:0,funding:'cash',certainty:'planned',amountCents:amount,...extra});
   for(const p of payoutList)if(p.date>asof&&p.date<=endGeneration)events.push(make('payout:'+p.kind+':'+p.date,p.date,p.kind==='advance'?'Аванс':'Зарплата','payout',p.amountCents));
-  const paid=new Set(txs.filter(t=>t.type==='expense'&&t.fixed_id!=null).map(t=>String(t.fixed_id)+'|'+txDate(t).slice(0,7)));
+  // ISO-день тижня 1=пн..7=нд і понеділок тижня дати.
+  const isoDay=(s: string)=>(day(s).getUTCDay()+6)%7+1;
+  const monday=(s: string)=>plus(s,1-isoDay(s));
+  const weekly=(f: Fixed)=>f.period==='week';
+  // Витрата з fixed_id закриває місяць своєї дати і тиждень пн-нд; витрата з credit_id: розстрочку свого місяця.
+  const paid=new Set(txs.filter(t=>t.type==='expense'&&t.fixed_id!=null).flatMap(t=>{const d=txDate(t);return [String(t.fixed_id)+'|'+d.slice(0,7),...(/^\d{4}-\d{2}-\d{2}$/.test(d)?[String(t.fixed_id)+'|W'+monday(d)]:[])];}));
+  const paidCredit=new Set(txs.filter(t=>t.type==='expense'&&t.credit_id!=null).map(t=>String(t.credit_id)+'|'+txDate(t).slice(0,7)));
   for(let k=monthIndex(asof);k<=monthIndex(endGeneration);k++){
     const [y,m]=ym(k),month=date(y,m,1).slice(0,7);
-    (data.fixed||[]).forEach((f,i)=>{const d=date(y,m,Math.min(Number(f.day_of_month),last(y,m)));if(f.active===false||d<asof||d>endGeneration||(f.id!=null&&paid.has(String(f.id)+'|'+month)))return;events.push(make('fixed:'+String(f.id??i)+':'+month,d,f.name,f.type==='income'?'income':'mandatory',Math.max(0,cents(f.amount)),{creditEligible:f.type!=='income'&&f.credit_ok===true}));});
-    (data.credits||[]).forEach((c,i)=>{const d=date(y,m,Math.min(Number(c.payment_day),last(y,m))),first=Number(c.start_year)*12+Number(c.start_month);if(d<asof||d>endGeneration||k<first||k>=first+Number(c.total_payments))return;events.push(make('installment:'+String((c as any).id??i)+':'+month,d,c.name+' (розстрочка)','mandatory',Math.max(0,cents(c.monthly_amount)),{creditEligible:c.credit_ok===true}));});
+    (data.fixed||[]).forEach((f,i)=>{const d=date(y,m,Math.min(Number(f.day_of_month),last(y,m)));if(weekly(f)||f.active===false||d<asof||d>endGeneration||(f.id!=null&&paid.has(String(f.id)+'|'+month)))return;events.push(make('fixed:'+String(f.id??i)+':'+month,d,f.name,f.type==='income'?'income':'mandatory',Math.max(0,cents(f.amount)),{creditEligible:f.type!=='income'&&f.credit_ok===true}));});
+    // Розстрочка з датою <= asof сплачена за планом; витрата з credit_id закриває платіж свого місяця.
+    (data.credits||[]).forEach((c,i)=>{const d=date(y,m,Math.min(Number(c.payment_day),last(y,m))),first=Number(c.start_year)*12+Number(c.start_month);if(d<=asof||d>endGeneration||k<first||k>=first+Number(c.total_payments)||(c.id!=null&&paidCredit.has(String(c.id)+'|'+month)))return;events.push(make('installment:'+String((c as any).id??i)+':'+month,d,c.name+' (розстрочка)','mandatory',Math.max(0,cents(c.monthly_amount)),{creditEligible:c.credit_ok===true}));});
   }
+  // Щотижневі постійні: подія на кожну дату з ISO-днем weekday, id з датою події; оплачений тиждень подій не дає.
+  (data.fixed||[]).forEach((f,i)=>{const w=Number(f.weekday);if(!weekly(f)||f.active===false||!Number.isInteger(w)||w<1||w>7)return;
+    for(let d=plus(asof,(w-isoDay(asof)+7)%7);d<=endGeneration;d=plus(d,7)){if(f.id!=null&&paid.has(String(f.id)+'|W'+monday(d)))continue;events.push(make('fixed:'+String(f.id??i)+':'+d,d,f.name,f.type==='income'?'income':'mandatory',Math.max(0,cents(f.amount)),{creditEligible:f.type!=='income'&&f.credit_ok===true}));}
+  });
   const dueFor=(m: string)=>{const [y,n]=ym(monthIndex(m+'-01')+1);return date(y,n,24);};
-  for(const a of accounts.filter(a=>a.kind==='credit'))for(const [month,amount] of a.debt_months){const due=dueFor(month),planned=due<asof?asof:nextDate&&nextDate<due?nextDate:due;events.push(make('repay:'+String(a.id)+':'+month,planned,a.name||'Погашення кредитки','repay',cents(amount),{accountId:a.id,debtDeltaCents:-cents(amount),contractualDueDate:due,plannedRepaymentDate:planned}));}
+  for(const a of accounts)for(const [month,amount] of a.debt_months){const due=dueFor(month),planned=due<asof?asof:nextDate&&nextDate<due?nextDate:due;events.push(make('repay:'+String(a.id)+':'+month,planned,a.name||'Погашення кредитки','repay',cents(amount),{accountId:a.id,debtDeltaCents:-cents(amount),contractualDueDate:due,plannedRepaymentDate:planned}));}
   const minSpend: Record<string,any>[]=[];
   for(const a of accounts){if(a.id==null||cents(a.min_spend)<=0)continue;let spent=0,metOn;
     for(const t of txs.filter(t=>String(t.account_id)===String(a.id)&&t.type==='expense'&&txDate(t).slice(0,7)===asof.slice(0,7)).sort((a,b)=>cmp(txDate(a),txDate(b))||cmp(String(a.created_at),String(b.created_at))||cents(a.amount)-cents(b.amount))){spent+=cents(t.amount);if(metOn==null&&spent>=cents(a.min_spend))metOn=txDate(t);}
@@ -216,13 +232,17 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   };
   const between=(start: string,end: string)=>events.filter(e=>e.date>=start&&e.date<end&&e.kind!=='variable');
   const mandatory=(start: string,end: string)=>sum(between(start,end).filter(e=>e.kind==='mandatory'||e.kind==='fee').map(e=>e.amountCents));
+  // До наступної виплати: власні кошти мінус обовʼязкові й комісії [asof; виплата); борг карток гаситься з виплати.
+  const untilPayout=nextDate?(()=>{const days=distance(asof,nextDate),value=safe(positiveOwnCents-mandatory(asof,nextDate));return {end:nextDate,days,cents:value,dailyCents:value>0&&days>0?Math.floor(value/days):0};})():null;
   let nextPlan: Record<string,any>|null=null,currentPeriod: Record<string,any>|null=null;
   const periods: Record<string,any>[]=[];
   if(hasPlan){const next=payoutAt(nextDate),after=payoutAt(followingDate),mandatoryCents=mandatory(nextDate,followingDate),baseAvailableCents=safe(positiveOwnCents+next.amountCents-mandatoryCents-creditDebtCents),targetCents=Math.max(1500000,baseAvailableCents);
     nextPlan={start:nextDate,end:followingDate,days:distance(nextDate,followingDate),nextPayout:next,followingPayout:after,positiveOwnCents,debtCents:creditDebtCents,mandatoryCents,otherIncomeCents:sum(between(nextDate,followingDate).filter(e=>e.kind==='income').map(e=>e.amountCents)),eligibleMandatoryCents:sum(between(nextDate,followingDate).filter(e=>e.kind==='mandatory'&&e.creditEligible).map(e=>e.amountCents)),baseAvailableCents,targetCents,gapCents:Math.max(0,targetCents-baseAvailableCents),averageDailyCents:targetCents/distance(nextDate,followingDate),...distribution(targetCents,nextDate,followingDate,baseAvailableCents)};
-    const start=payoutDates.filter(d=>d<=asof).pop()||asof,actualVariableCents=sum(txs.filter(t=>t.type==='expense'&&t.fixed_id==null&&txDate(t)>=start).map(t=>cents(t.amount))),mandatoryCentsNow=mandatory(asof,nextDate),available=safe(cashCents-mandatoryCentsNow-creditDebtCents),target=Math.max(1500000,actualVariableCents+available),remaining=Math.max(0,target-actualVariableCents),dist=distribution(remaining,plus(asof,1),nextDate,available);
-    currentPeriod={start,end:nextDate,actualVariableCents,targetCents:target,remainingTargetCents:remaining,futureSchedule:dist.schedule};
-    periods.push({start,end:nextDate,basis:'current',openingCashCents:cashCents,payoutCents:0,mandatoryCents:mandatoryCentsNow,debtReserveCents:creditDebtCents,availableCents:available,targetCents:target,gapCents:Math.max(0,remaining-available),...dist});
+    // Поточний період: каса мінус обовʼязкові до виплати; борг карток резервується один раз у nextPlan.
+    // Темп щоденних витрат від завтра до дня перед виплатою: більше з 15 000 ₴ на весь період [start; виплата) і untilPayout на дні, що лишились.
+    const start=payoutDates.filter(d=>d<=asof).pop()||asof,actualVariableCents=sum(txs.filter(t=>t.type==='expense'&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start).map(t=>cents(t.amount))),mandatoryCentsNow=mandatory(asof,nextDate),available=safe(cashCents-mandatoryCentsNow),periodDays=distance(start,nextDate),leftDays=Math.max(0,distance(plus(asof,1),nextDate)),floorLeft=periodDays>0?Math.floor(1500000*leftDays/periodDays):0,freeLeft=Math.max(0,untilPayout?untilPayout.cents:0),remaining=leftDays>0?Math.max(floorLeft,freeLeft):0,target=actualVariableCents+remaining,dist=distribution(remaining,plus(asof,1),nextDate,available);
+    currentPeriod={start,end:nextDate,actualVariableCents,targetCents:target,remainingTargetCents:remaining,periodDays,leftDays,dailyCents:leftDays>0?remaining/leftDays:0,futureSchedule:dist.schedule};
+    periods.push({start,end:nextDate,basis:'current',openingCashCents:cashCents,payoutCents:0,mandatoryCents:mandatoryCentsNow,debtReserveCents:0,availableCents:available,targetCents:target,gapCents:Math.max(0,remaining-available),...dist});
     // Обчислення періодів послідовне: знак залишку зберігається.
     const futureDates=payoutDates.filter(d=>d>asof);
     for(let i=0;i<futureDates.length-1&&futureDates[i]<=through;i++){
@@ -238,7 +258,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     for(const e of today){cash=safe(cash+e.cashDeltaCents);debt=safe(debt+e.debtDeltaCents);e.cashAfterCents=cash;e.debtAfterCents=debt;minimum=Math.min(minimum,cash);if(e.kind==='variable'){variable+=e.amountCents;byCategory.push({id:e.categoryId,name:e.name,amountCents:e.amountCents});}}
     days.push({date:d,openingCashCents:opening,closingCashCents:cash,debtCents:debt,netCents:cash-debt,variableCents:variable,byCategory,minCashCents:minimum,shortfallCents:Math.max(0,-minimum),eventIds:today.map(e=>e.id)});
   }
-  return {snapshot,nextPlan,reason:nextPlan?null:'no_next_payout',currentPeriod,periods,events:visible,days,scenario,minSpend};
+  return {snapshot,nextPlan,reason:nextPlan?null:'no_next_payout',currentPeriod,untilPayout,periods,events:visible,days,scenario,minSpend};
 }
 
 // Бюджет розпочатого періоду, обмежений готівкою (DESIGN.md, п. 5):
@@ -346,12 +366,15 @@ export function lastPayout(cfg: SalaryCfg, today: string): Payout {
 }
 
 // п. 13: оплачені постійні платежі. Операція type = 'expense' з fixed_id і датою (без неї перші 10 знаків created_at)
-// у місяці M закриває платіж місяця M (і раніше дати платежу). Ключі `${fixed_id}|YYYY-MM` для Snapshot.paid.
+// у місяці M закриває платіж місяця M (і раніше дати платежу). Ключі `${fixed_id}|YYYY-MM` для Snapshot.paid,
+// для щотижневих ще `${fixed_id}|W<понеділок тижня операції>` (тиждень пн-нд).
 export function fixedPaid(txs: AccTx[]): string[] {
   const out = new Set<string>();
   for (const t of txs || []) {
     if (t.fixed_id == null || t.type !== 'expense') continue;
-    out.add(String(t.fixed_id) + '|' + String(t.date || t.created_at || '').slice(0, 7));
+    const d = String(t.date || t.created_at || '').slice(0, 10);
+    out.add(String(t.fixed_id) + '|' + d.slice(0, 7));
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) out.add(String(t.fixed_id) + '|W' + addDays(d, 1 - isoWeekday(d)));
   }
   return [...out].sort();
 }
@@ -377,7 +400,7 @@ function obligations(snap: Snapshot, start: string, end: string): Obligation[] {
     const ld = lastDay(y, m);
     const ym = `${y}-${String(m).padStart(2, '0')}`;
     for (const f of snap.fixed || []) {
-      if (f.active === false) continue;
+      if (f.active === false || f.period === 'week') continue;
       if (f.id != null && paid.has(String(f.id) + '|' + ym)) continue; // п. 13: оплачено в цьому місяці
       const d = iso(mk(y, m, Math.min(Number(f.day_of_month), ld)));
       if (!(start <= d && d < end)) continue;
@@ -395,6 +418,16 @@ function obligations(snap: Snapshot, start: string, end: string): Obligation[] {
         const ok = c.credit_ok ?? String(c.source || '').toLowerCase().includes('privat');
         out.push({ date: d, name: c.name + ' (розстрочка)', amount: num(c.monthly_amount), credit_ok: ok === true });
       }
+    }
+  }
+  // Щотижневі постійні: кожна дата з ISO-днем weekday у [start; end); оплачений тиждень (ключ W<понеділок>) пропускаємо
+  for (const f of snap.fixed || []) {
+    const w = Number(f.weekday);
+    if (f.active === false || f.period !== 'week' || !Number.isInteger(w) || w < 1 || w > 7) continue;
+    for (let d = addDays(start, (w - isoWeekday(start) + 7) % 7); d < end; d = addDays(d, 7)) {
+      if (f.id != null && paid.has(String(f.id) + '|W' + addDays(d, 1 - isoWeekday(d)))) continue;
+      const a = num(f.amount);
+      out.push({ date: d, name: f.name, amount: f.type !== 'income' ? a : -a, credit_ok: f.credit_ok === true });
     }
   }
   return out.sort(byDate);

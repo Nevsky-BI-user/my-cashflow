@@ -41,15 +41,13 @@ def desktop(page):
             cell.click()
         page.wait_for_timeout(100)
         details=page.inner_text('.ck-day-events')
-        if name=='Щоденні витрати':
-            iso=cell.get_attribute('data-date')
-            events=[e for e in finance_ref(page)['events'] if e['date']==iso and e['kind']=='variable']
-            check(events and all(e['name'] in details for e in events), 'деталі дня не містять змінних категорій')
-        else:
-            check(name in details, f'Повна назва недоступна після вибору дня: {name}')
+        # v143: змінні витрати в клітинках не показуються (рядок прогнозу на період у таблиці)
+        check(not name.startswith('Щоденні витрати'), f'у клітинці лишився рядок змінних витрат: {name}')
+        check(name in details, f'Повна назва недоступна після вибору дня: {name}')
 
     check(page.evaluate("[...document.querySelectorAll('.ck-bd-list .ce-n')].every(e=>e.scrollWidth<=e.clientWidth+1)"), 'Назви розкладу дня обрізані')
     page.locator('.ck-day .ck-link').click()
+    _var_rows(page)
     check(page.inner_text('.ck-month') == f'{MO[t.month - 1]} {t.year}', f'заголовок місяця: {page.inner_text(".ck-month")!r}')
     today = cal.locator('.cal-cell.today')
     check(today.count() == 1, 'немає клітинки «сьогодні»')
@@ -118,7 +116,10 @@ def table_1920(page, t):
     for s in ('Дата', 'Подія', 'Сума', 'Баланс після'):
         check(s in hd, f'у таблиці немає колонки «{s}»')
     for d in sorted(dates):
-        rr = [r for r in rows if int(r['d'][8:]) == d]
+        # рядок прогнозу щоденних витрат (cal-ev-var) підсумовує період і балансу не має
+        rr = [r for r in rows if int(r['d'][8:]) == d and 'cal-ev-var' not in r['c']]
+        if not rr:
+            continue
         if d >= t.day:
             check(rr[-1]['b'] is not None and rr[-1]['a'].strip() != '', f'{d}: немає балансу після на останньому рядку дня')
         else:
@@ -127,13 +128,17 @@ def table_1920(page, t):
     projection=finance_ref(page)
     check(not any(e['funding']=='credit' for e in projection['events']), 'база автоматично переносить платежі на кредитку')
     days={d['date']:d for d in projection['days']}
-    for d in sorted({r['d'] for r in rows if r['d']>=t.isoformat()}):
-        last=[r for r in rows if r['d']==d][-1]
-        check(abs(last['b']-days[d]['closingCashCents']/100)<=1, 'баланс календаря не з єдиної проєкції '+d)
+    for d in sorted({r['d'] for r in rows if r['d']>=t.isoformat() and 'cal-ev-var' not in r['c']}):
+        last=[r for r in rows if r['d']==d and 'cal-ev-var' not in r['c']][-1]
+        # «Баланс після» = cashAfterCents останньої незмінної події дня (змінні витрати дня: у розкладі)
+        evs=[e for e in projection['events'] if e['date']==d and e['kind']!='variable']
+        want=evs[-1]['cashAfterCents']/100 if evs else days[d]['openingCashCents']/100
+        check(abs(last['b']-want)<=1, 'баланс календаря не з єдиної проєкції '+d)
     for d in pays:
         if int(d) >= t.day:
             cb = page.evaluate(CELLBAL, d)
-            tb = [r for r in rows if int(r['d'][8:]) == int(d)][-1]['b']
+            # v143: каса в клітинці = на кінець дня (зі змінними витратами дня), таблиця показує баланс після подій
+            tb = days[f"{t.isoformat()[:8]}{int(d):02d}"]['closingCashCents'] / 100
             v = int(''.join(ch for ch in cb if ch.isdigit()) or 0) * (-1 if '−' in cb else 1)
             check(abs(v - tb) <= 1, f'{d}: у клітинці {cb!r}, у таблиці {tb}')
     scrollers=page.evaluate("""[...document.querySelectorAll('.content *')].filter(e=>e.offsetParent&&/auto|scroll/.test(getComputedStyle(e).overflowY)&&e.scrollHeight>e.clientHeight+2).map(e=>({cls:e.className,allowed:e.matches('.ck-day,.ck-side'),bottom:e.getBoundingClientRect().bottom}))""")
@@ -155,6 +160,29 @@ def table_1920(page, t):
     page.wait_for_timeout(300)
 
 
+def _var_rows(page):
+    """Таблиця «Події і баланс»: один рядок прогнозу на період у межах місяця, сума й діапазон за подіями рушія."""
+    from collections import OrderedDict
+    p = finance_ref(page)
+    month = page.evaluate("document.querySelector('.ck-cal .cal-cell[data-date]').dataset.date.slice(0,7)")
+    groups = OrderedDict()
+    for e in p['events']:
+        if e['kind'] != 'variable' or e['date'][:7] != month:
+            continue
+        q = next((q for q in p['periods'] if q['start'] <= e['date'] < q['end']), None)
+        g = groups.setdefault(q['start'] if q else month, {'from': e['date'], 'to': e['date'], 'c': 0})
+        g['c'] += e['amountCents']; g['from'] = min(g['from'], e['date']); g['to'] = max(g['to'], e['date'])
+    rows = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev.cal-ev-var')].map(r=>({d:r.dataset.date,b:r.dataset.bal,n:r.querySelector('.ce-n').textContent,a:r.querySelector('.ce-a').textContent}))")
+    check(len(rows) == len(groups), f'рядків прогнозу {len(rows)}, періодів зі змінними витратами {len(groups)}')
+    dm = lambda s: s[8:10] + '.' + s[5:7]
+    for r, g in zip(rows, groups.values()):
+        amount = f"{round(g['c'] / 100):,}".replace(',', ' ')
+        want = f"Щоденні витрати, прогноз: {amount} ₴ ({dm(g['from'])}-{dm(g['to'])})"
+        check(r['d'] == g['from'] and r['b'] is None, f'рядок прогнозу не на першій даті або з балансом: {r}')
+        check(r['n'].replace(' ', ' ') == want, f'рядок прогнозу {r["n"]!r}, очікувано {want!r}')
+    print(f'      рядки прогнозу: {[r["n"] for r in rows]}')
+
+
 def breakdown(page, t):
     """Клік по дню: розклад балансу (стартова каса, події до дня з балансом після, підсумок = баланс дня в таблиці)."""
     cal = page.locator('.panel.p-credits.desk')
@@ -162,7 +190,8 @@ def breakdown(page, t):
     fut = [r for r in rows if int(r['d'][8:]) > t.day and r['b'] is not None]
     check(fut, 'у таблиці немає майбутніх рядків з балансом')
     iso = fut[-1]['d']
-    want = [r for r in rows if r['d'] == iso][-1]['b']
+    # v143: підсумок розкладу = каса на кінець дня з рушія (змінні витрати дня в таблиці підсумовані рядком прогнозу)
+    want = next(d for d in finance_ref(page)['days'] if d['date'] == iso)['closingCashCents'] / 100
     page.click(f'.ck-cal .cal-cell[data-date="{iso}"]')
     page.wait_for_timeout(250)
     check(cal.locator('.cal-cell.sel').count() == 1, 'клік не виділив день')

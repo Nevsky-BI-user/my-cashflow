@@ -12,7 +12,9 @@ def chart(page):
     check(rng.count() == 1, 'немає повзунка дат прогнозу')
     check(rng.get_attribute('max') == '59', f'повзунок до {rng.get_attribute("max")}, а не 59')
     r0 = page.inner_text('.fc-readout')
-    check('власні ≈' in r0 and 'мінус борг ≈' in r0, f'readout без двох ліній (власні, мінус борг): {r0!r}')
+    # v143: серію «власні мінус борг» прибрано (вимога власника): лише лінія каси
+    check('власні ≈' in r0 and 'мінус борг' not in r0, f'readout не лише з «власні ≈»: {r0!r}')
+    check(page.locator('.dv-fc .fc-net').count() == 0 and 'мінус борг' not in page.inner_text('.dv-fc'), 'на графіку лишилась серія «мінус борг»')
     rng.evaluate(SETR, 10)
     page.wait_for_timeout(150)
     r1 = page.inner_text('.fc-readout')

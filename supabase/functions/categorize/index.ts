@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
   // Категорії сімейні (RLS віддає обом усе), тому беремо всі, фільтруємо за типом
   const { data: cats, error: catErr } = await sb
     .from('categories')
-    .select('id, name, is_income');
+    .select('id, name, is_income, hint');
   if (catErr) {
     console.error('categorize: categories lookup failed', { txId, catErr });
     return json({ error: 'categories_lookup_failed' }, 500);
@@ -120,7 +120,8 @@ Deno.serve(async (req) => {
   }
 
   // Claude API
-  const catList = pool.map((c) => `${c.id}:${c.name}`).join(', ');
+  // Підказка категорії (приклади продавців) допомагає не плутати, напр. косметику з одягом
+  const catList = pool.map((c) => `${c.id}:${c.name}` + (c.hint ? ` (${c.hint})` : '')).join('; ');
   const amount = Math.abs(Number(tx.amount) || 0);
   const system = `Категоризуй транзакцію. Категорії: {${catList}}. Відповідай ТІЛЬКИ числом: id категорії.`;
   const userMsg = `'${desc}', MCC: ${mcc ?? 'немає'}, ${amount} грн`;

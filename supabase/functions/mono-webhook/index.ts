@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -19,6 +20,12 @@ function categorizeLater(id: number) {
   const wait = (globalThis as any).EdgeRuntime?.waitUntil;
   if (wait) wait(p);
 }
+
+// Перше число наступного місяця для дати YYYY-MM-DD
+const nextMonth = (d: string) => {
+  const [y, m] = d.split('-').map(Number);
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+};
 
 Deno.serve(async (req) => {
   // Monobank робить GET для перевірки доступності webhook
@@ -82,6 +89,17 @@ Deno.serve(async (req) => {
   const type = si.amount < 0 ? 'expense' : 'income';
   const date = new Date(si.time * 1000).toISOString().split('T')[0];
 
+  // Списання за графіком розстрочки: привʼязка credit_id, платіж місяця закривається фактом
+  let creditId: number | null = null;
+  if (type === 'expense') {
+    const { data: crs, error: crErr } = await sb.from('credits')
+      .select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,source');
+    const { data: linked, error: lkErr } = await sb.from('transactions').select('credit_id,date,type')
+      .not('credit_id', 'is', null).gte('date', date.slice(0, 7) + '-01').lt('date', nextMonth(date));
+    if (crErr || lkErr) console.error('credit match lookup error:', (crErr || lkErr)!.message);
+    else creditId = matchCredit(crs || [], { amount, date, bank: accountId != null ? 'mono' : null, description: si.description }, creditPaid(linked || []));
+  }
+
   const { data: ins, error: insErr } = await sb.from('transactions').insert({
     user_id: prof.id,
     amount,
@@ -92,6 +110,7 @@ Deno.serve(async (req) => {
     mcc: si.mcc || null,
     date,
     account_id: accountId,
+    credit_id: creditId,
   }).select('id').single();
 
   if (insErr) {

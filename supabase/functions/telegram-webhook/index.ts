@@ -5,6 +5,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { financeProjection, lastPayout, type AccTx } from '../_shared/budget.ts';
 import { formatFinanceMessage } from '../_shared/finance-message.ts';
+import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -609,12 +610,13 @@ async function findMonoIncome(amount: number, date: string): Promise<{ amount: n
 }
 
 // DESIGN.md п. 13: витрата, в описі якої є назва активного постійного платежу (уся назва або її перше слово
-// від 5 літер; «комуналка», «комунальні» = платіж, що починається з «комунал»), закриває платіж місяця своєї дати,
-// якщо цього місяця він ще не оплачений. Кілька різних збігів: не привʼязуємо (неоднозначно).
-async function matchFixed(desc: string, date: string): Promise<{ id: number; name: string } | null> {
+// від 5 літер; «комуналка», «комунальні» = платіж, що починається з «комунал»), закриває платіж місяця своєї дати
+// (тижневий: тижня пн-нд своєї дати), якщо за цей місяць чи тиждень він ще не оплачений. Кілька різних збігів:
+// не привʼязуємо (неоднозначно).
+async function matchFixed(desc: string, date: string): Promise<{ id: number; name: string; week: boolean } | null> {
   const d = String(desc || '').toLowerCase();
   if (!d.trim()) return null;
-  const { data, error } = await sb.from('fixed_payments').select('id,name,type,active').eq('active', true);
+  const { data, error } = await sb.from('fixed_payments').select('id,name,type,active,period').eq('active', true);
   if (error) {
     console.error('fixed lookup error:', error);
     return null;
@@ -630,16 +632,41 @@ async function matchFixed(desc: string, date: string): Promise<{ id: number; nam
   });
   if (hits.length !== 1) return null;
   const f = hits[0];
-  const mo = date.slice(0, 7);
-  const [y, m] = mo.split('-').map(Number);
-  const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const [from, to] = paidRange(f.period === 'week', date);
   const { data: paid, error: pe } = await sb.from('transactions').select('id').eq('fixed_id', f.id).eq('type', 'expense')
-    .gte('date', mo + '-01').lt('date', next).limit(1);
+    .gte('date', from).lt('date', to).limit(1);
   if (pe) {
     console.error('fixed paid lookup error:', pe);
     return null;
   }
-  return paid && paid.length ? null : { id: Number(f.id), name: String(f.name) };
+  return paid && paid.length ? null : { id: Number(f.id), name: String(f.name), week: f.period === 'week' };
+}
+
+const addDays = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+
+// Витрата за графіком розстрочки (сума, день, банк або назва): credit_id, платіж місяця закривається фактом
+async function linkCredit(p: Pending, bank: string | null): Promise<number | null> {
+  const [from, to] = paidRange(false, p.date);
+  const [crs, linked] = await Promise.all([
+    sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,source'),
+    sb.from('transactions').select('credit_id,date,type').not('credit_id', 'is', null).gte('date', from).lt('date', to),
+  ]);
+  if (crs.error || linked.error) {
+    console.error('credit match lookup error:', crs.error || linked.error);
+    return null;
+  }
+  return matchCredit(crs.data || [], { amount: Number(p.amount), date: p.date, bank, description: p.description }, creditPaid(linked.data || []));
+}
+
+// Межі [від, до) періоду оплати постійного платежу для дати: місяць або тиждень пн-нд
+function paidRange(week: boolean, date: string): [string, string] {
+  const t = Date.parse(date + 'T00:00:00Z');
+  if (week) {
+    const mon = t - ((new Date(t).getUTCDay() + 6) % 7) * 86400000;
+    return [new Date(mon).toISOString().slice(0, 10), new Date(mon + 7 * 86400000).toISOString().slice(0, 10)];
+  }
+  const [y, m] = date.slice(0, 7).split('-').map(Number);
+  return [date.slice(0, 7) + '-01', m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`];
 }
 
 // Вставка запису з Telegram і відповідь у чат.
@@ -649,6 +676,7 @@ async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = 
   // pending, збережений до появи рахунків: дохід іде на рахунок зарплати, витрата без рахунку
   const accountId = p.account_id !== undefined ? p.account_id ?? null : p.type === 'income' ? defaultAccount(accs)?.id ?? null : null;
   const fx = p.type === 'expense' ? await matchFixed(p.description, p.date) : null;
+  const cr = p.type === 'expense' && !fx ? await linkCredit(p, accs.find((a) => a.id === accountId)?.bank ?? null) : null;
   const { data: ins, error } = await sb.from('transactions').insert({
     user_id: userId,
     amount: p.amount,
@@ -659,6 +687,7 @@ async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = 
     date: p.date,
     account_id: accountId,
     fixed_id: fx ? fx.id : null,
+    credit_id: cr,
   }).select('id').single();
   if (error) {
     if (error.code === '23505') return true; // повтор апдейту встиг пройти isDuplicate: мовчимо
@@ -667,7 +696,9 @@ async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = 
     return false;
   }
   categorizeLater(ins.id);
-  const note = fx ? `зараховано як оплату: ${fx.name} за ${MONTH_ACC[Number(p.date.slice(5, 7)) - 1]}` : undefined;
+  const wk = fx && fx.week ? paidRange(true, p.date) : null;
+  const note = fx ? `зараховано як оплату: ${fx.name} за ` + (wk ? `тиждень ${wk[0].slice(8, 10)}.${wk[0].slice(5, 7)}-${addDays(wk[1], -1).slice(8, 10)}.${addDays(wk[1], -1).slice(5, 7)}` : MONTH_ACC[Number(p.date.slice(5, 7)) - 1])
+    : cr ? `зараховано як платіж розстрочки за ${MONTH_ACC[Number(p.date.slice(5, 7)) - 1]}` : undefined;
   await replyTx(chatId, ins.id, { amount: p.amount, type: p.type, description: p.description }, accountId, { accs, restoreKb, note });
   return true;
 }
@@ -782,7 +813,7 @@ const MONTH_ACC = ['січень', 'лютий', 'березень', 'квіте
 async function financeTransactions(from: string, today: string, since: number): Promise<AccTx[]> {
   const rows: AccTx[] = [];
   for (let page = 0; page < 100; page++) {
-    let query = sb.from('transactions').select('id,account_id,category_id,fixed_id,type,amount,created_at,date,source')
+    let query = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,type,amount,created_at,date,source')
       .lte('date', today).order('id', { ascending: true }).range(page * 1000, page * 1000 + 999);
     query = Number.isFinite(since) ? query.or(`created_at.gt."${new Date(since).toISOString()}",date.gte.${from}`) : query.gte('date', from);
     const {data, error} = await query;
@@ -798,7 +829,7 @@ async function freeBlock(today: string): Promise<string> {
   const [acc, fix, cred, sal, cats] = await Promise.all([
     sb.from('accounts').select('id,name,kind,balance,debt,credit_limit,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
-    sb.from('fixed_payments').select('id,name,amount,day_of_month,type,active,credit_ok,variable').eq('active', true),
+    sb.from('fixed_payments').select('id,name,amount,day_of_month,period,weekday,bank,type,active,credit_ok,variable').eq('active', true),
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
     sb.from('salary_config').select('rate,advance_amount,salary_amount,split_day,advance_day,salary_day,savings_pct').order('id').limit(1).maybeSingle(),
     sb.from('categories').select('id,name,is_income,budget_limit').order('id'),
@@ -815,7 +846,10 @@ async function freeBlock(today: string): Promise<string> {
     {asof: today, through: shiftDate(today, 90)});
   const lost = transactions.filter(t => t.account_id == null && t.type === 'expense' &&
     (t.source === 'telegram' || t.source === 'manual') && String(t.date || t.created_at).slice(0, 10) >= from60);
-  // Залишок розстрочок: платежі з датою після сьогодні (сплачені за планом не рахуються)
+  // Залишок розстрочок: платежі з датою після сьогодні (сплачені за планом не рахуються), крім місяців, уже
+  // оплачених фактом (витрата з credit_id у місяці платежу)
+  const paidCr = new Set(transactions.filter((t) => t.type === 'expense' && t.credit_id != null)
+    .map((t) => String(t.credit_id) + '|' + String(t.date || t.created_at).slice(0, 7)));
   const installments = (cred.data || []).map((c) => {
     const first = Number(c.start_year) * 12 + Number(c.start_month); // start_month з 0
     let n = 0;
@@ -823,12 +857,12 @@ async function freeBlock(today: string): Promise<string> {
       const y = Math.floor(k / 12), m = k % 12;
       const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
       const d = `${y}-${String(m + 1).padStart(2, '0')}-${String(Math.min(Number(c.payment_day), last)).padStart(2, '0')}`;
-      if (d > today) n++; // платіж у свій день вважається сплаченим за планом
+      if (d > today && !paidCr.has(String(c.id) + '|' + d.slice(0, 7))) n++; // платіж у свій день вважається сплаченим за планом
     }
     return { name: String(c.name), n, amountCents: Math.round(Number(c.monthly_amount) * 100) };
   }).filter((i) => i.n > 0);
   return formatFinanceMessage(projection, {count: lost.length, amountCents: lost.reduce((sum, t) => sum + Math.round(Number(t.amount) * 100), 0)},
-    installments, today);
+    installments);
 }
 
 async function last(chatId: number) {

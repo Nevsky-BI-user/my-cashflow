@@ -38,7 +38,8 @@ def audit(page):
                         check(page.evaluate("[...document.querySelectorAll('.dv-main,.dv-side')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'{width}: внутрішня прокрутка огляду')
                         check(bottom <= height, f'{width}: останні операції нижче екрана: {bottom}')
                 elif i == 0:
-                    overlap = page.evaluate("""[...document.querySelectorAll('.bal-row')].filter(e=>{const l=e.querySelector('.bal-l').getBoundingClientRect(),v=e.querySelector('.bal-v').getBoundingClientRect();return l.right>v.left+1&&l.bottom>v.top+1}).map(e=>e.innerText)""")
+                    # рядок «Доступно до» (data-b=until) займає всю ширину і не має суми .bal-v
+                    overlap = page.evaluate("""[...document.querySelectorAll('.bal-row')].filter(e=>e.querySelector('.bal-v')).filter(e=>{const l=e.querySelector('.bal-l').getBoundingClientRect(),v=e.querySelector('.bal-v').getBoundingClientRect();return l.right>v.left+1&&l.bottom>v.top+1}).map(e=>e.innerText)""")
                     check(not overlap, f'{width}: злиті підписи балансу {overlap}')
                     check(page.evaluate("[...document.querySelectorAll('.bal-sub')].every(e=>getComputedStyle(e).display==='block')"), 'Пояснення балансу не на окремих рядках')
                     check(page.locator('.o-next').bounding_box()['y'] < page.locator('.o-bal').bounding_box()['y'], 'Найближчі платежі мають передувати балансу')
@@ -106,7 +107,7 @@ def calendar_geometry(page):
             more = int(hidden.locator('.cal-more').inner_text().split()[0].lstrip('+'))
             selected_date=hidden.get_attribute('data-date')
             events=[e for e in finance_ref(page)['events'] if e['date']==selected_date]
-            grouped=sum(e['kind']!='variable' for e in events)+int(any(e['kind']=='variable' for e in events))
+            grouped=sum(e['kind']!='variable' for e in events)  # v143: змінні витрати в клітинках не показуються
             check(visible==1 and visible+more==grouped, f'лічильник {visible}+{more}, згрупованих подій {grouped}')
             hidden.click()
             check(page.locator('.ck-day-events .ck-bd-row').count()==len(events), 'деталі не містять усіх канонічних подій вибраного дня')

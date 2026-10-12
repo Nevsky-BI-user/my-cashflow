@@ -53,7 +53,7 @@
 #                з цим account_id і датою (поле date, без нього перші 10 знаків created_at) у місяці «зараз»
 #   paidFixed    п. 13: [[id, YYYY-MM]] оплачених постійних платежів (відсортовано)
 #   Старі поля payout, end, obligations, oblSum, oblWhite лишаються.
-import calendar, json, sys
+import calendar, json, re, sys
 from datetime import date, datetime, timedelta
 
 
@@ -64,6 +64,23 @@ def parse_ts(s):
         s = s[:-1] + '+00:00'
     t = datetime.fromisoformat(s)
     return t.replace(microsecond=t.microsecond // 1000 * 1000)
+
+
+def week_day(f):
+    """ISO-день тижня щотижневого постійного платежу (1=пн..7=нд) або None: без коректного weekday подій немає."""
+    try:
+        w = float(f.get('weekday'))
+    except (TypeError, ValueError):
+        return None
+    return int(w) if w.is_integer() and 1 <= w <= 7 else None
+
+
+def week_key(day):
+    """Ключ тижня оплати: 'W' + понеділок тижня дати YYYY-MM-DD; некоректна дата: None."""
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day):
+        return None
+    d = date.fromisoformat(day)
+    return 'W' + (d - timedelta(days=d.weekday())).isoformat()
 
 
 def derive_accounts(accounts, txs):
@@ -105,8 +122,8 @@ def derive_accounts(accounts, txs):
 
 
 def next_period_plan(data, asof):
-    """Новий план після резервування; *Cents — копійки, averageDailyCents — середнє.
-    salary — salary_config; remainingCents не є банківською касою по датах.
+    """Новий план після резервування; *Cents: копійки, averageDailyCents: середнє.
+    salary: salary_config; remainingCents не є банківською касою по датах.
     Немає відомої майбутньої виплати: {plan: None, reason: no_next_payout}.
     """
     from decimal import Decimal, ROUND_HALF_UP
@@ -161,11 +178,12 @@ def next_period_plan(data, asof):
     own = max(0,total([max(0,cents(a.get('balance'))) for a in accounts]+[adjustment]))
     debt = total(max(0,cents(a.get('debt'))) for a in accounts if a.get('kind')=='credit')
     paid = {(str(t['fixed_id']),str(t.get('date') or t.get('created_at') or '')[:7]) for t in txs if t.get('fixed_id') is not None and t.get('type')=='expense'}
+    paid |= {(str(t['fixed_id']),week_key(str(t.get('date') or t.get('created_at') or '')[:10])) for t in txs if t.get('fixed_id') is not None and t.get('type')=='expense'}
     entries = []
     for k in range(start.year*12+start.month-1,end.year*12+end.month):
         y,m0=divmod(k,12); m=m0+1; last=calendar.monthrange(y,m)[1]
         for f in data.get('fixed',[]):
-            if f.get('active') is False or (str(f.get('id')),f'{y:04d}-{m:02d}') in paid:
+            if f.get('active') is False or f.get('period')=='week' or (str(f.get('id')),f'{y:04d}-{m:02d}') in paid:
                 continue
             d=date(y,m,min(int(f['day_of_month']),last))
             if start<=d<end:
@@ -174,6 +192,16 @@ def next_period_plan(data, asof):
             d=date(y,m,min(int(c['payment_day']),last)); first=int(c['start_year'])*12+int(c['start_month'])
             if start<=d<end and first<=k<first+int(c['total_payments']):
                 entries.append((cents(c['monthly_amount']),c.get('credit_ok') is True))
+    # щотижневі постійні: кожна дата з ISO-днем weekday у [start; end), оплачений тиждень пропускаємо
+    for f in data.get('fixed',[]):
+        w=week_day(f)
+        if f.get('active') is False or f.get('period')!='week' or w is None:
+            continue
+        d=start+timedelta(days=(w-1-start.weekday())%7)
+        while d<end:
+            if (str(f.get('id')),week_key(d.isoformat())) not in paid:
+                entries.append((cents(f['amount'])*(-1 if f['type']=='income' else 1),f.get('credit_ok') is True))
+            d+=timedelta(days=7)
     mandatory=total(a for a,_ in entries if a>0)
     income=total(-a for a,_ in entries if a<0)
     eligible=total(a for a,ok in entries if a>0 and ok)
@@ -199,7 +227,7 @@ def next_period_plan(data, asof):
 
 
 def finance_projection(data, options):
-    """Чиста канонічна проєкція. Вхід — гривні; грошовий вихід — копійки."""
+    """Чиста канонічна проєкція. Вхід: гривні; грошовий вихід: копійки."""
     from decimal import Decimal, ROUND_HALF_UP
     from copy import deepcopy
     asof, through = options['asof'], options['through']
@@ -264,7 +292,9 @@ def finance_projection(data, options):
             try: stamps.append(parse_ts(a['balance_updated_at']))
             except ValueError: pass
     adjustment=total((1 if t.get('type')=='income' else -1)*cents(t.get('amount')) for t in txs if stamps and t.get('account_id') is None and t.get('source')!='mono' and parse_ts(t['created_at'])>min(stamps))
-    own=max(0,total([max(0,a['balanceCents']) for a in accounts]+[adjustment])); cash=total([a['balanceCents'] for a in accounts]+[adjustment]); debt=total(a['debtCents'] for a in accounts if a.get('kind')=='credit')
+    own=max(0,total([max(0,a['balanceCents']) for a in accounts]+[adjustment])); cash=total([a['balanceCents'] for a in accounts]+[adjustment])
+    # борг усіх карток, і кредитних, і дебетових з боргом (як Mono з лімітом); кожен кошик має одну подію погашення
+    debt=total(a['debtCents'] for a in accounts)
     snapshot={'positiveOwnCents':own,'cashCents':cash,'unassignedAdjustmentCents':adjustment,'creditDebtCents':debt,'accounts':accounts,'warnings':[]}
     cfg=data.get('salary'); payout_list=[]
     def valid_day(v):
@@ -290,22 +320,40 @@ def finance_projection(data, options):
         return {'id':i,'occurrenceId':i,'date':d,'name':name,'kind':kind,'cashDeltaCents':amount if kind in ('income','payout') else -amount,'debtDeltaCents':0,'funding':'cash','certainty':'planned','amountCents':amount,**(extra or {})}
     for p in payout_list:
         if asof<p['date']<=end_generation: events.append(make('payout:'+p['kind']+':'+p['date'],p['date'],'Аванс' if p['kind']=='advance' else 'Зарплата','payout',p['amountCents']))
-    paid={sid(t['fixed_id'])+'|'+txdate(t)[:7] for t in txs if t.get('type')=='expense' and t.get('fixed_id') is not None}
+    def iso_day(s): return date.fromisoformat(s).weekday()+1
+    def weekly(f): return f.get('period')=='week'
+    # витрата з fixed_id закриває місяць своєї дати і тиждень пн-нд; витрата з credit_id: розстрочку свого місяця
+    paid=set()
+    for t in txs:
+        if t.get('type')=='expense' and t.get('fixed_id') is not None:
+            paid.add(sid(t['fixed_id'])+'|'+txdate(t)[:7])
+            if week_key(txdate(t)): paid.add(sid(t['fixed_id'])+'|'+week_key(txdate(t)))
+    paid_credit={sid(t['credit_id'])+'|'+txdate(t)[:7] for t in txs if t.get('type')=='expense' and t.get('credit_id') is not None}
     for k in range(mi(asof),mi(end_generation)+1):
         y,m=ym(k); month=dt(y,m,1)[:7]; last=calendar.monthrange(y,m)[1]
         for i,f in enumerate(data.get('fixed',[])):
+            if weekly(f): continue
             d=dt(y,m,min(int(f['day_of_month']),last))
             if f.get('active') is False or d<asof or d>end_generation or (f.get('id') is not None and sid(f['id'])+'|'+month in paid): continue
             events.append(make('fixed:'+sid(f.get('id',i))+':'+month,d,f['name'],'income' if f.get('type')=='income' else 'mandatory',max(0,cents(f.get('amount'))),{'creditEligible':f.get('type')!='income' and f.get('credit_ok') is True}))
         for i,c in enumerate(data.get('credits',[])):
             d=dt(y,m,min(int(c['payment_day']),last)); first=int(c['start_year'])*12+int(c['start_month'])
-            if d<asof or d>end_generation or k<first or k>=first+int(c['total_payments']): continue
+            # розстрочка з датою <= asof сплачена за планом; витрата з credit_id закриває платіж свого місяця
+            if d<=asof or d>end_generation or k<first or k>=first+int(c['total_payments']) or (c.get('id') is not None and sid(c['id'])+'|'+month in paid_credit): continue
             events.append(make('installment:'+sid(c.get('id',i))+':'+month,d,c['name']+' (розстрочка)','mandatory',max(0,cents(c.get('monthly_amount'))),{'creditEligible':c.get('credit_ok') is True}))
+    # щотижневі постійні: подія на кожну дату з ISO-днем weekday, id з датою події; оплачений тиждень подій не дає
+    for i,f in enumerate(data.get('fixed',[])):
+        w=week_day(f)
+        if not weekly(f) or f.get('active') is False or w is None: continue
+        d=plus(asof,(w-iso_day(asof)+7)%7)
+        while d<=end_generation:
+            if not (f.get('id') is not None and sid(f['id'])+'|'+week_key(d) in paid):
+                events.append(make('fixed:'+sid(f.get('id',i))+':'+d,d,f['name'],'income' if f.get('type')=='income' else 'mandatory',max(0,cents(f.get('amount'))),{'creditEligible':f.get('type')!='income' and f.get('credit_ok') is True}))
+            d=plus(d,7)
     def due_for(m):
         y,n=ym(mi(m+'-01')+1)
         return dt(y,n,24)
     for a in accounts:
-        if a.get('kind')!='credit': continue
         for month,amount in a['debt_months']:
             due=due_for(month); planned=asof if due<asof else next_date if next_date and next_date<due else due
             extra={'debtDeltaCents':-cents(amount),'contractualDueDate':due,'plannedRepaymentDate':planned}
@@ -366,13 +414,20 @@ def finance_projection(data, options):
         return {'categories':[{**c,'totalCents':a} for c,a in zip(categories,totals)],'schedule':schedule}
     def between(start,end): return [e for e in events if start<=e['date']<end and e['kind']!='variable']
     def mandatory(start,end): return total(e['amountCents'] for e in between(start,end) if e['kind'] in ('mandatory','fee'))
+    # до наступної виплати: власні кошти мінус обовʼязкові й комісії [asof; виплата); борг карток гаситься з виплати
+    until_payout=None
+    if next_date:
+        left_days=distance(asof,next_date); left=safe(own-mandatory(asof,next_date))
+        until_payout={'end':next_date,'days':left_days,'cents':left,'dailyCents':left//left_days if left>0 and left_days>0 else 0}
     next_plan=current_period=None; periods=[]
     if has_plan:
         nxt=payout_at(next_date); after=payout_at(following); reserved=mandatory(next_date,following); base=safe(own+nxt['amountCents']-reserved-debt); target=max(1500000,base)
         next_plan={'start':next_date,'end':following,'days':distance(next_date,following),'nextPayout':nxt,'followingPayout':after,'positiveOwnCents':own,'debtCents':debt,'mandatoryCents':reserved,'otherIncomeCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='income'),'eligibleMandatoryCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='mandatory' and e.get('creditEligible')),'baseAvailableCents':base,'targetCents':target,'gapCents':max(0,target-base),'averageDailyCents':target/distance(next_date,following),**distribution(target,next_date,following,base)}
-        start=next((d for d in reversed(payout_dates) if d<=asof),asof); actual=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('fixed_id') is None and txdate(t)>=start); mandatory_now=mandatory(asof,next_date); available=safe(cash-mandatory_now-debt); target=max(1500000,actual+available); remaining=max(0,target-actual); dist=distribution(remaining,plus(asof,1),next_date,available)
-        current_period={'start':start,'end':next_date,'actualVariableCents':actual,'targetCents':target,'remainingTargetCents':remaining,'futureSchedule':dist['schedule']}
-        periods.append({'start':start,'end':next_date,'basis':'current','openingCashCents':cash,'payoutCents':0,'mandatoryCents':mandatory_now,'debtReserveCents':debt,'availableCents':available,'targetCents':target,'gapCents':max(0,remaining-available),**dist})
+        # темп щоденних витрат від завтра до дня перед виплатою: більше з 15 000 ₴ на весь період [start; виплата) і untilPayout на дні, що лишились
+        start=next((d for d in reversed(payout_dates) if d<=asof),asof); actual=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start); mandatory_now=mandatory(asof,next_date); available=safe(cash-mandatory_now)
+        period_days=distance(start,next_date); left_days=max(0,distance(plus(asof,1),next_date)); floor_left=1500000*left_days//period_days if period_days>0 else 0; free_left=max(0,until_payout['cents'] if until_payout else 0); remaining=max(floor_left,free_left) if left_days>0 else 0; target=actual+remaining; dist=distribution(remaining,plus(asof,1),next_date,available)
+        current_period={'start':start,'end':next_date,'actualVariableCents':actual,'targetCents':target,'remainingTargetCents':remaining,'periodDays':period_days,'leftDays':left_days,'dailyCents':remaining/left_days if left_days>0 else 0,'futureSchedule':dist['schedule']}
+        periods.append({'start':start,'end':next_date,'basis':'current','openingCashCents':cash,'payoutCents':0,'mandatoryCents':mandatory_now,'debtReserveCents':0,'availableCents':available,'targetCents':target,'gapCents':max(0,remaining-available),**dist})
         future=[d for d in payout_dates if d>asof]
         for i in range(len(future)-1):
             start,end=future[i:i+2]
@@ -395,7 +450,7 @@ def finance_projection(data, options):
             if e['kind']=='variable':
                 variable+=e['amountCents']; by_category.append({'id':e['categoryId'],'name':e['name'],'amountCents':e['amountCents']})
         days.append({'date':d,'openingCashCents':opening,'closingCashCents':cash,'debtCents':debt,'netCents':cash-debt,'variableCents':variable,'byCategory':by_category,'minCashCents':minimum,'shortfallCents':max(0,-minimum),'eventIds':[e['id'] for e in today]}); d=plus(d,1)
-    return {'snapshot':snapshot,'nextPlan':next_plan,'reason':None if next_plan else 'no_next_payout','currentPeriod':current_period,'periods':periods,'events':visible,'days':days,'scenario':scenario,'minSpend':min_spend}
+    return {'snapshot':snapshot,'nextPlan':next_plan,'reason':None if next_plan else 'no_next_payout','currentPeriod':current_period,'untilPayout':until_payout,'periods':periods,'events':visible,'days':days,'scenario':scenario,'minSpend':min_spend}
 
 
 # Окремий синтетичний/CLI API не запускає стару касову модель.
@@ -457,12 +512,15 @@ deficit = max(0.0, -net)
 
 
 def fixed_paid(txs):
-    """п. 13: множина (id постійного платежу, YYYY-MM), оплачених операціями-витратами з fixed_id."""
+    """п. 13: множина (id постійного платежу, YYYY-MM або W<понеділок>), оплачених операціями-витратами з fixed_id."""
     out = set()
     for t in txs or []:
         if t.get('fixed_id') is None or t.get('type') != 'expense':
             continue
         out.add((str(t['fixed_id']), str(t.get('date') or t.get('created_at') or '')[:7]))
+        wk = week_key(str(t.get('date') or t.get('created_at') or '')[:10])
+        if wk:
+            out.add((str(t['fixed_id']), wk))  # тиждень пн-нд для щотижневих
     return out
 
 
@@ -484,7 +542,7 @@ def period_obl(start, end):
     for y, m in months_span(start, end):
         last = calendar.monthrange(y, m)[1]
         for f in snap['fixed'] or []:
-            if f.get('active') is False:
+            if f.get('active') is False or f.get('period') == 'week':
                 continue
             if f.get('id') is not None and (str(f['id']), f'{y:04d}-{m:02d}') in PAID:
                 continue  # п. 13: оплачено в цьому місяці
@@ -502,6 +560,17 @@ def period_obl(start, end):
                 ok = c.get('credit_ok')
                 ok = bool(ok) if ok is not None else 'privat' in str(c.get('source') or '').lower()
                 res.append((d, c['name'] + ' (розстрочка)', float(c['monthly_amount']), ok))
+    # щотижневі постійні: кожна дата з ISO-днем weekday у [start, end), оплачений тиждень пропускаємо
+    for f in snap['fixed'] or []:
+        w = week_day(f)
+        if f.get('active') is False or f.get('period') != 'week' or w is None:
+            continue
+        d = start + timedelta(days=(w - 1 - start.weekday()) % 7)
+        while d < end:
+            if not (f.get('id') is not None and (str(f['id']), week_key(d.isoformat())) in PAID):
+                amt = float(f['amount'])
+                res.append((d, f['name'], amt if f['type'] != 'income' else -amt, f.get('credit_ok') is True))
+            d += timedelta(days=7)
     res.sort(key=lambda o: (o[0], o[1]))
     return res
 

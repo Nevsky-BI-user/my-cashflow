@@ -86,7 +86,10 @@ def budget_capped(page):
     page.set_viewport_size({'width':1920,'height':900})
     freeze(page,DAY)
     r=finance_ref(page)
-    check(r['currentPeriod']['targetCents']>=1500000, 'ціль нижче мінімальної')
+    # v143: ціль поточного періоду = факт + прогноз на дні, що лишились; прогноз не нижче частки 15 000 ₴ на ці дні
+    c=r['currentPeriod']
+    check(c['targetCents']==c['actualVariableCents']+c['remainingTargetCents'], 'ціль не дорівнює факту плюс прогноз')
+    check(c['leftDays']==0 or c['remainingTargetCents']>=1500000*c['leftDays']//c['periodDays'], 'прогноз нижче мінімального темпу')
     check(any(d['shortfallCents']>0 for d in r['days']), 'демо не показує розриву')
     go_tab(page,1)
     check(abs(num(page.inner_text('.bud-pool .bud-kpi-v'))-r['currentPeriod']['targetCents']/100)<=1, 'бюджет не є ціллю')
