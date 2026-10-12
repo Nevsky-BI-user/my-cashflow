@@ -68,20 +68,20 @@ test('Тиждень: події 7 днів, баланс на кінець за
  assert.deepEqual(w.gap,{date:neg.date,cents:-neg.minCashCents});
  const t=norm(rep.formatWeek(w));
  assert.ok(t.startsWith('📅 Тиждень 12.10-18.10\n'),t);
- for(const l of['12.10 · Прибирання: -500 ₴','13.10 · Інтернет: -300 ₴','13.10 · Телефон (розстрочка): -1 500 ₴'])assert.ok(t.includes(l),l+'\n'+t);
+ for(const l of['Разом витрати за тиждень: 8 300 ₴','· щоденні витрати: 6 000 ₴','· 12.10 Прибирання: 500 ₴','· 13.10 Інтернет: 300 ₴','· 13.10 Телефон (розстрочка): 1 500 ₴'])assert.ok(t.includes(l),l+'\n'+t);
  assert.ok(!t.includes('Щоденні витрати за бюджетом'),t);
  assert.ok(!t.includes('Баланс на кінець 18.10'),'рядка балансу на кінець немає');
  assert.ok(!t.includes('Каса'),'рядка про касу немає\n'+t);
  // Таблиця: 7 днів з днем тижня, сьогодні ▸, баланс кінця дня за формулою застосунку
  const pre=t.slice(t.indexOf('<pre>')+5,t.indexOf('</pre>')).split('\n');
- assert.equal(pre.length,9,t);
+ assert.equal(pre.length,8,t);
  assert.ok(pre[1].startsWith('▸Пн 12.10'),pre[1]);
  assert.ok(pre[7].startsWith(' Нд 18.10'),pre[7]);
  assert.equal(w.days.length,7);
  for(const d of w.days){const x=pr.days.find(q=>q.date===d.date);assert.equal(d.balanceCents,x.closingCashCents-x.debtCents+pr.snapshot.positiveOwnCents-pr.snapshot.cashCents);const ev=w.events.filter(e=>e.date===d.date&&(e.kind==='mandatory'||e.kind==='fee')&&e.cents<0).reduce((n,e)=>n-e.cents,0);assert.equal(d.spendCents,(x.variableCents||0)+ev)}
- // 13.10: щоденні 1 000 + Інтернет 300 + Телефон 1 500 = 2 800; підсумок у рядку «Разом»
+ // 13.10: щоденні 1 000 + Інтернет 300 + Телефон 1 500 = 2 800; «Разом» текстом під таблицею, не в ній
  assert.equal(w.days[1].spendCents,280000);
- const tot=w.days.reduce((n,d)=>n+d.spendCents,0);assert.ok(pre[8].startsWith(' Разом')&&pre[8].replace(/\s/g,'').endsWith(String(tot/100)),pre[8]);
+ assert.ok(!pre.some(r=>r.includes('Разом')),pre.join('\n'));
  assert.equal(w.days[6].balanceCents,w.endBalanceCents);
  const empty=norm(rep.formatWeek({from:'2026-10-12',to:'2026-10-18',events:[],variableCents:0,endBalanceCents:100,endCashCents:100,gap:null}));
  assert.ok(!empty.includes('мінус'));

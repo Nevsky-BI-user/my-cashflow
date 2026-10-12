@@ -228,8 +228,8 @@ export function weekTable(m: WeekModel): string {
     return `${d.date === m.from ? '▸' : ' '}${wd} ${day(d.date)} ${uah(d.spendCents).padStart(7)} ${uah(d.balanceCents).padStart(9)}`;
   });
   if (!rows.length) return '';
-  const total = (m.days || []).reduce((n, d) => n + d.spendCents, 0);
-  return '<pre>' + [' День     Витрати    Баланс', ...rows, ` Разом    ${uah(total).padStart(7)}`].join('\n') + '</pre>';
+  // Пробіли в кінці шапки: кнопка копіювання Telegram лягає на них, а не на «Баланс»
+  return '<pre>' + [' День     Витрати    Баланс    ', ...rows].join('\n') + '</pre>';
 }
 
 // HTML (parse_mode HTML): таблиця днів, далі події тижня
@@ -237,10 +237,19 @@ export function formatWeek(m: WeekModel): string {
   const lines = [`📅 Тиждень ${day(m.from)}-${day(m.to)}`];
   const table = weekTable(m);
   if (table) lines.push('', 'Баланс на кінець дня: сьогодні поточний, далі прогноз, ₴', table);
-  // Під таблицею: які саме платежі, погашення й виплати в ці дні (щоденні вже в колонці й у «Разом»)
-  if (m.events.length) {
+  // Під таблицею: разом витрати тижня з розписом (щоденні + кожен платіж), далі інші події (виплати, погашення, доходи)
+  const isSpend = (e: { kind: string; cents: number }) => (e.kind === 'mandatory' || e.kind === 'fee') && e.cents < 0;
+  if (m.days?.length) {
+    const total = m.days.reduce((n, d) => n + d.spendCents, 0);
+    const spends = m.events.filter(isSpend);
+    lines.push('', `Разом витрати за тиждень: ${money(total)}`);
+    lines.push(`· щоденні витрати: ${money(total + spends.reduce((n, e) => n + e.cents, 0))}`);
+    for (const e of spends) lines.push(`· ${day(e.date)} ${esc(e.name)}: ${money(-e.cents)}${e.conditional ? ' (умовно)' : ''}`);
+  }
+  const other = m.events.filter((e) => !isSpend(e));
+  if (other.length) {
     lines.push('');
-    for (const e of m.events) lines.push(`${day(e.date)} · ${esc(e.name)}: ${signed(e.cents)}${e.conditional ? ' (умовно)' : ''}`);
+    for (const e of other) lines.push(`${day(e.date)} · ${esc(e.name)}: ${signed(e.cents)}${e.conditional ? ' (умовно)' : ''}`);
   }
   return lines.join('\n');
 }
