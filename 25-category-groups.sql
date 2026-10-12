@@ -33,7 +33,7 @@ select setval('category_groups_id_seq', greatest((select max(id) from category_g
 
 -- Нові категорії: ліміт 0, сімейні (user_id як у Продуктів)
 insert into categories (user_id, name, icon, color, budget_limit, sort_order, is_income, locked)
-select c.user_id, v.name, v.icon, v.color, 0, v.so, false, true
+select c.user_id, v.name, v.icon, v.color, 0, v.so, false, false
 from (values
   ('Доставка їжі', '🛵', '#f7a876', 14),
   ('Послуги для дому', '🧹', '#6fd3b0', 15),

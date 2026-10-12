@@ -23,3 +23,7 @@ verify_jwt = true
 # Живий баланс Monobank для застосунку: JWT користувача + whitelist у коді
 [functions.mono-balance]
 verify_jwt = true
+
+# Ранковий підсумок: кличе pg_cron без JWT, захист заголовком x-digest-secret (секрет DIGEST_SECRET, у cron з Vault)
+[functions.telegram-digest]
+verify_jwt = false

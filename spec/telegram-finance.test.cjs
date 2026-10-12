@@ -40,7 +40,7 @@ test('real Telegram consumer loads every page and maps categories into the canon
  assert.equal(capture.data.transactions.length,1001);assert.equal(capture.data.categories[0].type,'expense');assert.equal(capture.data.categories[1].type,'income');
  assert.equal(capture.data.accounts[1].credit_limit,20000);assert.equal(capture.options.through,'2027-01-08');
  assert.ok(text.includes('Власні кошти:'),text);assert.ok(text.includes('Бюджет на початок періоду: 15 000 ₴'),text);assert.ok(text.includes('937,5 ₴/день'),text);assert.ok(text.includes('Картки:'),text);
- const tx=sb.calls.filter(c=>c.table==='transactions');assert.equal(tx.length,2);assert.deepEqual(tx.map(c=>c.range[0]),[[0,999],[1000,1999]]);
+ const tx=sb.calls.filter(c=>c.table==='transactions'&&c.range);assert.equal(tx.length,2);assert.deepEqual(tx.map(c=>c.range[0]),[[0,999],[1000,1999]]);
  for(const q of tx){assert.deepEqual(q.order[0],['id',{ascending:true}]);assert.deepEqual(q.lte[0],['date','2026-10-10']);}
 });
 test('query failure cannot produce a plausible but incomplete finance total',async()=>{

@@ -1,9 +1,9 @@
 // Текст Telegram із тієї самої проєкції, що й застосунок. Без API та надсилання повідомлень.
 import type { financeProjection } from './budget.ts';
 type FinanceMessage = ReturnType<typeof financeProjection>;
-const money = (cents: number) => new Intl.NumberFormat('uk-UA', {maximumFractionDigits: 2}).format(cents / 100) + ' ₴';
-const day = (value: string) => value.slice(8, 10) + '.' + value.slice(5, 7);
-const previousDay = (value: string) => new Date(Date.parse(value + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+export const money = (cents: number) => new Intl.NumberFormat('uk-UA', {maximumFractionDigits: 2}).format(cents / 100) + ' ₴';
+export const day = (value: string) => value.slice(8, 10) + '.' + value.slice(5, 7);
+export const previousDay = (value: string) => new Date(Date.parse(value + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
 const plural = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'операція' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'операції' : 'операцій';
 
 export type Installment = {name: string; n: number; amountCents: number; lastDate?: string};

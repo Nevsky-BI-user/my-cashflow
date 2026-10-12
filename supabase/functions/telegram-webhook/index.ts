@@ -1,11 +1,18 @@
 // Telegram-бот (Фази 4.1, 4.2, 5.1): текстові витрати/доходи, /income з дедупом Monobank і /yes,
-// фото чеків, привʼязка кодом, /balance, /last.
+// фото чеків, привʼязка кодом, /balance, /last; звіти Графік, Бюджет, Тиждень, Місяць і кнопка «Оплачено» під нагадуваннями.
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { financeProjection, lastPayout, type AccTx } from '../_shared/budget.ts';
 import { formatFinanceMessage } from '../_shared/finance-message.ts';
 import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
+import { loadFinance, type FinanceData } from '../_shared/bot-data.ts';
+import {
+  balanceSeries, budgetModel, chartCaption, formatBudget, formatMonth, formatWeek, monthModel, parsePaidCallback, payPlan, payRange, weekModel,
+} from '../_shared/bot-reports.ts';
+import { balanceChartSvg, donutSvg } from '../_shared/bot-charts.ts';
+import { svgToPng } from '../_shared/render-png.ts';
+import { APP_URL, KB_BTN, MAIN_KB } from '../_shared/bot-kb.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -55,6 +62,7 @@ const HELP =
   'Фото чека: сума й магазин розпізнаються автоматично\n' +
   '/yes: підтвердити дохід, схожий на Monobank\n' +
   '/balance: баланс, картки, розстрочки\n' +
+  '/chart: графік балансу, /budget: бюджет періоду, /week: тиждень, /month: місяць\n' +
   '/last: останні 5 записів\n\n' +
   'Рахунок: слово ощад, приват або готівка на початку чи в кінці опису (для фото: у підписі), ' +
   'наприклад «250 кава приват». Без слова витрата лишається без рахунку, бот спитає кнопками; ' +
@@ -62,12 +70,8 @@ const HELP =
 
 // Відповідь у чат; помилки Telegram не валять обробку апдейту
 // Постійна клавіатура під полем вводу: кнопки шлють звичайний текст, який роутер розуміє
-const BTN = { balance: '💰 Баланс', last: '📋 Останні', income: '➕ Дохід', help: '❓ Допомога', yes: '✅ Так, додати', no: '✖ Скасувати' };
-const MAIN_KB = {
-  keyboard: [[{ text: BTN.balance }]],
-  resize_keyboard: true,
-  is_persistent: true,
-};
+// Основні кнопки: Баланс, Графік, Бюджет, Тиждень, Місяць (bot-kb.ts); /last, /help, /income лишаються командами без кнопок
+const BTN = { ...KB_BTN, last: '📋 Останні', income: '➕ Дохід', help: '❓ Допомога', yes: '✅ Так, додати', no: '✖ Скасувати' };
 const CONFIRM_KB = { keyboard: [[{ text: BTN.yes }, { text: BTN.no }]], resize_keyboard: true, one_time_keyboard: true };
 
 async function reply(chatId: number, text: string, keyboard: unknown = MAIN_KB) {
@@ -155,9 +159,6 @@ async function resolveAccount(hint: string, allowWhole: boolean) {
   return { ...pickAccount(hint, accs, allowWhole), accs };
 }
 
-const fmtMoney = (n: number) =>
-  new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + ' ₴';
-
 // Текст підтвердження запису: той самий для відповіді і для редагування після вибору рахунку
 type TxView = { amount: number | string; type: string; description: string | null; receipt_parts?: string[] | null };
 function txText(t: TxView, accName: string | null): string {
@@ -207,6 +208,8 @@ async function onCallback(cq: any) {
       return answer('Помилка, спробуйте ще раз');
     }
     if (!prof) return answer('Доступ закритий');
+    const pd = parsePaidCallback(String(cq?.data || ''));
+    if (pd) return await onPaid(cq, chatId, msgId, prof.id, pd, answer);
     const m = String(cq?.data || '').match(/^acc:(\d+):(\d+)$/);
     if (!m) return answer('Невідома дія');
     const txId = Number(m[1]), accId = Number(m[2]);
@@ -791,7 +794,6 @@ async function confirmPending(chatId: number, userId: string) {
 }
 
 // Посилання на застосунок під статусом; постійна клавіатура лишається
-const APP_URL = 'https://nevsky-bi-user.github.io/my-cashflow/';
 const APP_KB = { inline_keyboard: [[{ text: '📱 Відкрити застосунок', url: APP_URL }]] };
 
 async function balance(chatId: number) {
@@ -866,6 +868,10 @@ async function freeBlock(today: string): Promise<string> {
     installments) + await recentText();
 }
 
+// Сума з копійками для відповідей бота; оголошено тут, бо блок статусу (financeTransactions..recentText) тест виконує окремо
+const fmtMoney = (n: number) =>
+  new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + ' ₴';
+
 // Останні 5 операцій рядками: для статусу і для /last
 async function recentLines(): Promise<string[] | null> {
   const { data, error } = await sb
@@ -896,6 +902,118 @@ async function last(chatId: number) {
   if (!lines) return reply(chatId, 'Не вдалося отримати список.');
   if (!lines.length) return reply(chatId, 'Записів ще немає.');
   return reply(chatId, '📋 Останні:\n' + lines.join('\n'));
+}
+
+// ---------- Звіти кнопок: Графік, Бюджет, Тиждень, Місяць ----------
+// Картинка multipart-запитом sendPhoto; підпис фото до 1024 символів
+async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name: string): Promise<boolean> {
+  try {
+    const fd = new FormData();
+    fd.append('chat_id', String(chatId));
+    fd.append('caption', caption.slice(0, 1024));
+    fd.append('reply_markup', JSON.stringify(MAIN_KB));
+    fd.append('photo', new Blob([png as BlobPart], { type: 'image/png' }), name);
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: 'POST', body: fd });
+    if (!r.ok) console.error('sendPhoto failed:', r.status, (await r.text()).slice(0, 200));
+    return r.ok;
+  } catch (e) {
+    console.error('sendPhoto failed:', e);
+    return false;
+  }
+}
+
+// Дані з тієї самої проєкції, що статус і застосунок; помилка завантаження або звіту дає коротку відповідь
+async function withFinance(chatId: number, fn: (chatId: number, d: FinanceData) => Promise<unknown>) {
+  let d: FinanceData;
+  try {
+    d = await loadFinance(sb, todayKyiv());
+  } catch (e) {
+    console.error('report: finance load failed', (e as Error)?.message);
+    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.');
+  }
+  try {
+    await fn(chatId, d);
+  } catch (e) {
+    console.error('report failed', (e as Error)?.message);
+    await reply(chatId, 'Не вдалося побудувати звіт. Спробуйте ще раз.');
+  }
+}
+
+// 📈 Графік балансу від мінус місяця до плюс місяця; якщо картинка не вийшла, підпис надсилається текстом
+async function chartReport(chatId: number, d: FinanceData) {
+  const s = balanceSeries(d.projection, d.txs, d.accounts, d.today, { firstOwnDate: d.firstOwnDate, salary: d.salary });
+  const caption = chartCaption(s);
+  let png: Uint8Array | null = null;
+  try {
+    png = await svgToPng(balanceChartSvg(s).svg);
+  } catch (e) {
+    console.error('chart render failed', (e as Error)?.message);
+  }
+  if (!png || !(await sendPhoto(chatId, png, caption, 'balance.png'))) await reply(chatId, '📈 ' + caption);
+}
+
+// 📊 Бюджет: текст окремим повідомленням (підпис фото обмежений 1024 символами), потім кільце категорій
+async function budgetReport(chatId: number, d: FinanceData) {
+  const m = budgetModel(d.projection, d.txs, d.cats, d.today);
+  await reply(chatId, formatBudget(m));
+  if (!m || !m.rows.some((r) => r.fact > 0)) return;
+  try {
+    await sendPhoto(chatId, await svgToPng(donutSvg(m)), 'Витрати періоду за категоріями', 'budget.png');
+  } catch (e) {
+    console.error('donut render failed', (e as Error)?.message);
+  }
+}
+
+// «✅ Оплачено» під нагадуванням: витрата з привʼязкою fixed_id або credit_id, як «Внести оплату» в застосунку.
+// Повтор (друге натискання, інший член сімʼї, оплата вже внесена в застосунку) нового запису не дає:
+// перевірка оплаченого періоду плюс унікальний source_id tgpaid:<тип>:<id>:<місяць або W понеділок>.
+async function onPaid(cq: any, chatId: number, msgId: number, userId: string, p: { kind: 'f' | 'c'; id: string; date: string },
+  answer: (text: string) => Promise<unknown>) {
+  const fixed = p.kind === 'f';
+  const q: any = fixed ? sb.from('fixed_payments').select('id,name,amount,period,bank,active,type') : sb.from('credits').select('id,name,monthly_amount,source');
+  const { data: item, error } = await q.eq('id', Number(p.id)).maybeSingle();
+  if (error) {
+    console.error('paid: item lookup error:', error);
+    return answer('Помилка, спробуйте ще раз');
+  }
+  if (!item || (fixed && (item.active === false || item.type === 'income'))) return answer('Платіж не знайдено');
+  const col = fixed ? 'fixed_id' : 'credit_id';
+  const [from, to] = payRange(fixed && item.period === 'week', p.date);
+  const [recent, range, cats] = await Promise.all([
+    sb.from('transactions').select('id,date,type,category_id,fixed_id,credit_id').eq(col, Number(p.id)).order('date', { ascending: false }).limit(50),
+    sb.from('transactions').select('id,date,type,category_id,fixed_id,credit_id').eq(col, Number(p.id)).gte('date', from).lt('date', to),
+    sb.from('categories').select('id,name,is_income'),
+  ]);
+  if (recent.error || range.error || cats.error) {
+    console.error('paid: lookup error:', recent.error || range.error || cats.error);
+    return answer('Помилка, спробуйте ще раз');
+  }
+  const head = String(cq?.message?.text || '').split('\n')[0];
+  const plan = payPlan({ kind: p.kind, item, eventDate: p.date, today: todayKyiv(), history: [...(range.data || []), ...(recent.data || [])], cats: cats.data || [] });
+  if (plan.status === 'already') {
+    await answer(`Уже оплачено ${ddmm(plan.date)}`);
+    return tgCall('editMessageText', { chat_id: chatId, message_id: msgId, text: `${head}\n✅ Уже оплачено ${ddmm(plan.date)}` });
+  }
+  // Рахунок за банком платежу (лише ручні рахунки, як у кнопках бота); без збігу бот питає рахунок кнопками
+  const accs = await activeAccounts();
+  const bank = fixed ? item.bank : item.source;
+  const acc = bank ? accs.find((a) => a.bank === bank || (bank === 'cash' && a.kind === 'cash')) || null : null;
+  const row = { ...plan.row, user_id: userId, account_id: acc?.id ?? null };
+  const { data: ins, error: insErr } = await sb.from('transactions').insert(row).select('id').single();
+  if (insErr) {
+    if (insErr.code === '23505') {
+      await answer('Уже оплачено');
+      return tgCall('editMessageText', { chat_id: chatId, message_id: msgId, text: `${head}\n✅ Уже оплачено` });
+    }
+    console.error('paid: insert error:', insErr);
+    return answer('Не вдалося записати оплату');
+  }
+  if (row.category_id == null) categorizeLater(ins.id);
+  await answer('Оплату записано');
+  await tgCall('editMessageText', {
+    chat_id: chatId, message_id: msgId, text: `${head}\n✅ Оплачено, записано ${ddmm(row.date)}` + (acc ? ` · ${acc.name}` : ''),
+  });
+  if (!acc) await replyTx(chatId, ins.id, { amount: row.amount, type: 'expense', description: row.description }, null, { accs });
 }
 
 Deno.serve(async (req) => {
@@ -957,6 +1075,10 @@ Deno.serve(async (req) => {
   const updateId = Number(update.update_id) || 0;
   let m: RegExpMatchArray | null;
   if (/^\/balance$/i.test(text) || text === BTN.balance) await balance(chatId);
+  else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, chartReport);
+  else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, budgetReport);
+  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today))));
+  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today))));
   else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId);
   else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP);
   else if (/^\/yes$/i.test(text) || text === BTN.yes) await confirmPending(chatId, prof.id);
