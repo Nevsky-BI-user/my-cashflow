@@ -26,17 +26,17 @@ def contract(page):
     fixture(page)
     r=finance_ref(page, verify_ts=True)
     n=r['nextPlan']
-    # v153 (А, як у spec/finance-projection.test.cjs): платіж 25.10 credit_ok резервується з власних (28 000), бюджет 15 000 до погашення:
-    # погашення 3 800, A = бюджет = 15 000 без розриву; до v153 було 26 800 / 20 000 / 1 250
-    check([n[k] for k in ('baseAvailableCents','targetCents','gapCents','days','averageDailyCents')]==[1500000,1500000,0,16,93750], '15000/15000/0/16/937.50 acceptance example failed (v153: резерв credit_ok і бюджет до погашення)')
-    check([c['totalCents'] for c in n['categories']]==[600000,300000,225000,150000,150000,75000], 'category allocation differs from 40/20/15/10/10/5 of 15 000')
+    # v154 (як у spec/finance-projection.test.cjs): доповнення А v153 скасовано, платіж 25.10 credit_ok не резервується; резерв лише білих (тут 0),
+    # погашення 20 000 у день виплати, A 26 800, бюджет 20 000, 1 250 на день; у v153 було 15 000 / 15 000 / 937,50
+    check([n[k] for k in ('baseAvailableCents','targetCents','gapCents','days','averageDailyCents')]==[2680000,2000000,0,16,125000], '26800/20000/0/16/1250 acceptance example failed (v154: резерв лише білих, решта на погашення)')
+    check([c['totalCents'] for c in n['categories']]==[800000,400000,300000,200000,200000,100000], 'category allocation differs from 40/20/15/10/10/5 of 20 000')
     check(not any(e['funding']=='credit' for e in r['events']), 'base projection automatically used credit')
     # v150 (модель «власні ≥ 0»): власні не мінус, нестача окремо (arrearsCents) і в балансі дня
     check(all(d['closingCashCents']>=0 for d in r['days']) and any(d['arrearsCents']>0 and d['netCents']==d['closingCashCents']-d['debtCents']-d['arrearsCents'] for d in r['days']), 'cash shortfall was hidden or own funds went negative')
     # v145: «доступно після виплати» живе в підказці плитки «Бюджет періоду»; кнопки там же; v151: це A рушія (рядок «Після виплати»)
     tip=_budget_tip(page)
     m=re.search(r'= ([\d\s  ]+(?:,\d+)?) ₴ \(ліміт не дохід', tip)
-    check(m and num(m.group(1))==15000, f'overview does not show 15000: {tip!r}')
+    check(m and num(m.group(1))==26800, f'overview does not show 26800: {tip!r}')
     page.locator('.kpi-tip[data-k=budget]').get_by_role('button',name='Як пораховано',exact=True).click()
     check('28' in page.locator('dialog[open]').inner_text(), 'explanation omits mandatory28000')
     page.locator('dialog[open]').get_by_role('button',name='Закрити',exact=True).click()
@@ -51,15 +51,15 @@ def scenario(page):
     d=page.locator('dialog[open]')
     d.get_by_label('Дозволений платіж').select_option('fixed:1:2026-10')
     d.get_by_label('Кредитний рахунок').select_option('2')
-    # v153: як у spec/finance-projection.test.cjs (сценарний борг плюс база 15 000 мінус погашення в періоді)
-    for amount,plan,gap in [(6200,2120000,0),(4000,1900000,0)]:
+    # v154: як у spec/finance-projection.test.cjs (база 26 800 плюс сценарний борг, розриву немає)
+    for amount,plan,gap in [(6200,3300000,0),(4000,3080000,0)]:
         d.get_by_label('Сума перенесення',exact=True).fill(str(amount))
         d.get_by_role('button',name='Переглянути сценарій').click()
         r=finance_ref(page,verify_ts=True)
         s=r['scenario']
         check((s['newDebtCents'],s['cashPlanCents'],s['gapCents'])==(amount*100,plan,gap), 'scenario debt/plan/gap mismatch')
         check(s['repayments'][0]['date']=='2026-11-20' and not s['errors'], 'scenario repayment date or errors mismatch')
-        check(r['nextPlan']['baseAvailableCents']==1500000, 'scenario replaced base headline')
+        check(r['nextPlan']['baseAvailableCents']==2680000, 'scenario replaced base headline')
     d.get_by_label('Сума перенесення',exact=True).fill('21000')
     d.get_by_role('button',name='Переглянути сценарій').click()
     r=finance_ref(page)

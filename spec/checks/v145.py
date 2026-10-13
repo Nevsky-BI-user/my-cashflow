@@ -53,7 +53,8 @@ def kpi_desktop(page):
     go_tab(page, 0)
     kpi_values(page, '.dv-kpis')
     # наведення показує пояснення, відведення ховає; «i» закріплює, Escape закриває
-    page.locator('.kpi-funds .dv-kpi-v').hover()
+    # v154 (власник): пояснення відкривається лише наведенням на «i», не на число плитки
+    page.locator('.kpi-funds .kpi-i').hover()
     page.wait_for_selector('.kpi-tip[data-k=funds]')
     check('Готівка і плюсові баланси' in page.inner_text('.kpi-tip[data-k=funds]'), 'пояснення «Доступні кошти» без тексту')
     page.mouse.move(2, 2)

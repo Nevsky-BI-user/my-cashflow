@@ -167,8 +167,8 @@ export function periodBudgetStart(pr: P, fi: P, txs: Tx[], allIds: string[], own
   const key = (t: Tx) => t.account_id == null ? '' : String(t.account_id);
   const inc = (txs || []).reduce((n, t) => String(t.date || '').slice(0, 10) === s && t.type === 'income' && ow.has(key(t)) ? n + cents(t.amount) : n, 0);
   const at = financeProjection({ ...fi, transactions: (fi.transactions || []).filter((t: Tx) => String(t.date || '').slice(0, 10) < s) } as any, { asof: prev, through: e }) as P;
-  // v153 (А): резерв = дебетові обовʼязкові й комісії плюс обовʼязкові з кредитки (credit_ok), як резерв виплати в рушії; без платежів із картки за сценарієм
-  const reserved = (x: P) => x.kind === 'fee' || (x.kind === 'mandatory' && x.funding !== 'credit');
+  // v154: резерв = лише білі (credit_ok=false) обовʼязкові й комісії, як резерв виплати в рушії; обовʼязкові з кредитки не резервуються; без платежів із картки за сценарієм
+  const reserved = (x: P) => x.kind === 'fee' || (x.kind === 'mandatory' && x.creditEligible !== true && x.funding !== 'credit');
   const ownAt = own + inc;
   const reserve = Math.min(Math.max(0, ownAt), (at.events || []).filter((x: P) => x.date >= s && x.date < e && reserved(x)).reduce((n: number, x: P) => n + x.amountCents, 0));
   const m0 = s.slice(0, 7) + '-01', pm = addMonths(m0, -1).slice(0, 7), repayDay = repayDate(pm, '') === s;

@@ -309,6 +309,11 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   // v153 (власник обрав А+Б): А. резерв виплати = дебетові обовʼязкові й комісії (reserved) плюс обовʼязкові з кредитки credit_ok (reservedOk) до наступної
   // виплати: вони платяться з власних, кредитка під них не наростає. Власні мають три шари: reserved, reservedOk, вільні. Дебетовий платіж бере
   // reserved, вільні, reservedOk; credit_ok бере reservedOk, вільні, потім кредитку, останнім reserved; змінні й інші: вільні, кредитка, reservedOk, reserved.
+  // v154 (власник: «приват тут буде погашено повністю, а монобанк частково, але точно кредитні одразу мають зменшуватися»): доповнення А v153 скасовано.
+  // Резерв виплати = лише білі (credit_ok=false) обовʼязкові, чергові білі платежі розстрочок і комісії до наступної виплати; разом із бюджетом
+  // періоду це все, що тримається з виплати. Обовʼязкові з credit_ok не резервуються: як до v153, беруть вільні власні, далі кредитку.
+  // Решта понад резерв і бюджет одразу в день виплати гасить кредитки (належне, далі не-Mono, далі Mono), окрема подія на кожен рахунок.
+  // Шар reservedOk лишається в спільному списанні, але завжди 0.
   // Б. накопичення = max(0, надлишок − нестача), нестача = найглибший мінус власних після розподілу за подіями періоду (обовʼязкові, комісії,
   // змінні за новим планом на день, інші надходження) до наступної виплати. Порядок: резерв, погашення максимум, бюджет, накопичення, готівка, решта.
   // v153 (власник: «як ти гасиш кредитку, якщо на це немає білих грошей?»): порядок резерв, бюджет (авто або ручна сума), погашення з решти
@@ -329,10 +334,9 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   for(const p of periods)for(const d of p.schedule)for(const c of d.byCategory)if(c.amountCents>0)events.push(make('variable:'+d.date+':'+c.id,d.date,c.name,'variable',c.amountCents,{categoryId:c.id}));
   for(const e of events)if(e.date>=asof&&e.date<=simEnd)put(e);
   const debitBetween=(start: string,end: string)=>sum(events.filter(e=>e.date>=start&&e.date<end&&debitOnly(e)).map(e=>e.amountCents));
-  const okBetween=(start: string,end: string)=>sum(events.filter(e=>e.date>=start&&e.date<end&&okFunded(e)).map(e=>e.amountCents));
   // Старт: власні як у плитці (positiveOwnCents); мінусові залишки рахунків і мінусова поправка стають нестачею, яку гасить перше надходження
   let own=positiveOwnCents,arrears=positiveOwnCents-cashCents;
-  let reserved=Math.min(own,nextDate?debitBetween(asof,nextDate):0),reservedOk=Math.min(own-reserved,nextDate?okBetween(asof,nextDate):0);
+  let reserved=Math.min(own,nextDate?debitBetween(asof,nextDate):0),reservedOk=0;
   const days=[];let head: Record<string,any>|null=null,debtRun=creditDebtCents;
   // Погашення кошиків рахунку: належні (дата погашення не пізніше d) або всі за FIFO; повертає суми за місяцями
   const repayFrom=(a: Record<string,any>,limit: number,d: string,onlyDue: boolean,out: Record<string,number>)=>{let left=limit;const b=book[String(a.id)];
@@ -380,7 +384,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
         if(left>0&&debtAll()===0){leftoverPrepaid=prepayBy(left,leftoverPrepay);left-=leftoverPrepaid;}
         if(left>0&&debtAll()===0&&!inst.some(x=>instFrom(x,end)>0))leftoverSavings=left;}
       const leftoverRepay=sum(Object.values(out));own-=leftoverRepay+leftoverPrepaid+leftoverSavings;
-      const ownAt=own,rd=Math.min(own,debitBetween(d,end)),rc=Math.min(own-rd,okBetween(d,end)),reserve=rd+rc;let repay=0,savings=leftoverSavings,cashOut=0,toMono=0,offset=0;
+      const ownAt=own,rd=Math.min(own,debitBetween(d,end)),rc=0,reserve=rd;let repay=0,savings=leftoverSavings,cashOut=0,toMono=0,offset=0;
       {let left=payoutBudget(own,reserve,debtAll(),dueOn(d),true,manual).repayCents;
         for(const a of accounts){if(left<=0)break;left-=repayFrom(a,left,d,true,out);}
         for(const a of accounts.filter(a=>!a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}

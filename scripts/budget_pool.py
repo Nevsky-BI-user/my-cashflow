@@ -530,9 +530,10 @@ def finance_projection(data, options):
     for e in events:
         if asof<=e['date']<=sim_end: put(e)
     def debit_between(start,end): return total(e['amountCents'] for e in events if start<=e['date']<end and debit_only(e))
-    def ok_between(start,end): return total(e['amountCents'] for e in events if start<=e['date']<end and ok_funded(e))
+    # v154: доповнення А v153 скасовано: резерв виплати = лише білі (credit_ok=false) обовʼязкові, білі платежі розстрочок і комісії до наступної
+    # виплати; обовʼязкові з credit_ok не резервуються (вільні власні, далі кредитка). Шар reserved_ok лишається, але завжди 0. Як у budget.ts.
     bal=own; arrears=own-cash
-    reserved=min(bal,debit_between(asof,next_date) if next_date else 0); reserved_ok=min(bal-reserved,ok_between(asof,next_date) if next_date else 0)
+    reserved=min(bal,debit_between(asof,next_date) if next_date else 0); reserved_ok=0
     days=[]; head=None; debt_run=debt
     def repay_from(a,limit,d,only_due,out):
         left=limit; b=book[sid(a['id'])]
@@ -631,7 +632,7 @@ def finance_projection(data, options):
                 leftover_prepaid=prepay_by(left,leftover_prepay); left-=leftover_prepaid
             if left>0 and debt_all()==0 and not any(inst_from(x,end)>0 for x in inst): leftover_savings=left
             leftover_repay=total(out.values()); bal-=leftover_repay+leftover_prepaid+leftover_savings
-            own_at=bal; rd=min(bal,debit_between(d,end)); rc=min(bal-rd,ok_between(d,end)); reserve=rd+rc; repay=cash_out=to_mono=offset=0; savings=leftover_savings
+            own_at=bal; rd=min(bal,debit_between(d,end)); rc=0; reserve=rd; repay=cash_out=to_mono=offset=0; savings=leftover_savings
             left=payout_budget(bal,reserve,debt_all(),due_on(d),True,manual)['repayCents']
             for a in accounts:
                 if left<=0: break
