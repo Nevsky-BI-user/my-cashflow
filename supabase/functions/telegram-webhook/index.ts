@@ -976,7 +976,7 @@ async function chartReport(chatId: number, d: FinanceData) {
 
 // 📊 Бюджет: текст окремим повідомленням (підпис фото обмежений 1024 символами), потім кільце категорій
 async function budgetReport(chatId: number, d: FinanceData) {
-  const m = budgetModel(d.projection, d.txs, d.cats, d.today);
+  const m = budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts);
   await reply(chatId, formatBudget(m));
   if (!m || !m.rows.some((r) => r.fact > 0)) return;
   try {

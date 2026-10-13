@@ -10,21 +10,36 @@ const norm=s=>String(s).replace(/[  ]/g,' ');
 const cents=v=>Math.round((Number(v)||0)*100);
 
 async function setup(){
- const [{financeProjection},rep,ch,fm]=await Promise.all([mod('budget.ts'),mod('bot-reports.ts'),mod('bot-charts.ts'),mod('finance-message.ts')]);
+ const [E,rep,ch,fm]=await Promise.all([mod('budget.ts'),mod('bot-reports.ts'),mod('bot-charts.ts'),mod('finance-message.ts')]);
  const fx=botFixture();
  const through=rep.plusDays(fx.today,120);
- const pr=financeProjection({accounts:fx.accounts,fixed:fx.fixed,credits:fx.credits,salary:fx.salary,categories:fx.categories,transactions:fx.transactions},{asof:fx.today,through});
- return {pr,rep,ch,fm,fx};
+ const fi={accounts:fx.accounts,fixed:fx.fixed,credits:fx.credits,salary:fx.salary,categories:fx.categories,transactions:fx.transactions};
+ const pr=E.financeProjection(fi,{asof:fx.today,through});
+ return {pr,rep,ch,fm,fx,fi,E};
+}
+// v151: periodBudgetStart застосунку рівно так, як він лежить в index.html (як у balance.test.cjs), для паритету з копією в боті
+const fs=require('node:fs');
+const html=fs.readFileSync(path.resolve(__dirname,'../index.html'),'utf8');
+function appPeriodBudget(E){
+ const lines=html.split(/\r?\n/),line=n=>{const l=lines.find(x=>x.startsWith('function '+n+'('));assert.ok(l,'немає '+n);return l};
+ const L=lines.find(l=>l.includes('const pbIso=')),pb=L.slice(L.indexOf('const pbIso='),L.indexOf('/*',L.indexOf('const pbIso=')));
+ return new Function('financeProjection','payoutBudget','repayDate',[pb,...['pastOwnSeries','balShift','balanceNowCents','balancePast','periodBudgetStart','perDayOf'].map(line),'return periodBudgetStart;'].join('\n'))(E.financeProjection,E.payoutBudget,E.repayDate);
 }
 
-test('Бюджет: суми з проєкції застосунку, факт категорій сходиться з витраченим, перевитрати позначено',async()=>{
- const {pr,rep,fx}=await setup();
- const m=rep.budgetModel(pr,fx.transactions,fx.categories,fx.today);
+test('Бюджет: бюджет періоду як плитка застосунку (periodBudgetStart, payoutBudget), факт категорій сходиться з витраченим, перевитрати позначено',async()=>{
+ const {pr,rep,fx,fi,E}=await setup();
+ const m=rep.budgetModel(pr,fx.transactions,fx.categories,fx.today,fi,fx.accounts);
  const cp=pr.currentPeriod;
- assert.equal(m.poolCents,cp.targetCents);
+ // паритет: копія в боті дає те саме, що функція застосунку, на тих самих даних (історія як histAll застосунку)
+ const h=rep.histOf(fx.transactions,fx.accounts);
+ const app=appPeriodBudget(E)(pr,fi,h.hist,h.allIds,h.ownIds,fx.today),bot=rep.periodBudgetStart(pr,fi,h.hist,h.allIds,h.ownIds,fx.today);
+ assert.deepEqual(bot,app);
+ assert.deepEqual(E.payoutBudget(app.ownAt,app.reserve,app.debt,app.due,app.repayDay),{repayCents:app.repay,availableCents:app.A,targetCents:app.budget});
+ assert.equal(m.poolCents,app.budget);
  assert.equal(m.spentCents,cp.actualVariableCents);
- assert.equal(m.leftCents,cp.targetCents-cp.actualVariableCents);
- assert.equal(m.dailyCents,Math.floor(cp.dailyCents));
+ assert.equal(m.leftCents,app.budget-cp.actualVariableCents);
+ assert.equal(m.dailyCents,app.daily);
+ assert.equal(m.dailyCents,rep.perDayOf(m.leftCents,fx.today,cp.start,cp.end));
  assert.equal(m.rows.reduce((n,r)=>n+r.fact,0),m.spentCents,'факт категорій = витрачено за періодом');
  for(const r of m.rows){
   if(r.noPlan)continue;
@@ -35,27 +50,32 @@ test('Бюджет: суми з проєкції застосунку, факт 
  for(let i=1;i<m.topOver.length;i++)assert.ok(m.topOver[i-1].fact-m.topOver[i-1].plan>=m.topOver[i].fact-m.topOver[i].plan);
  const t=norm(rep.formatBudget(m));
  assert.match(t,/^📊 Бюджет періоду 06\.10-21\.10\n/);
- assert.ok(t.includes('Бюджет: 20 373,94 ₴ · витрачено 12 373,94 ₴ (61%) · лишилось 8 000 ₴'),t);
- assert.ok(t.includes('До 21.10: 1 000 ₴/день (8 дн.)'),t);
+ // v151: суми з periodBudgetStart на фікстурі (A 10 801,16 ₴ менше 15 000, тож бюджет 15 000); на день = лишилось / 9 днів 12.10-20.10
+ assert.ok(t.includes('Бюджет: 15 000 ₴ · витрачено 12 373,94 ₴ (82%) · лишилось 2 626,06 ₴'),t);
+ assert.ok(t.includes('До 21.10: 291,78 ₴/день (9 дн.)'),t);
  for(const gone of ['Категорії, факт','Найбільші перевитрати','⚠️'])assert.ok(!t.includes(gone),gone+'\n'+t);
  assert.equal(rep.formatBudget(null),'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
 });
 
 test('Бюджет: позначки понад план і від 90% плану в моделі, текст без категорій',async()=>{
  const {rep}=await setup();
- const pr={currentPeriod:{start:'2026-10-06',end:'2026-10-21',targetCents:100000,actualVariableCents:19000,dailyCents:9000.7,leftDays:9},
+ const pr={currentPeriod:{start:'2026-10-06',end:'2026-10-21',targetCents:100000,actualVariableCents:19000,dailyCents:9000.7,leftDays:9,periodDays:15},
+  snapshot:{positiveOwnCents:0,creditDebtCents:0,cashCents:0,accounts:[]},
   periods:[{basis:'current',categories:[{id:1,totalCents:10000},{id:2,totalCents:10000}]}]};
+ const fi={accounts:[],fixed:[],credits:[],salary:null,categories:[],transactions:[]};
  const cats=[{id:1,name:'А',is_income:false},{id:2,name:'Б',is_income:false}];
  const txs=[{id:1,type:'expense',amount:90,date:'2026-10-07',category_id:1},{id:2,type:'expense',amount:100.01,date:'2026-10-08',category_id:2},
   {id:3,type:'expense',amount:500,date:'2026-10-08',category_id:2,fixed_id:5},{id:4,type:'expense',amount:70,date:'2026-10-05',category_id:1}];
- const m=rep.budgetModel(pr,txs,cats,'2026-10-12');
+ const m=rep.budgetModel(pr,txs,cats,'2026-10-12',fi,[]);
  const t=norm(rep.formatBudget(m));
  // Позначки лишаються в моделі (кільце на картинці), текст звіту лише з підсумком
  const row=name=>m.rows.find(r=>r.name===name);
  assert.ok(row('А').near&&!row('А').over);
  assert.ok(row('Б').over);
  assert.ok(!t.includes('⚠️')&&!t.includes('🟠'),t);
- assert.equal(m.dailyCents,9000);
+ // без власних грошей бюджет 15 000 ₴ (підлога правила), на день = (бюджет мінус витрачено) / 9 днів 12.10-20.10
+ assert.equal(m.poolCents,1500000);
+ assert.equal(m.dailyCents,rep.perDayOf(1500000-19000,'2026-10-12','2026-10-06','2026-10-21'));
 });
 
 test('Тиждень: події 7 днів, баланс на кінець за формулою застосунку і попередження про нестачу',async()=>{
@@ -192,7 +212,7 @@ test('Нагадування: без кнопки для погашення кр
  const {rep}=await setup();
  const pr={events:[
   {date:'2026-10-25',kind:'mandatory',occurrenceId:'fixed:14:2026-10',name:'Спортзал',cashDeltaCents:-90000},
-  {date:'2026-10-25',kind:'repay',accountId:4,name:'ПриватБанк',cashDeltaCents:-925655},
+  {date:'2026-10-25',kind:'repay',accountId:4,name:'ПриватБанк',plannedRepaymentDate:'2026-10-25',cashDeltaCents:-925655},
   {date:'2026-10-25',kind:'mandatory',occurrenceId:'fixed:13:2026-10-25',name:'Прибирання',cashDeltaCents:-50000},
   {date:'2026-10-25',kind:'variable',name:'Щоденні',cashDeltaCents:-100000},
   {date:'2026-10-26',kind:'mandatory',occurrenceId:'fixed:12:2026-10',name:'Інше число',cashDeltaCents:-1}]};
@@ -200,7 +220,13 @@ test('Нагадування: без кнопки для погашення кр
  const due=rep.dueTomorrow(pr,fixed,[],'2026-10-24');
  assert.deepEqual(due.map(d=>[d.kind,d.id,d.button,d.callback]),[['f','14',false,null],['r','4',false,null],['f','13',true,'pd:f:13:2026-10-25']]);
  assert.ok(norm(rep.formatReminder(due[0])).includes('Спишеться з Monobank'));
- assert.ok(norm(rep.formatReminder(due[1])).startsWith('⏰ Завтра, 25.10: Погашення кредитки ПриватБанк, 9 256,55 ₴'));
+ // v151: підпис погашення як у застосунку: банк рахунку зі знімка рушія і вид (обовʼязкове/додатково/прострочене)
+ assert.ok(norm(rep.formatReminder(due[1])).startsWith('⏰ Завтра, 25.10: Погашення ПриватБанк · обовʼязкове, 9 256,55 ₴'));
+ const pr2={...pr,snapshot:{accounts:[{id:4,bank:'privat',name:'ПриватБанк'},{id:5,bank:'mono',name:'Monobank'}]}};
+ assert.ok(norm(rep.formatReminder(rep.dueTomorrow(pr2,fixed,[],'2026-10-24')[1])).startsWith('⏰ Завтра, 25.10: Погашення Приват · обовʼязкове, 9 256,55 ₴'));
+ const ev=(id,date,planned)=>({date,kind:'repay',accountId:id,name:'x',plannedRepaymentDate:planned,cashDeltaCents:-100});
+ assert.deepEqual([ev(5,'2026-10-21','2026-11-20'),ev(4,'2026-10-21','2026-10-21'),ev(4,'2026-11-23','2026-11-20')].map(e=>rep.repayLabel(pr2,e)),
+  ['Погашення Mono · додатково','Погашення Приват · обовʼязкове','Погашення Приват · прострочене']);
 });
 
 test('«Оплачено»: розбір callback лише з id, повторне натискання не дає другого запису',async()=>{

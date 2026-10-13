@@ -79,7 +79,8 @@ def weekly_pay(page):
     btns = [ev.nth(i).locator('.pay-done').count() for i in range(ev.count())]
     print(f'      Календар: {len(texts)} рядків, кнопки {btns}')
     # v144: список «Події і баланс» від початку періоду (06.10) до дня перед зарплатою, тож 05.10 у ньому немає; кнопка лише в поточному тижні 12.10
-    check(len(btns) >= 3 and btns[0] == 1 and not any(btns[1:]), f'«Внести оплату» не лише в поточному тижні: {btns}')
+    # v151: дні після наступної виплати (21.10) згорнуто в підсумковий рядок, тому окремих рядків щотижневого платежу два (12.10, 19.10)
+    check(len(btns) >= 2 and btns[0] == 1 and not any(btns[1:]), f'«Внести оплату» не лише в поточному тижні: {btns}')
     ev.nth(0).locator('.pay-done').click()
     page.wait_for_timeout(400)
     dlg = dialog(page, 'Нова операція')
@@ -141,10 +142,12 @@ def paid_no_button(page):
     if page.viewport_size['width'] >= 1024:
         lst = page.locator('.cal-ev', has_text='Ланцюжок')
         n0 = (lst.count(), lst.locator('.pay-done').count())
+        # v151: сплачений минулий рядок згорнуто в підсумок минулих днів (назва в підказці рядка), окремого рядка й кнопки немає
+        folded = page.locator('.cal-ev.cal-ev-fold.past[title*="Ланцюжок"]').count()
         day = _day(page, '2026-10-11').filter(has_text='Ланцюжок')
         n = n0 + (day.count(), day.locator('.pay-done').count())
         print(f'      ПК Ланцюжок: рядків списку {n[0]}, кнопок {n[1]}; розклад 11.10 {n[2]}, кнопок {n[3]}')
-        check(n[0] >= 1 and n[2] >= 1 and n[1] == 0 and n[3] == 0, f'сплачена розстрочка з кнопкою на ПК: {n}')
+        check((n[0] >= 1 or folded == 1) and n[2] >= 1 and n[1] == 0 and n[3] == 0, f'сплачена розстрочка з кнопкою на ПК: {n}, у підсумку {folded}')
     else:
         page.locator('details.cm-month summary').click()
         page.wait_for_timeout(200)

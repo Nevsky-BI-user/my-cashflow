@@ -1,6 +1,6 @@
 // Звіти Telegram-бота з тієї самої проєкції, що й застосунок: Графік, Бюджет, Тиждень, Місяць, ранковий підсумок,
 // нагадування про платежі на завтра і запис «Оплачено». Чисті функції без I/O: їх перевіряють node-тести.
-import { lastPayout, type SalaryCfg } from './budget.ts';
+import { financeProjection, lastPayout, payoutBudget, repayDate, type SalaryCfg } from './budget.ts';
 import { day, money } from './finance-message.ts';
 
 type P = Record<string, any>;
@@ -76,15 +76,24 @@ export function pastSeries(txs: Tx[], ids: string[], anchorCents: number, fromIs
   return out.reverse();
 }
 
-export function balanceSeries(pr: P, txs: Tx[], accounts: P[], today: string, opts: { firstOwnDate?: string | null; salary?: SalaryCfg | null } = {}): BalanceSeries {
-  const s = pr.snapshot;
-  const nowCents = s.positiveOwnCents;
+// histAll застосунку: операції без рахунку лише ручні й створені після найранішої мітки балансу ручного рахунку;
+// ownIds = власні (не кредитні) рахунки і '' (готівка без рахунку), allIds = усі активні рахунки і ''
+export function histOf(txs: Tx[], accounts: P[]): { hist: Tx[]; ownIds: string[]; allIds: string[] } {
   const active = (accounts || []).filter((a) => a.active !== false);
-  // histAll застосунку: операції без рахунку лише ручні й створені після найранішої мітки балансу ручного рахунку
   const stamps = active.filter((a) => !a.mono_account_id).map((a) => Date.parse(a.balance_updated_at || '')).filter(Number.isFinite);
   const stamp = stamps.length ? Math.min(...stamps) : null;
   const hist = uniq(txs).filter((t) => t.account_id != null || (stamp != null && t.source !== 'mono' && Date.parse(t.created_at || '') > stamp));
-  const ownIds = active.filter((a) => a.kind !== 'credit').map((a) => String(a.id)).concat(['']);
+  return {
+    hist,
+    ownIds: active.filter((a) => a.kind !== 'credit').map((a) => String(a.id)).concat(['']),
+    allIds: active.map((a) => String(a.id)).concat(['']),
+  };
+}
+
+export function balanceSeries(pr: P, txs: Tx[], accounts: P[], today: string, opts: { firstOwnDate?: string | null; salary?: SalaryCfg | null } = {}): BalanceSeries {
+  const s = pr.snapshot;
+  const nowCents = s.positiveOwnCents;
+  const { hist, ownIds } = histOf(txs, accounts);
   let first: string | null = opts.firstOwnDate || null;
   for (const t of hist) {
     const d = String(t.date || '').slice(0, 10);
@@ -131,8 +140,49 @@ export function chartCaption(s: BalanceSeries): string {
   return parts.join(' · ');
 }
 
-// ---------- Бюджет періоду (як вкладка «Бюджет» застосунку) ----------
-// Бюджет = currentPeriod.targetCents (факт змінних з початку періоду + залишок до виплати), витрачено = actualVariableCents.
+// ---------- Бюджет періоду (як плитка «Бюджет періоду» застосунку) ----------
+// v151: копія periodBudgetStart і perDayOf з index.html (паритет перевіряє spec/bot-reports.test.cjs): бюджет на старт періоду тим самим
+// розподілом виплати, що в рушії (payoutBudget): власні на виплату (власні напередодні + надходження дня старту), резерв дебетових
+// обовʼязкових і комісій періоду, у день погашення належне = борг напередодні мінус кредитні витрати місяця до старту;
+// бюджет min(20 000, A), якщо A > 15 000, інакше 15 000. Доступно = бюджет мінус витрачено, на день = доступно / днів до кінця періоду.
+const isoDiff = (a: string, b: string) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / DAY);
+export function perDayOf(availCents: number, todayIso: string, startIso: string, endIso: string): number {
+  const from = startIso > todayIso ? startIso : todayIso, days = isoDiff(from, endIso);
+  return days > 0 ? Math.max(0, Math.round(availCents / days)) : 0;
+}
+export type PeriodBudget = {
+  start: string; end: string; own: number; income: number; ownAt: number; reserve: number; debt: number; due: number; repayDay: boolean;
+  repay: number; A: number; budget: number; days: number; daily: number; spent: number; avail: number;
+};
+export function periodBudgetStart(pr: P, fi: P, txs: Tx[], allIds: string[], ownIds: string[], today: string): PeriodBudget | null {
+  const cp = pr && pr.currentPeriod;
+  if (!cp || !cp.start || !cp.end || cp.start > today) return null;
+  const s = cp.start, e = cp.end, prev = plusDays(s, -1);
+  const sn = pr.snapshot;
+  const all = pastSeries(txs, allIds, sn.positiveOwnCents - sn.creditDebtCents, prev, today)[0];
+  const own = pastSeries(txs, ownIds, sn.positiveOwnCents, prev, today)[0].cents, debt = own - all.cents;
+  const ow = new Set(ownIds.map(String)), al = new Set(allIds.map(String));
+  const key = (t: Tx) => t.account_id == null ? '' : String(t.account_id);
+  const inc = (txs || []).reduce((n, t) => String(t.date || '').slice(0, 10) === s && t.type === 'income' && ow.has(key(t)) ? n + cents(t.amount) : n, 0);
+  const at = financeProjection({ ...fi, transactions: (fi.transactions || []).filter((t: Tx) => String(t.date || '').slice(0, 10) < s) } as any, { asof: prev, through: e }) as P;
+  const debitOnly = (x: P) => x.kind === 'fee' || (x.kind === 'mandatory' && x.creditEligible !== true && x.funding !== 'credit');
+  const ownAt = own + inc;
+  const reserve = Math.min(Math.max(0, ownAt), (at.events || []).filter((x: P) => x.date >= s && x.date < e && debitOnly(x)).reduce((n: number, x: P) => n + x.amountCents, 0));
+  const m0 = s.slice(0, 7) + '-01', pm = addMonths(m0, -1).slice(0, 7), repayDay = repayDate(pm, '') === s;
+  const crNew = (txs || []).reduce((n, t) => {
+    const d = String(t.date || '').slice(0, 10), k = key(t);
+    if (d < m0 || d >= s || ow.has(k) || !al.has(k)) return n;
+    const v = cents(t.amount);
+    return t.type === 'expense' ? n + v : t.type === 'income' ? n - v : n;
+  }, 0);
+  const dbt = Math.max(0, debt), due = repayDay ? Math.max(0, Math.min(dbt, dbt - crNew)) : 0;
+  const plan = payoutBudget(ownAt, reserve, dbt, due, repayDay), budget = plan.targetCents;
+  const days = cp.periodDays || Math.max(1, isoDiff(s, e)), spent = cp.actualVariableCents || 0, avail = budget - spent;
+  return { start: s, end: e, own, income: inc, ownAt, reserve, debt: dbt, due, repayDay, repay: plan.repayCents, A: plan.availableCents, budget, days,
+    daily: perDayOf(avail, today, s, e), spent, avail };
+}
+
+// Бюджет = periodBudgetStart (як плитка застосунку), витрачено = actualVariableCents, на день = perDayOf.
 // Категорії: факт змінних витрат з початку періоду (без fixed_id і credit_id), план = розподіл поточного періоду рушія.
 export type BudgetRow = { id: string; name: string; color?: string | null; fact: number; plan: number; over: boolean; near: boolean; noPlan?: boolean };
 export type BudgetModel = {
@@ -140,9 +190,11 @@ export type BudgetModel = {
   rows: BudgetRow[]; topOver: BudgetRow[];
 };
 
-export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string): BudgetModel | null {
+export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, accounts: P[]): BudgetModel | null {
   const cp = pr.currentPeriod, q = (pr.periods || []).find((p: P) => p.basis === 'current');
   if (!cp || !q) return null;
+  const h = histOf(txs, accounts), pb = periodBudgetStart(pr, fi, h.hist, h.allIds, h.ownIds, today);
+  if (!pb) return null;
   const exp = (cats || []).filter((c) => !c.is_income && c.type !== 'income');
   const fact: Record<string, number> = {};
   let none = 0;
@@ -167,8 +219,8 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string): BudgetM
   rows.sort((a, b) => b.fact - a.fact || b.plan - a.plan || (a.id < b.id ? -1 : 1));
   const topOver = rows.filter((r) => r.over).sort((a, b) => (b.fact - b.plan) - (a.fact - a.plan)).slice(0, 3);
   return {
-    start: cp.start, end: cp.end, poolCents: cp.targetCents, spentCents: cp.actualVariableCents,
-    leftCents: cp.targetCents - cp.actualVariableCents, dailyCents: Math.floor(cp.dailyCents || 0), leftDays: cp.leftDays || 0, rows, topOver,
+    start: cp.start, end: cp.end, poolCents: pb.budget, spentCents: pb.spent,
+    leftCents: pb.avail, dailyCents: pb.daily, leftDays: Math.max(0, isoDiff(cp.start > today ? cp.start : today, cp.end)), rows, topOver,
   };
 }
 
@@ -187,13 +239,24 @@ export type WeekModel = {
   days?: { date: string; spendCents: number; balanceCents: number }[];
 };
 const KINDS = ['payout', 'income', 'mandatory', 'fee', 'repay'];
+// v151: підпис погашення як у застосунку (repayKind/repayLabel в index.html): «Погашення Приват · обовʼязкове» (дата = обовʼязкова дата
+// кошика), «· додатково» (раніше), «· прострочене» (пізніше); банк рахунку зі знімка рушія за accountId
+const BANK_SHORT: Record<string, string> = { oschad: 'Ощад', privat: 'Приват', mono: 'Mono', cash: 'Готівка' };
+export function repayKind(e: P): string {
+  const p = e.plannedRepaymentDate || e.date;
+  return e.date < p ? 'додатково' : e.date > p ? 'прострочене' : 'обовʼязкове';
+}
+export function repayLabel(pr: P, e: P): string {
+  const a = (pr?.snapshot?.accounts || []).find((x: P) => String(x.id) === String(e.accountId));
+  return `Погашення ${a ? (BANK_SHORT[a.bank] || a.name || 'Рахунок') : (e.name || 'кредитки')} · ${repayKind(e)}`;
+}
 
 export function weekModel(pr: P, today: string): WeekModel {
   const to = plusDays(today, 6), s = pr.snapshot, shift = s.positiveOwnCents - s.cashCents;
   const events = (pr.events || []).filter((e: P) => e.date >= today && e.date <= to && KINDS.includes(e.kind))
     .map((e: P) => ({
       date: e.date, kind: e.kind, conditional: e.certainty === 'conditional', cents: e.cashDeltaCents,
-      name: e.kind === 'repay' ? `Погашення кредитки ${e.name}` : e.kind === 'fee' ? e.name : e.name,
+      name: e.kind === 'repay' ? repayLabel(pr, e) : e.name,
     }));
   const days = (pr.days || []).filter((d: P) => d.date >= today && d.date <= to);
   const last = days[days.length - 1];
@@ -359,7 +422,7 @@ export function installmentsOn(credits: P[], txs: Tx[], date: string): { name: s
 }
 
 const dueOn = (pr: P, date: string) => (pr.events || []).filter((e: P) => e.date === date && ['mandatory', 'fee', 'repay'].includes(e.kind))
-  .map((e: P) => ({ name: e.kind === 'repay' ? `Погашення кредитки ${e.name}` : e.name + (e.certainty === 'conditional' ? ' (умовно)' : ''), cents: -e.cashDeltaCents }));
+  .map((e: P) => ({ name: e.kind === 'repay' ? repayLabel(pr, e) : e.name + (e.certainty === 'conditional' ? ' (умовно)' : ''), cents: -e.cashDeltaCents }));
 
 export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string): string {
   const s = pr.snapshot, u = pr.untilPayout, tomorrow = plusDays(today, 1);
@@ -396,7 +459,7 @@ export function dueTomorrow(pr: P, fixed: P[], credits: P[], today: string): Due
     } else if (e.kind === 'repay') {
       kind = 'r';
       id = String(e.accountId);
-      name = `Погашення кредитки ${e.name}`;
+      name = repayLabel(pr, e);
     }
     if (!kind) continue;
     // Кнопки немає для погашення (у застосунку воно вноситься зміною боргу рахунку) і для списань Monobank (операція прийде з банку)

@@ -156,6 +156,90 @@ def side_2000(page):
     _side(page, 2000, 1200)
 
 
+LIST = r"""(()=>{const side=document.querySelector('.p-credits.desk .ck-side');if(!side)return null;const d=side.querySelector('.ck-day');const sc=[];
+for(const el of [side,...side.querySelectorAll('*')]){const cs=getComputedStyle(el);if(el.scrollHeight>el.clientHeight+1&&/(auto|scroll)/.test(cs.overflowY))sc.push(String(el.className).slice(0,30)+' '+el.scrollHeight+'/'+el.clientHeight)}
+const rows=[...side.querySelectorAll('.cal-tbl .cal-ev')].map(r=>({c:r.className,d:r.dataset.date||'',n:r.querySelector('.ce-n')?.textContent||'',a:r.querySelector('.ce-a')?.textContent||'',b:r.querySelector('.ce-b')?.textContent||'',pay:!!r.querySelector('.pay-done')}));
+return {sel:!!side.querySelector('.ck-bd-list'),doc:document.documentElement.scrollHeight-document.documentElement.clientHeight,sc,daySH:d?d.scrollHeight:null,dayCH:d?d.clientHeight:null,rows}})()"""
+
+# події рушія в діапазоні (без щоденних): кількість і сума руху власних коштів, як у підсумковому рядку
+ENGINE = r"""(([lo,hi])=>{const ev=window.__financeProjection.events.filter(e=>e.date>=lo&&e.date<=hi&&e.kind!=='variable');
+return {n:ev.length,net:ev.reduce((s,e)=>s+(e.funding==='credit'?0:(e.cashDeltaCents!=null?e.cashDeltaCents:e.amountCents)),0)/100}})"""
+
+
+def _list(page, w, hgt):
+    """v151 (варіант А для «Події і баланс» без вибраного дня): у поточному періоді минулі дні (крім неоплачених з кнопкою оплати) і дні
+    після наступної виплати згорнуто в підсумкові рядки «Події ДД.ММ-ДД.ММ: N подій» із сумою (рух власних) і балансом після; панель
+    без прокрутки в жовтні (демо і борг Mono) і в наступних місяцях демо; кількість і сума підсумку після виплати = події рушія."""
+    page.set_viewport_size({'width': w, 'height': hgt})
+    seen = []
+    for name, patch in (('демо', None), ('борг Mono', MONO_DEBT)):
+        freeze(page, DAY, patch)
+        go_tab(page, 3)
+        page.wait_for_selector('.p-credits.desk .cal-days .cal-cell')
+        for k in range(3):
+            if k:
+                page.click('.ck-arr[aria-label="Наступний місяць"]')
+                page.wait_for_timeout(300)
+            s = page.evaluate(LIST)
+            tag = f'{w}x{hgt} {name} міс.{k + 1}'
+            check(s and not s['sel'] and s['rows'], f'{tag}: немає списку «Події і баланс»')
+            fit = not s['sc'] and s['daySH'] <= s['dayCH'] + 1 and s['doc'] <= 1
+            fold = [r for r in s['rows'] if 'cal-ev-fold' in r['c']]
+            if k == 0:
+                check(fit, f'{tag}: панель прокручується: {s["sc"]}, {s["daySH"]}/{s["dayCH"]}')
+                past = [r for r in fold if ' past' in r['c']]
+                late = [r for r in fold if ' past' not in r['c']]
+                check(len(past) == 1 and past[0]['n'].startswith('Події 06.10-11.10: '), f'{tag}: минулі дні не згорнуто: {[r["n"] for r in fold]}')
+                left = [r for r in s['rows'] if ' past' in r['c'] and 'cal-ev-fold' not in r['c']]
+                check(all(r['pay'] for r in left), f'{tag}: поза підсумком лишились минулі рядки без кнопки оплати: {[r["n"] for r in left if not r["pay"]]}')
+                np = page.evaluate("window.__financeProjection.nextPlan.nextPayout.date")
+                check(np == '2026-10-21', f'{tag}: наступна виплата {np}')
+                check(len(late) == 1 and late[0]['n'].startswith('Події 22.10-05.11: '), f'{tag}: дні після виплати 21.10 не згорнуто: {[r["n"] for r in fold]}')
+                e = page.evaluate(ENGINE, ['2026-10-22', '2026-11-05'])
+                n = int(late[0]['n'].split(': ')[1].split()[0])
+                check(n == e['n'] and abs(_num(late[0]['a']) - e['net']) <= 1, f'{tag}: підсумок {late[0]["n"]} {late[0]["a"]}, а рушій {e}')
+                after = [r for r in s['rows'] if r['d'] > '2026-10-21' and 'cal-ev-fold' not in r['c'] and 'cal-ev-end' not in r['c'] and 'cal-ev-var' not in r['c']]
+                check(not after, f'{tag}: окремі рядки після виплати: {[r["n"] for r in after]}')
+            else:
+                check(not fold, f'{tag}: інший місяць не згортається: {[r["n"] for r in fold]}')
+                if name == 'борг Mono' and w == 1440 and k == 1:
+                    # знахідка v151: листопад з боргом Mono на 1440x900 прокручується (19 рядків, назви на два рядки), рішення у звіті
+                    print(f'      {tag}: панель {s["daySH"]}/{s["dayCH"]} (відомо, у звіті)')
+                else:
+                    check(fit, f'{tag}: панель прокручується: {s["sc"]}, {s["daySH"]}/{s["dayCH"]}')
+            seen.append(f'{name} міс.{k + 1}: {len(s["rows"])} рядків, {s["daySH"]}/{s["dayCH"]}')
+    print(f'      {w}x{hgt}: ' + '; '.join(seen))
+
+
+def list_1440(page):
+    _list(page, 1440, 900)
+
+
+def list_2000(page):
+    _list(page, 2000, 1200)
+
+
+CHIPS = r"""(()=>{const amb=(()=>{const d=document.createElement('div');d.style.background='var(--amber-bg)';document.body.appendChild(d);const c=getComputedStyle(d).backgroundColor;d.remove();return c})();
+return {amb,chips:[...document.querySelectorAll('.chip-due')].map(e=>{const card=e.closest('.bcard'),chip=e.closest('.o-acc-chip');
+const bank=card?({privat:'Приват',mono:'Mono'})[(card.className.match(/bk-(\w+)/)||[])[1]]||'':chip?(chip.textContent.match(/Mono|Приват/)||[''])[0]:'';
+return {bank,extra:e.classList.contains('extra'),late:e.classList.contains('late'),bg:getComputedStyle(e).backgroundColor,t:e.textContent}})}})()"""
+
+
+def _chips(page):
+    """v151: чип «план погашення» попереджувальний (бурштиновий) лише для обовʼязкового чи простроченого погашення; «додатково»
+    нейтральне. Борг Mono за жовтень, сьогодні 18.10: Приват 21.10 обовʼязкове (бурштин), Mono 21.10 додатково (нейтральний)."""
+    freeze(page, '2026-10-18', MONO_DEBT)
+    page.wait_for_timeout(300)
+    s = page.evaluate(CHIPS)
+    by = {c['bank']: c for c in s['chips']}
+    check('Приват' in by and 'Mono' in by, f'немає чипів погашення Приват і Mono: {s["chips"]}')
+    p, m = by['Приват'], by['Mono']
+    check(p['t'].endswith('21.10') and m['t'].endswith('21.10'), f'дати чипів: {p["t"]!r}, {m["t"]!r}')
+    check(not p['extra'] and not p['late'] and p['bg'] == s['amb'], f'Приват (обовʼязкове) не бурштиновий: {p}')
+    check(m['extra'] and m['bg'] != s['amb'], f'Mono (додатково) не нейтральний: {m}, бурштин {s["amb"]}')
+    print(f'      Приват {p["bg"]}, Mono {m["bg"]}')
+
+
 OWN_TIP = r"""(()=>{const b=document.querySelector('.dv-fc .fc-box');if(!b)return null;const v=s=>{const e=b.querySelector(s+' .fc-tip-n');if(!e)return null;const t=e.textContent;return (/[−-]/.test(t)?-1:1)*+t.replace(/\D/g,'')};
 return {k:b.dataset.k,i:+b.dataset.i,own:v('.fc-tip-own'),debt:v('.fc-tip-crd'),rows:[...b.querySelectorAll('.fc-tip-ev')].map(r=>({l:r.querySelector('.fc-tip-l').textContent,c:r.className,d:r.dataset.d!=null?+r.dataset.d:null}))}})()"""
 
@@ -213,4 +297,8 @@ CHECKS = [
     ('v150: Платежі на ПК без прокрутки 2000x1200', 'desktop', fit_2000),
     ('v151: розклад дня в Платежах без прокрутки 1440x900', 'desktop', side_1440),
     ('v151: розклад дня в Платежах без прокрутки 2000x1200', 'desktop', side_2000),
+    ('v151: «Події і баланс» без вибраного дня: минулі й після виплати згорнуто, без прокрутки 1440x900', 'desktop', list_1440),
+    ('v151: «Події і баланс» без вибраного дня: минулі й після виплати згорнуто, без прокрутки 2000x1200', 'desktop', list_2000),
+    ('v151: чип погашення: обовʼязкове бурштинове, додатково нейтральне (ПК)', 'desktop', _chips),
+    ('v151: чип погашення: обовʼязкове бурштинове, додатково нейтральне (телефон)', 'mobile', _chips),
 ]

@@ -34,9 +34,9 @@ function front(){
  const canon=html.split('/* CANONICAL FINANCE PROJECTION */')[1].split('/* END CANONICAL FINANCE PROJECTION */')[0];
  const pick=re=>{const m=html.match(re);assert.ok(m,'не знайдено в index.html: '+re);return m[0];};
  const src=[pick(/const pbIso=[^;]+;/),pick(/const pbDate=v=>\{.*?\};/),pick(/const pbDiff=[^;]+;/),pick(/const pbDm=[^;]+;/),
-  pick(/^function cashBuckets\(.*$/m),pick(/^let REPAY_EV=.*$/m),pick(/^function debtDue\(.*$/m),pick(/^function cashRepayDate\(.*$/m),canon,
+  pick(/^function cashBuckets\(.*$/m),pick(/^let REPAY_EV=.*$/m),pick(/^function repayKind\(.*$/m),pick(/^function debtDue\(.*$/m),pick(/^function dueCls\(.*$/m),pick(/^function cashRepayDate\(.*$/m),canon,
   'const planRepayOf=function(now){'+pick(/const planRepay=function\(y,m,d\)\{.*?\};/)+'return planRepay};',
-  'return {repayDate,financeProjection,setRepayEvents,debtDue,cashRepayDate,pbDate,pbIso,pbDm,planRepayOf};'].join('\n');
+  'return {repayDate,financeProjection,setRepayEvents,debtDue,dueCls,cashRepayDate,pbDate,pbIso,pbDm,planRepayOf};'].join('\n');
  return new Function(src)();
 }
 
@@ -74,6 +74,11 @@ test('account chip, bank card, cash line and credit tag in index.html give the e
   const m=Number(a.debt_month.slice(5,7))-1;assert.equal(f.planRepayOf(today)(2026,m),f.pbDm(f.pbDate(WANT[a.id])));
  }
  assert.equal(f.debtDue(privat,today).level,'ok');assert.equal(f.debtDue(privat,f.pbDate('2026-10-22')).level,'late');
+ // v151: вид найближчого погашення на чипі: Приват 21.10 обовʼязкове (попередження за 5 днів), Mono 21.10 додатково (нейтральне)
+ const near=f.pbDate('2026-10-18'),dp=f.debtDue(privat,near),dm=f.debtDue(mono,near);
+ assert.deepEqual([dp.kind,dp.level,f.dueCls(dp)],['обовʼязкове','warn','']);
+ assert.deepEqual([dm.kind,dm.level,f.dueCls(dm)],['додатково','ok',' extra']);
+ assert.equal(f.dueCls(f.debtDue(privat,f.pbDate('2026-10-22'))),' late');
  assert.equal(f.repayDate('2026-12',''),'2027-01-21');assert.equal(f.repayDate('2026-10','2026-11-25'),'2026-11-25');
 });
 

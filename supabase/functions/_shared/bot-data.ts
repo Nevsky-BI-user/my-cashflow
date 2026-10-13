@@ -13,6 +13,7 @@ export type FinanceData = {
   cats: any[];
   salary: any;
   firstOwnDate: string | null;
+  input: any; // вхід рушія (той самий, що для projection): звіт «Бюджет» перераховує бюджет на старт періоду (v151)
 };
 
 const shift = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
@@ -61,8 +62,7 @@ export async function loadFinance(sb: any, today: string): Promise<FinanceData> 
     if (!r.error && r.data && r.data[0]?.date) firstOwnDate = String(r.data[0].date).slice(0, 10);
   }
   const categories = (cats.data || []).map((c: any) => ({ ...c, type: c.is_income ? 'income' : 'expense' }));
-  const projection = financeProjection({
-    accounts, fixed: fix.data || [], credits: cred.data || [], salary: sal.data, categories, transactions: txs,
-  }, { asof: today, through: shift(today, 120) });
-  return { today, projection, txs, accounts, fixed: fix.data || [], credits: cred.data || [], cats: categories, salary: sal.data, firstOwnDate };
+  const input = { accounts, fixed: fix.data || [], credits: cred.data || [], salary: sal.data, categories, transactions: txs };
+  const projection = financeProjection(input, { asof: today, through: shift(today, 120) });
+  return { today, projection, txs, accounts, fixed: fix.data || [], credits: cred.data || [], cats: categories, salary: sal.data, firstOwnDate, input };
 }

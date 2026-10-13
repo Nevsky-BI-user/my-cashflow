@@ -116,7 +116,20 @@ def table_1920(page, t):
     rows = page.evaluate(ROWS)
     isos = {r['d'] for r in rows}
     want = {d for d in evdays if lo <= d <= hi}
-    check(want <= isos, f'у таблиці немає дат з подіями: {sorted(want - isos)}')
+    # v151 (варіант А): минулі дні і дні після наступної виплати згорнуто в рядки «Події ДД.ММ-ДД.ММ: N подій»; дата з подіями
+    # або має свій рядок, або входить у діапазон підсумкового рядка
+    import re as _re2
+    folds = []
+    for r in rows:
+        m = _re2.match(r'Події (\d\d)\.(\d\d)(?:-(\d\d)\.(\d\d))?: ', r['n']) if 'cal-ev-fold' in r['c'] else None
+        if m:
+            y0 = int(r['d'][:4]) if r['d'] else t.year
+            a = f'{y0}-{m.group(2)}-{m.group(1)}'
+            b = f'{y0 + (1 if m.group(4) and m.group(4) < m.group(2) else 0)}-{m.group(4)}-{m.group(3)}' if m.group(3) else a
+            folds.append((a, b))
+    check(folds, 'у поточному періоді немає підсумкових рядків минулих днів і днів після виплати')
+    miss = {d for d in want - isos if not any(a <= d <= b for a, b in folds)}
+    check(not miss, f'у таблиці немає дат з подіями: {sorted(miss)}, згорнуто {folds}')
     check(all(lo <= d <= hi for d in isos), f'у таблиці дати поза {lo}..{hi}: {sorted(d for d in isos if not lo <= d <= hi)}')
     check(t.isoformat() in isos and any('today' in r['c'] for r in rows), 'у таблиці немає підсвіченого рядка «сьогодні»')
     hd = page.evaluate("document.querySelector('.ck-day').innerText")
@@ -143,6 +156,12 @@ def table_1920(page, t):
         if 'cal-ev-end' in last['c']:
             # v144: підсумковий рядок списку; v149: баланс на кінець дня перед зарплатою
             check(abs(last['b']-(days[d]['netCents']+sh)/100)<=1, 'баланс перед зарплатою не з проєкції '+d)
+            continue
+        if 'cal-ev-fold' in last['c']:
+            # v151: підсумок днів після виплати (дата рядка = перший згорнутий день): баланс після останньої події діапазону
+            rng = [b for a, b in folds if a <= d <= b]
+            evs = [e for e in projection['events'] if rng and d <= e['date'] <= rng[0] and e['kind'] != 'variable']
+            check(evs and abs(last['b'] - (evs[-1]['cashAfterCents'] - evs[-1]['debtAfterCents'] + sh) / 100) <= 1, 'баланс підсумкового рядка не з єдиної проєкції ' + d)
             continue
         # v149: «Баланс після» = каса мінус борг після останньої незмінної події дня плюс зсув (змінні витрати дня: у розкладі)
         evs=[e for e in projection['events'] if e['date']==d and e['kind']!='variable']
