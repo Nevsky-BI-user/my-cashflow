@@ -54,11 +54,11 @@ test('forecast continues today balance without a jump, also with a negative own 
 });
 
 // v148 «Бюджет періоду» на старт періоду: власні на початок дня виплати + надходження цього дня.
-// v151 (знахідка 2): далі той самий розподіл виплати, що в рушії (payoutBudget): резерв дебетових обовʼязкових періоду, у день погашення
+// v151 (знахідка 2): далі той самий розподіл виплати, що в рушії (payoutBudget): резерв дебетових обовʼязкових періоду; v152: погашення на кожній виплаті, належне лише в день погашення
 // (21-го) погашення спершу належного, далі максимум, лишаючи 15 000 ₴; A = власні − резерв − погашення; бюджет min(20 000, A), якщо A > 15 000,
 // інакше 15 000. Щоденні = Доступно / днів до кінця періоду включно з сьогодні (знахідка 4).
 const rule=a=>a>1500000?Math.min(2000000,a):1500000;
-test('period budget at period start: payout day income, debit-only mandatory reserved, repayment only on the 21st, engine rule 15/20',async()=>{
+test('period budget at period start: payout day income, debit-only mandatory reserved, every payout repays (due only on the 21st), engine rule 15/20',async()=>{
  const E=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/budget.ts')).href),financeProjection=E.financeProjection;
  const lines=html.split(/\r?\n/),L=lines.find(l=>l.includes('const pbIso='));
  const pb=L.slice(L.indexOf('const pbIso='),L.indexOf('/*',L.indexOf('const pbIso=')));
@@ -66,7 +66,7 @@ test('period budget at period start: payout day income, debit-only mandatory res
  const acc=accounts();acc[0].balance=60000;
  const fixed=[{id:'f1',name:'Інтернет',amount:300,day_of_month:8,type:'expense',active:true}];
  const credits=[{id:7,name:'Телефон',monthly_amount:4643,payment_day:12,start_year:2026,start_month:9,total_payments:12}];
- // зарплата 06.10: погашення немає, борг кредиток бюджет не зменшує
+ // зарплата 06.10 (v152: кожна виплата гасить борг максимум, як рушій): належного немає (не день погашення), але борг гаситься, лишаючи 15 000
  const txs=[tx(11,1,'income',51000,'2026-10-06'),{...tx(12,1,'expense',300,'2026-10-08'),fixed_id:'f1'},tx(13,3,'expense',1200,'2026-10-10')];
  const fi={accounts:acc,salary,fixed,credits,categories:[],transactions:txs};
  const pr=financeProjection(fi,{asof:ASOF,through:'2027-01-10'});
@@ -75,7 +75,7 @@ test('period budget at period start: payout day income, debit-only mandatory res
  const ownStart=6000000-5100000+30000,debtStart=3832700-120000,reserve=30000+464300;
  assert.equal(r.own,ownStart,'власні на початок 06.10');assert.equal(r.income,5100000,'надходження 06.10');assert.equal(r.ownAt,ownStart+5100000);
  assert.equal(r.reserve,reserve,'резерв дебетових обовʼязкових періоду, разом зі сплаченим 08.10');assert.equal(r.debt,debtStart,'борг кредиток на 06.10');
- assert.equal(r.repayDay,false);assert.equal(r.repay,0);assert.equal(r.A,r.ownAt-reserve);assert.equal(r.budget,rule(r.A));assert.equal(r.budget,2000000);
+ assert.equal(r.repayDay,false);assert.equal(r.due,0);assert.equal(r.repay,Math.min(debtStart,Math.max(0,r.ownAt-reserve-1500000)));assert.equal(r.repay,debtStart,'увесь борг на 06.10');assert.equal(r.A,r.ownAt-reserve-r.repay);assert.equal(r.budget,rule(r.A));assert.equal(r.budget,1823000);
  assert.equal(r.days,15);assert.equal(r.avail,r.budget-pr.currentPeriod.actualVariableCents);assert.equal(r.daily,Math.round(r.avail/9),'доступно / 9 днів 12.10-20.10');
  // аванс 21.10 (день погашення): належне = борг на 20.10 мінус кредитні витрати жовтня до 20.10; гаситься максимум, лишаючи 15 000
  const acc2=accounts().map(a=>({...a,balance_updated_at:'2026-10-25T07:00:00Z'}));acc2[0].balance=60000;

@@ -246,12 +246,12 @@ return {k:b.dataset.k,i:+b.dataset.i,own:v('.fc-tip-own'),debt:v('.fc-tip-crd'),
 CHART = r"""(()=>{const s=document.querySelector('.dv-fc .fc-svg');const z=s.querySelector('.fc-zero');const y0=z?+z.getAttribute('y1'):null;
 const ys=d=>(d||'').replace(/[MLC]/g,' ').trim().split(/[\s,]+/).map(Number).filter((_,i)=>i%2===1);
 const fut=ys(s.querySelector('.fc-fut')?.getAttribute('d')),debt=ys(s.querySelector('.fc-debt')?.getAttribute('d'));
-return {y0,futMaxY:Math.max(...fut),debtMaxY:debt.length?Math.max(...debt):null,n:+s.dataset.n,past:+s.dataset.past,from:s.dataset.from,to:s.dataset.to}})()"""
+return {y0,futMaxY:Math.max(...fut),debtMinY:debt.length?Math.min(...debt):null,n:+s.dataset.n,past:+s.dataset.past,from:s.dataset.from,to:s.dataset.to}})()"""
 
 
 def own_120(page):
     """Модель «власні ≥ 0» (координатор: «min(власні) ≥ 0 у моделі, тултіпі й графіку за 120 днів»): демо з боргом Mono і лімітом, тож прогноз бере в кредит.
-    Модель: 121 день, власні дня й після кожної події не мінус; графік (Рік): пунктир прогнозу й лінія боргу не нижче нуля;
+    Модель: 121 день, власні дня й після кожної події не мінус; графік (Рік): пунктир прогнозу не нижче нуля, лінія боргу не вище нуля (v152);
     тултіп: 120 днів кроками, власні не мінус, власні(d-1) + сума рядків(d) = власні(d); є рядки «у кредит» і погашення Mono 21.10."""
     page.set_viewport_size({'width': 1920, 'height': 900})
     freeze(page, DAY, MONO_DEBT)
@@ -267,7 +267,8 @@ return {n:r.days.length,minDay:Math.min(...r.days.map(d=>d.closingCashCents)),mi
     page.wait_for_timeout(300)
     c = page.evaluate(CHART)
     check(c['y0'] is not None and c['futMaxY'] <= c['y0'] + 0.5, f'графік: прогноз власних нижче нуля {c}')
-    check(c['debtMaxY'] is None or c['debtMaxY'] <= c['y0'] + 0.5, f'графік: лінія боргу нижче нуля {c}')
+    # v152: борг на осі відʼємний, лінія «Кредитні» не вище нуля
+    check(c['debtMinY'] is None or c['debtMinY'] >= c['y0'] - 0.5, f'графік: лінія боргу вище нуля {c}')
     page.locator('.dv-fc .fc-plot').focus()
     prev, chain, credit_rows, mono_rp, low = None, 0, 0, 0, None
     for step in range(120):

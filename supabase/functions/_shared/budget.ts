@@ -295,10 +295,12 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   // v151 (власник: «власні кошти не можуть бути мінусові»): послідовна симуляція від asof. Власні (дебетові й готівка) не нижче 0.
   // Витрата понад вільні власні йде в борг: спершу Mono (рахунок з mono_account_id), далі інші картки з кредитним лімітом, кожна до свого ліміту.
   // Обовʼязковий платіж лише з дебетової (credit_ok=false) і комісія кредиту не беруть: непокрите стає нестачею (попередження), яку гасить наступне надходження.
-  // Виплата в день погашення (repayDate попереднього місяця): резерв дебетових обовʼязкових до наступної виплати, погашення
+  // v152 (власник: «одразу має закритись кредитки з власних коштів»): КОЖНА виплата (зарплата чи аванс, не лише 21-го) проходить той самий розподіл.
+  // Розподіл виплати: резерв дебетових обовʼязкових до наступної виплати, погашення
   // min(борг, max(0, власні − резерв − 15 000)), але не менше належного на цю дату (спершу належне, далі інші картки, далі Mono);
   // A = власні − резерв − погашення; бюджет min(20 000, A), якщо A > 15 000, інакше 15 000; надлишок A − бюджет понад 10 000 іде в накопичення;
-  // готівка 3 000, решта на Mono і спершу гасить борг Mono. Інша виплата (аванс): без погашення, накопичень і переказу; бюджет за тим самим правилом.
+  // готівка 3 000, решта на Mono і спершу гасить борг Mono. До v152 так розподілялась лише виплата в день погашення (repayDate попереднього місяця), аванс ішов без погашення.
+  // Погашення кошика на кожній виплаті має власну подію: перше repay:<рахунок>:<місяць>, наступні того ж кошика repay:<рахунок>:<місяць>:<дата>.
   for(let i=events.length-1;i>=0;i--)if(events[i].kind==='repay')events.splice(i,1);
   const limitOf=(a: Record<string,any>)=>a.credit_limit==null?0:Math.max(0,cents(a.credit_limit));
   const lenders=[...accounts.filter(a=>a.mono_account_id&&limitOf(a)>0),...accounts.filter(a=>!a.mono_account_id&&limitOf(a)>0)];
@@ -306,7 +308,6 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   for(const a of accounts){book[String(a.id)]={};for(const [m,v] of a.debt_months)book[String(a.id)][m]=(book[String(a.id)][m]||0)+cents(v);}
   const debtOf=(a: Record<string,any>)=>sum(Object.values(book[String(a.id)]));
   const debtAll=()=>sum(accounts.map(debtOf));
-  const prevMonth=(d: string)=>{const [y,m]=ym(monthIndex(d)-1);return date(y,m,1).slice(0,7);};
   const debitOnly=(e: Record<string,any>)=>e.kind==='fee'||(e.kind==='mandatory'&&e.creditEligible!==true&&e.funding!=='credit');
   const simEnd=hasPlan&&nextDate>through?nextDate:through;
   const byDate: Record<string,Record<string,any>[]>={};
@@ -335,14 +336,14 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     if(arrears>0&&own>0&&list.some(e=>e.kind==='payout'||e.kind==='income')){const n=Math.min(own,arrears);own-=n;arrears-=n;const e=make('arrears:'+d,d,'Сплата нестачі','arrears',n);events.push(e);gen.push(e);}
     const payout=list.filter(e=>e.kind==='payout'),end=payoutDates.find(v=>v>d)||'';
     if(payout.length&&end){
-      const repayDay=repayDate(prevMonth(d),'')===d,ownAt=own,reserve=Math.min(own,debitBetween(d,end)),out: Record<string,number>={};let repay=0,savings=0,cashOut=0,toMono=0,offset=0;
-      if(repayDay){let left=payoutBudget(own,reserve,debtAll(),dueOn(d),true).repayCents;
+      const ownAt=own,reserve=Math.min(own,debitBetween(d,end)),out: Record<string,number>={};let repay=0,savings=0,cashOut=0,toMono=0,offset=0;
+      {let left=payoutBudget(own,reserve,debtAll(),dueOn(d),true).repayCents;
         for(const a of accounts){if(left<=0)break;left-=repayFrom(a,left,d,true,out);}
         for(const a of accounts.filter(a=>!a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}
         for(const a of accounts.filter(a=>a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}
         repay=sum(Object.values(out));}
       const available=own-reserve-repay,target=payoutBudget(available,0,0,0,false).targetCents;
-      if(repayDay){savings=available-target>1000000?available-target:0;cashOut=Math.min(300000,Math.max(0,available-savings));toMono=Math.max(0,available-savings-cashOut);
+      {savings=available-target>1000000?available-target:0;cashOut=Math.min(300000,Math.max(0,available-savings));toMono=Math.max(0,available-savings-cashOut);
         let left=toMono;for(const a of accounts.filter(a=>a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}offset=toMono-left;}
       own-=repay+offset+savings;
       emitRepays(d,out,gen);

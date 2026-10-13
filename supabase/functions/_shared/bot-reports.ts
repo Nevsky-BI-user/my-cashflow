@@ -176,7 +176,8 @@ export function periodBudgetStart(pr: P, fi: P, txs: Tx[], allIds: string[], own
     return t.type === 'expense' ? n + v : t.type === 'income' ? n - v : n;
   }, 0);
   const dbt = Math.max(0, debt), due = repayDay ? Math.max(0, Math.min(dbt, dbt - crNew)) : 0;
-  const plan = payoutBudget(ownAt, reserve, dbt, due, repayDay), budget = plan.targetCents;
+  // v152: кожна виплата гасить борг максимум (як рушій), належне лише в день погашення
+  const plan = payoutBudget(ownAt, reserve, dbt, due, true), budget = plan.targetCents;
   const days = cp.periodDays || Math.max(1, isoDiff(s, e)), spent = cp.actualVariableCents || 0, avail = budget - spent;
   return { start: s, end: e, own, income: inc, ownAt, reserve, debt: dbt, due, repayDay, repay: plan.repayCents, A: plan.availableCents, budget, days,
     daily: perDayOf(avail, today, s, e), spent, avail };

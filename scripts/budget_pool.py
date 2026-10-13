@@ -508,9 +508,6 @@ def finance_projection(data, options):
         for m,v in a['debt_months']: b[m]=b.get(m,0)+cents(v)
     def debt_of(a): return total(book[sid(a['id'])].values())
     def debt_all(): return total(debt_of(a) for a in accounts)
-    def prev_month(d):
-        y,m=ym(mi(d)-1)
-        return dt(y,m,1)[:7]
     def debit_only(e): return e['kind']=='fee' or (e['kind']=='mandatory' and e.get('creditEligible') is not True and e.get('funding')!='credit')
     sim_end=next_date if has_plan and next_date>through else through
     by_date={}
@@ -560,27 +557,26 @@ def finance_projection(data, options):
             n=min(bal,arrears); bal-=n; arrears-=n; e=make('arrears:'+d,d,'Сплата нестачі','arrears',n); events.append(e); gen.append(e)
         payout=[e for e in lst if e['kind']=='payout']; end=next((v for v in payout_dates if v>d),'')
         if payout and end:
-            repay_day=repay_plan(prev_month(d),'')==d; own_at=bal; reserve=min(bal,debit_between(d,end)); out={}; repay=savings=cash_out=to_mono=offset=0
-            if repay_day:
-                left=payout_budget(bal,reserve,debt_all(),due_on(d),True)['repayCents']
-                for a in accounts:
-                    if left<=0: break
-                    left-=repay_from(a,left,d,True,out)
-                for a in [a for a in accounts if not a.get('mono_account_id')]:
-                    if left<=0: break
-                    left-=repay_from(a,left,d,False,out)
-                for a in [a for a in accounts if a.get('mono_account_id')]:
-                    if left<=0: break
-                    left-=repay_from(a,left,d,False,out)
-                repay=total(out.values())
+            # v152: кожна виплата (зарплата чи аванс) проходить той самий розподіл: погашення, накопичення, готівка, переказ на Mono
+            own_at=bal; reserve=min(bal,debit_between(d,end)); out={}; repay=savings=cash_out=to_mono=offset=0
+            left=payout_budget(bal,reserve,debt_all(),due_on(d),True)['repayCents']
+            for a in accounts:
+                if left<=0: break
+                left-=repay_from(a,left,d,True,out)
+            for a in [a for a in accounts if not a.get('mono_account_id')]:
+                if left<=0: break
+                left-=repay_from(a,left,d,False,out)
+            for a in [a for a in accounts if a.get('mono_account_id')]:
+                if left<=0: break
+                left-=repay_from(a,left,d,False,out)
+            repay=total(out.values())
             available=bal-reserve-repay; target=payout_budget(available,0,0,0,False)['targetCents']
-            if repay_day:
-                savings=available-target if available-target>1000000 else 0; cash_out=min(300000,max(0,available-savings)); to_mono=max(0,available-savings-cash_out)
-                left=to_mono
-                for a in [a for a in accounts if a.get('mono_account_id')]:
-                    if left<=0: break
-                    left-=repay_from(a,left,d,False,out)
-                offset=to_mono-left
+            savings=available-target if available-target>1000000 else 0; cash_out=min(300000,max(0,available-savings)); to_mono=max(0,available-savings-cash_out)
+            left=to_mono
+            for a in [a for a in accounts if a.get('mono_account_id')]:
+                if left<=0: break
+                left-=repay_from(a,left,d,False,out)
+            offset=to_mono-left
             bal-=repay+offset+savings
             emit_repays(d,out,gen)
             if savings>0:
@@ -932,7 +928,7 @@ pool, savings, var_pool = plan_of(p_next[2], period[0], d1)
 print(f"сьогодні {today}; власні кошти {own:.2f}, борги {debt:.2f}, нетто {net:.2f}, мінус до перекриття {deficit:.2f}")
 print(f"поточна виплата: {p_next[1]} {p_next[0]} = {p_next[2]:.2f}; період до {p_after[0]} ({p_after[1]})")
 for d, n, a, ok in obl:
-    print(f"  {d}  {n:<32} {a:>10.2f}  {'кредитна, гаситься з виплати 21-го наступного місяця' if ok else 'біла'}")
+    print(f"  {d}  {n:<32} {a:>10.2f}  {'кредитна, гаситься з найближчої виплати' if ok else 'біла'}")
 print(f"обовʼязкові за період: {obl_sum:.2f}; відтоки каси за період {net_out(period[0], d1):.2f}")
 print(f"план періоду: {max(0.0, pool):.2f}; накопичення {pct:g}%: {savings:.2f}; змінні після накопичень: {var_pool:.2f}")
 obl_white = sum(o[2] for o in obl if not o[3] and o[2] > 0)

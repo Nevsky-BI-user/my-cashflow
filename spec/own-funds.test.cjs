@@ -44,12 +44,19 @@ test('budget rule at the 21st payout: A 12 000, 18 000, 35 000, 27 000',()=>{
  }
 });
 
-test('advance on the 6th: no repayment, no savings, same budget rule',()=>{
+// v152 (власник: «одразу має закритись кредитки з власних коштів»): аванс 06.11 проходить той самий розподіл, що й виплата 21-го.
+// Власні 50 000, резерв 0, борг Mono 5 000 (жовтень, планове погашення 20.11, бо 21.11 субота): погашення min(5 000, 50 000 − 15 000) = 5 000 (додатково, раніше плану),
+// A = 45 000, бюджет 20 000, надлишок 25 000 > 10 000 у накопичення, готівка 3 000, на Mono 17 000 (борг уже 0). До v152 аванс ішов без погашення й накопичень.
+test('advance on the 6th: same distribution as the 21st (repay, savings, cash, Mono)',()=>{
  const r=both(empty({accounts:[{id:1,kind:'debit',balance:0,debt:0},{id:2,name:'Mono',kind:'credit',mono_account_id:'m',balance:0,debt:5000,credit_limit:30000,debt_month:'2026-10-01'}]}),'2026-11-05','2026-11-19');
  const p=r.periods.find(p=>p.start==='2026-11-06');
- assert.equal(p.repayCents,0);assert.equal(p.savingsCents,0);assert.equal(p.reserveCents,0);
- assert.equal(p.availableCents,5000000);assert.equal(p.targetCents,2000000);
- assert.ok(!r.events.some(e=>e.kind==='repay'||e.kind==='savings'));
+ assert.equal(p.reserveCents,0);assert.equal(p.repayCents,500000);
+ assert.equal(p.availableCents,4500000);assert.equal(p.targetCents,2000000);assert.equal(p.savingsCents,2500000);
+ assert.equal(p.cashOutCents,300000);assert.equal(p.toMonoCents,1700000);assert.equal(p.monoOffsetCents,0);
+ const rep=r.events.filter(e=>e.kind==='repay');
+ assert.deepEqual(rep.map(e=>[e.id,e.date,e.amountCents,e.plannedRepaymentDate]),[['repay:2:2026-10','2026-11-06',500000,'2026-11-20']]);
+ assert.equal(r.days.find(d=>d.date==='2026-11-06').debtCents,0);
+ assert.equal(r.events.filter(e=>e.kind==='savings'&&e.date==='2026-11-06').length,1);
  invariants(r);
 });
 
