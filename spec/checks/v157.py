@@ -230,7 +230,9 @@ def _geometry(page, tag, base):
         g = page.evaluate(GEO)
         check(g['chart'] >= 239.5, f'{tag} {w}x{hh}: графік нижчий за 240px: {g}')
         check(not g['inner'], f'{tag} {w}x{hh}: внутрішня прокрутка колонок: {g}')
-        check(g['scroll'] == cur_scroll, f'{tag} {w}x{hh}: прокрутка Огляду змінилась проти поточного періоду ({cur_scroll} -> {g["scroll"]})')
+        # без НОВОГО ov-scroll: не поточний період не прокручується там, де поточний вміщається; легший період може вміститись
+        # і тоді, коли поточний прокручується (вищий вміст поточного періоду не робить помилкою вільніший інший)
+        check(cur_scroll or not g['scroll'], f'{tag} {w}x{hh}: зʼявилась прокрутка Огляду, якої немає в поточному періоді ({cur_scroll} -> {g["scroll"]})')
         check(hh < 840 or g['recent'] <= hh, f'{tag} {w}x{hh}: «Останні операції» нижче екрана: {g}')
         check(g['wide'] <= w, f'{tag} {w}x{hh}: горизонтальне переповнення: {g}')
         check(not g['clipped'], f'{tag} {w}x{hh}: обрізані тексти: {g["clipped"]}')
