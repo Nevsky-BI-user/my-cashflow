@@ -5,11 +5,11 @@ import type { BalanceSeries, BudgetModel, BudgetRow } from './bot-reports.ts';
 
 export const FONT = 'Inter';
 const W = 1080, H = 720;
-// v155: системні кольори Apple світлої теми, як у застосунку: акцент синій (баланс, прогноз пунктиром, сьогодні),
+// v155: системні кольори Apple світлої теми, як у застосунку; v156: акцент індиго, як у застосунку (баланс, прогноз пунктиром, сьогодні),
 // зелений лише плюс і виплата, червоний лише мінус, сірі системні
 const C = {
   bg: '#F2F2F7', card: '#FFFFFF', grid: '#E5E5EA', axis: '#C7C7CC', text: '#1C1C1E', muted: '#6C6C70',
-  fact: '#007AFF', forecast: '#007AFF', neg: '#FF3B30', negBg: '#FFEFEE', pay: '#34C759', today: '#007AFF', max: '#1F7F38',
+  fact: '#3b5bdb', forecast: '#3b5bdb', neg: '#FF3B30', negBg: '#FFEFEE', pay: '#34C759', today: '#3b5bdb', max: '#1F7F38',
 };
 const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const r1 = (n: number) => Math.round(n * 10) / 10;

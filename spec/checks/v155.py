@@ -2,14 +2,16 @@
 фоні картки, колір лише на значку й числах; градієнти лише на картках банків; насичений колір тексту поза кільцем і категоріями
 лише зі змістом: акцент, зелений (плюс), червоний (мінус), помаранчевий (увага).
 Доповнення власника 13.10: тло сторінки мʼяке градієнтне, як у v154; KPI-плитки усі одного фону й однієї рамки без кольору;
-картки банків мʼяким плавним градієнтом: один тип і кут для всіх, без жорстких стопів (двох однакових позицій підряд) і без відблиску."""
+картки банків мʼяким плавним градієнтом: один тип і кут для всіх, без жорстких стопів (двох однакових позицій підряд) і без відблиску.
+v156 (власник 13.10, «Індиго всюди»): акцент знову індиго з v154 (#3b5bdb у світлій, #8b9ff7 у темній, #7c93f5 у темній на ПК); крім карток банків
+дозволено рівно два градієнти: градієнт акценту (--grad-accent) і тон акценту (--tab-grad); будь-який інший градієнт, як і раніше, помилка."""
 from helpers import check, freeze, go_tab, settle
 
 DAY = '2026-10-13'
 TABS = [(0, 'Огляд'), (1, 'Бюджет'), (2, 'Потік'), (3, 'Платежі'), (4, 'Цілі')]
 
 # Усі видимі елементи вкладки: градієнти (фон і SVG-заливка url()), плитки зі значком KPI, насичені кольори тексту.
-# Дозволено: картки банків (градієнт банку), ілюстрація монети, затемнення під текстом на фото цілі;
+# Дозволено: картки банків (градієнт банку), ілюстрація монети, затемнення під текстом на фото цілі, рівно градієнт і тон акценту (v156);
 # «пласкі» градієнти токенів (усі зупинки одного кольору) градієнтом не вважаються.
 SCAN = r"""()=>{
  const root=document.documentElement,cs0=getComputedStyle(root),tok=n=>cs0.getPropertyValue(n).trim();
@@ -21,11 +23,13 @@ SCAN = r"""()=>{
  const cols=s=>(s.match(/(rgba?|color)\([^)]*\)/g)||[]);
  const flat=bi=>{const c=cols(bi);return c.length>0&&c.every(x=>x===c[0])};
  const sat=c=>{const n=(c.match(/[\d.]+/g)||[]).map(Number);if(c.startsWith('color('))return 0;const [r,g,b,a]=[n[0]/255,n[1]/255,n[2]/255,n.length>3?n[3]:1];const mx=Math.max(r,g,b),mn=Math.min(r,g,b);return a<0.5?0:(mx-mn)};
+ const bgi=v=>{const d=document.createElement('div');d.style.backgroundImage=v;document.body.appendChild(d);const c=getComputedStyle(d).backgroundImage;d.remove();return c};
+ const accG=new Set([bgi('var(--grad-accent)'),bgi('var(--tab-grad)')]);
  const grads=[],tiles=[],texts={};
  for(const e of document.querySelectorAll('body *')){
   if(!vis(e)||skip(e))continue;
   const s=getComputedStyle(e),bi=s.backgroundImage;
-  if(bi&&bi.includes('gradient')&&!flat(bi)){
+  if(bi&&bi.includes('gradient')&&!flat(bi)&&!accG.has(bi)){
    const scrim=/^linear-gradient\(rgba\(0, 0, 0, 0\)/.test(bi);/* затемнення фото цілі під підписом */
    if(!scrim)grads.push((e.getAttribute('class')||e.tagName)+' '+bi.slice(0,90));
   }
@@ -59,8 +63,9 @@ def one_system(page):
             settle(page)
             r = page.evaluate(SCAN)
             w = f'{tag}/{theme}/{name}'
-            check(r['acc'].upper() == ('#007AFF' if theme == 'light' else '#0A84FF'), f'{w}: акцент {r["acc"]}, а не системний синій Apple')
-            check(not r['grads'], f'{w}: градієнти поза картками банків: {r["grads"]}')
+            exp = '#3b5bdb' if theme == 'light' else ('#7c93f5' if desk else '#8b9ff7')
+            check(r['acc'].lower() == exp, f'{w}: акцент {r["acc"]}, а не індиго v154 {exp}')
+            check(not r['grads'], f'{w}: градієнти поза картками банків і акцентом: {r["grads"]}')
             check(all(t['ok'] for t in r['tiles']), f'{w}: KPI-плитка з кольоровою підкладкою або фоном не картки: {[t for t in r["tiles"] if not t["ok"]]}')
             check(not r['texts'], f'{w}: насичений колір тексту без змісту (не акцент, зелений, червоний чи помаранчевий): {r["texts"]}')
             seen_tiles += len(r['tiles'])
@@ -106,6 +111,6 @@ def _bank_cards(page, w, desk):
 
 
 CHECKS = [
-    ('v155: одна система Apple: акцент, пласко (градієнти лише на банках), KPI на фоні картки, кольори тексту зі змістом (ПК)', 'desktop', one_system),
-    ('v155: одна система Apple: акцент, пласко (градієнти лише на банках), KPI на фоні картки, кольори тексту зі змістом (телефон)', 'mobile', one_system),
+    ('v155: одна система: акцент індиго (v156), градієнти лише на банках і акценті, KPI на фоні картки, кольори тексту зі змістом (ПК)', 'desktop', one_system),
+    ('v155: одна система: акцент індиго (v156), градієнти лише на банках і акценті, KPI на фоні картки, кольори тексту зі змістом (телефон)', 'mobile', one_system),
 ]
