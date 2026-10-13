@@ -436,21 +436,53 @@ export function delta(cur: number, prev: number): string {
   return `${arrow} ${money(Math.abs(cur - prev))} (${p > 0 ? '+' : ''}${p}%)`;
 }
 
+// Зміна у відсотках для таблиці: без минулого «нова», без зміни «0%»
+export function pctChange(cur: number, prev: number): string {
+  if (cur === prev) return '0%';
+  if (prev <= 0) return 'нова';
+  const p = Math.round((cur - prev) * 100 / prev);
+  return `${p > 0 ? '+' : ''}${p}%`;
+}
+
+const MON_SHORT = ['січ.', 'лют.', 'бер.', 'квіт.', 'трав.', 'черв.', 'лип.', 'серп.', 'вер.', 'жовт.', 'лист.', 'груд.'];
+const NAME_W = 16;
+
+// Таблиця місяця (<pre>): підсумки, далі категорії; колонки: цей місяць, минулий за той самий відрізок, зміна.
+// Назва довша за колонку не обрізається: стоїть окремим рядком, числа рядком нижче.
+export function monthTable(m: MonthModel): string {
+  const prevDays = Number(m.prevTo.slice(8, 10));
+  type Row = [string, number, number] | null;
+  const rows: Row[] = [
+    ['Витрати', m.curSpent, m.prevSpent],
+    ['На день', Math.round(m.curSpent / Math.max(1, m.days)), Math.round(m.prevSpent / Math.max(1, prevDays))],
+    ['Доходи', m.curIncome, m.prevIncome],
+  ];
+  if (m.cats.length) rows.push(null, ...m.cats.map((c): Row => [c.name, c.cur, c.prev]));
+  const cells = rows.map((r) => r && [r[0], uah(r[1]), uah(r[2]), pctChange(r[1], r[2])]);
+  const head = ['', MON_SHORT[Number(m.curFrom.slice(5, 7)) - 1], MON_SHORT[Number(m.prevFrom.slice(5, 7)) - 1], 'зміна'];
+  const all = [head, ...cells.filter((r): r is string[] => !!r)];
+  const w0 = Math.min(NAME_W, Math.max(...all.map((r) => r[0].length)));
+  const w = [1, 2, 3].map((i) => Math.max(...all.map((r) => r[i].length)));
+  const line = (r: string[]) => r[0].padEnd(w0) + ' ' + r.slice(1).map((v, i) => v.padStart(w[i])).join('  ');
+  // Пробіли в кінці шапки: кнопка копіювання Telegram лягає на них, а не на «зміна»
+  const out = [line(head) + '    '];
+  for (const r of cells) {
+    if (!r) out.push('', 'За категоріями');
+    else if (r[0].length > w0) out.push(r[0], line(['', ...r.slice(1)]));
+    else out.push(line(r));
+  }
+  return '<pre>' + esc(out.join('\n')) + '</pre>';
+}
+
+// HTML (parse_mode HTML): таблиця місяця, далі минулий місяць повністю і топ-5 місць
 export function formatMonth(m: MonthModel): string {
   const curName = cap(MONTHS[Number(m.curFrom.slice(5, 7)) - 1]), prevName = MONTHS[Number(m.prevFrom.slice(5, 7)) - 1];
-  const prevDays = Number(m.prevTo.slice(8, 10));
   const lines = [`🔍 ${curName}: ${day(m.curFrom)}-${day(m.curTo)} проти ${day(m.prevFrom)}-${day(m.prevTo)}`, '',
-    `Витрати: ${money(m.curSpent)} · ${delta(m.curSpent, m.prevSpent)}`,
-    `У середньому на день: ${money(Math.round(m.curSpent / Math.max(1, m.days)))} (було ${money(Math.round(m.prevSpent / Math.max(1, prevDays)))})`,
-    `Доходи: ${money(m.curIncome)} (було ${money(m.prevIncome)})`,
+    'Суми в ₴, зміна до того самого відрізка минулого місяця', monthTable(m), '',
     `${cap(prevName)} повністю: витрати ${money(m.prevFullSpent)}`];
-  if (m.cats.length) {
-    lines.push('', 'За категоріями:');
-    for (const c of m.cats) lines.push(`${c.name}: ${money(c.cur)} · ${delta(c.cur, c.prev)}`);
-  }
   if (m.places.length) {
     lines.push('', 'Топ-5 місць:');
-    m.places.forEach((p, i) => lines.push(`${i + 1}. ${p.name}: ${money(p.cents)}` + (p.count > 1 ? ` (${p.count} ${times(p.count)})` : '')));
+    m.places.forEach((p, i) => lines.push(`${i + 1}. ${esc(p.name)}: ${money(p.cents)}` + (p.count > 1 ? ` (${p.count} ${times(p.count)})` : '')));
   }
   return lines.join('\n');
 }

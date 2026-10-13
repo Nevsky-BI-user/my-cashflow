@@ -148,8 +148,24 @@ test('Місяць: той самий відрізок минулого міся
  assert.equal(m.places.length,5);
  const t=norm(rep.formatMonth(m));
  assert.ok(t.startsWith('🔍 Жовтень: 01.10-12.10 проти 01.09-12.09\n'),t);
- for(const l of['Доходи: 69 700 ₴ (було 65 450 ₴)','Топ-5 місць:\n1. Фора: 3 462,52 ₴ (5 разів)','4. Сільпо: 1 368,13 ₴ (2 рази)',
-  'Здоровʼя: 684,81 ₴ · ↑ 684,81 ₴ (нова)','Розстрочки: 2 083 ₴ · = 0 ₴'])assert.ok(t.includes(l),l+'\n'+t);
+ // Таблиця <pre>: підсумки й категорії, числа без копійок вирівняні праворуч, назви не обрізаються
+ const pre=t.slice(t.indexOf('<pre>')+5,t.indexOf('</pre>')).split('\n');
+ assert.equal(pre[0].replace(/\s+/g,' ').trim(),'жовт. вер. зміна',pre[0]);
+ const has=re=>assert.ok(pre.some(l=>re.test(l)),re+'\n'+pre.join('\n'));
+ has(/^Доходи\s+69 700\s+65 450\s+\+6%$/);
+ has(/^Здоровʼя\s+685\s+0\s+нова$/);
+ has(/^Розстрочки\s+2 083\s+2 083\s+0%$/);
+ const sp=String(Math.round(m.curSpent/100)).replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+ assert.ok(pre.some(l=>l.startsWith('Витрати')&&l.includes(' '+sp+' ')),sp+'\n'+pre.join('\n'));
+ // Усі рядки з числами однакової довжини: колонки рівні
+ const numRows=pre.slice(1).filter(l=>/\d/.test(l));
+ assert.equal(new Set(numRows.map(l=>l.length)).size,1,pre.join('\n'));
+ assert.ok(pre.every(l=>!l.includes('…')),'без обрізання');
+ for(const l of['Топ-5 місць:\n1. Фора: 3 462,52 ₴ (5 разів)','4. Сільпо: 1 368,13 ₴ (2 рази)'])assert.ok(t.includes(l),l+'\n'+t);
+ // Довга назва категорії: окремим рядком, числа рядком нижче
+ const long=norm(rep.monthTable({...m,cats:[{name:'Дуже довга назва категорії',cur:100000,prev:50000}]}));
+ assert.ok(long.includes('\nДуже довга назва категорії\n'),long);
+ assert.ok(/\n\s+1 000\s+500\s+\+100%/.test(long),long);
  assert.ok(!t.includes('Погашення'),'погашення кредитки не потрапляє в місця');
  assert.equal(norm(rep.delta(15000,10000)),'↑ 50 ₴ (+50%)');
  assert.equal(norm(rep.delta(5000,10000)),'↓ 50 ₴ (-50%)');

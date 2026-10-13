@@ -1115,7 +1115,7 @@ Deno.serve(async (req) => {
   else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, chartReport);
   else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, budgetReport);
   else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), MAIN_KB, true));
-  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today))));
+  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), MAIN_KB, true));
   else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId);
   else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP);
   else if (/^\/yes$/i.test(text) || text === BTN.yes) await confirmPending(chatId, prof.id);
