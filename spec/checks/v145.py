@@ -6,7 +6,7 @@ from helpers import check, finance_ref, freeze, go_tab, num, settle, shot
 
 DAY = '2026-10-08'
 KEYS = ['funds', 'budget', 'balance', 'inst']
-INST = re.compile(r'^.+ · [\d\s  ]+(,\d+)? ₴ × \d+ · до \d\d\.\d\d\.\d{4}$')
+INST = re.compile(r'^.+ · [\d\s  ]+(,\d+)? ₴ × \d+ · до \d\d\.\d\d\.\d{4}( → \d\d\.\d\d\.\d{4})?$')  # v153 доповнення 5: прогнозна дата закриття (компактно «до ДД.ММ.РРРР → ДД.ММ.РРРР», рішення координатора) після дострокового погашення
 TIP = re.compile(r'^.+: факт [\d\s  ]+ з плану [\d\s  ]+ ₴(, понад план)?$')
 NO_OVERLAP = """sel=>{const b=[...document.querySelectorAll(sel)].filter(e=>e.offsetParent).map(e=>e.getBoundingClientRect());const bad=[];
 for(let i=0;i<b.length;i++)for(let j=i+1;j<b.length;j++){const p=b[i],q=b[j];if(p.right>q.left+0.5&&q.right>p.left+0.5&&p.bottom>q.top+0.5&&q.bottom>p.top+0.5)bad.push([i,j])}return bad}"""

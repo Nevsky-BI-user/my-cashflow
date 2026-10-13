@@ -1,30 +1,36 @@
-"""v152: «Гроші в часі»: лінія «Кредитні» малюється відʼємними значеннями (борг униз від нуля), вісь Y охоплює мінус,
-заливка власних не заходить під нуль; кожен діапазон (1 міс., 2 міс., 3 міс., Рік) і тултіп узгоджені з віссю."""
+"""v152: «Гроші в часі» і кільце бюджету. v153 доповнення 6 (власник: «раніше було краще по дизайну і мені потрібен саме баланс,
+я не хочу бачити лінію за власними грошима»): єдина лінія = баланс (власні мінус борг кредиток), може йти нижче нуля, вісь з мінусом,
+заливка під нулем червона (як у v149); окремих ліній «Власні» і «Кредитні» немає; «мін.» у шапці = найменший баланс діапазону
+(усі точки за підказкою) = маркер мінімуму на найнижчій точці лінії; прогноз підказки = баланс рушія на кінець дня; кожен діапазон."""
+from datetime import date, timedelta
 from helpers import check, freeze, go_tab
 
 DAY = '2026-10-12'
 MONO_DEBT = [("kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:0,debt_month:null",
               "kind:'credit',mono_account_id:'demo-mono',balance:12500,debt:30000,debt_month:'2026-10',credit_limit:30000")]
 
-# стан осі й ліній: нуль, підписи (значення й y), y вершин лінії боргу, кліпи заливки власних
+# стан осі й лінії: нуль, підписи (значення й y), y вершин лінії балансу (факт і прогноз), кліпи заливки (верх і низ прямокутника)
 AXIS = r"""(()=>{const s=document.querySelector('.dv-fc .fc-svg');const z=s.querySelector('.fc-zero');const y0=z?+z.getAttribute('y1'):null;
 const ticks=[...s.querySelectorAll('.fc-ax')].map(t=>({k:+t.dataset.k,t:t.textContent,y:+t.getAttribute('y')-3.5}));
-const ends=d=>{const a=(d||'').trim().split(/(?=[MC])/);return a.map(p=>{const v=p.slice(1).trim().split(/[\s,]+/).map(Number);return v[v.length-1]})};
-const debt=s.querySelector('.fc-debt');const clips=[...s.querySelectorAll('.fc-area g[clip-path]')].map(g=>{const id=g.getAttribute('clip-path').replace(/^url\(#|\)$/g,'');const r=document.getElementById(id).querySelector('rect');return +r.getAttribute('y')+(+r.getAttribute('height'))});
-return {y0,ticks,debtY:debt?ends(debt.getAttribute('d')):[],clips,chips:[...document.querySelectorAll('.dv-fc .fc-chips button')].map(b=>b.dataset.r)}})()"""
+const ends=d=>(d||'').trim().split(/(?=[MCL])/).filter(Boolean).map(p=>{const v=p.slice(1).trim().split(/[\s,]+/).map(Number);return v[v.length-1]});
+const line=[...s.querySelectorAll('path.fc-past,path.fc-fut')].flatMap(p=>ends(p.getAttribute('d')));
+const clips=[...s.querySelectorAll('.fc-area g[clip-path]')].map(g=>{const id=g.getAttribute('clip-path').replace(/^url\(#|\)$/g,'');const r=document.getElementById(id).querySelector('rect');return {top:+r.getAttribute('y'),bot:+r.getAttribute('y')+(+r.getAttribute('height'))}});
+return {y0,ticks,line,clips,extra:s.querySelectorAll('.fc-debt,.fc-cross-crd').length,from:s.dataset.from,n:+s.dataset.n,past:+s.dataset.past,
+ legend:[...document.querySelectorAll('.dv-fc .fc-leg>span')].map(e=>e.textContent),chips:[...document.querySelectorAll('.dv-fc .fc-chips button')].map(b=>b.dataset.r)}})()"""
 
-# точка тултіпа: сума «Кредитні» з бокса і y кружка на лінії боргу
-TIP = r"""(()=>{const b=document.querySelector('.dv-fc .fc-box');if(!b)return null;const e=b.querySelector('.fc-tip-crd .fc-tip-n');const t=e.textContent;const c=document.querySelector('.dv-fc .fc-cross-crd');
-return {i:+b.dataset.i,crd:(/[−-]/.test(t)?-1:1)*+t.replace(/\D/g,''),cy:c?+c.getAttribute('cy'):null}})()"""
+# точка підказки: індекс, «Баланс», «Власні», «Кредитні» і y кружка перехрестя
+TIP = r"""(()=>{const b=document.querySelector('.dv-fc .fc-box');if(!b)return null;const v=s=>{const e=b.querySelector(s+' .fc-tip-n');if(!e)return null;const t=e.textContent;return (/[−-]/.test(t)?-1:1)*+t.replace(/\D/g,'')};
+const c=document.querySelector('.dv-fc .fc-cross circle');return {i:+b.dataset.i,k:b.dataset.k,bal:v('.fc-tip-bal'),own:v('.fc-tip-own'),crd:v('.fc-tip-crd'),cy:c?+c.getAttribute('cy'):null}})()"""
 
-
-# маркер мінімуму власних: значення (data-v у копійках), cy, число з підпису «мін.» і найнижча точка лінії власних
-# (вузли шляхів fc-past і fc-draw без fc-debt: монотонна крива проходить через точки ряду)
-MIN = r"""(()=>{const s=document.querySelector('.dv-fc .fc-svg');const c=s.querySelector('.fc-min');if(!c)return null;
+# маркер мінімуму: значення (data-v у копійках), cy і число з підпису «мін.»
+MIN = r"""(()=>{const c=document.querySelector('.dv-fc .fc-svg .fc-min');if(!c)return null;
 const t=document.querySelector('.dv-fc .fc-sum [data-k=min]').textContent.replace(/^мін\.\s*/,'').replace(/\s*\d{2}\.\d{2}$/,'');
-const ends=d=>(d||'').trim().split(/(?=[MCL])/).map(p=>{const v=p.slice(1).trim().split(/[\s,]+/).map(Number);return v[v.length-1]});
-const own=[...s.querySelectorAll('path.fc-past,path.fc-draw')].filter(p=>!p.classList.contains('fc-debt')).flatMap(p=>ends(p.getAttribute('d')));
-return {v:+c.dataset.v/100,cy:+c.getAttribute('cy'),sum:(/^[−-]/.test(t)?-1:1)*+t.replace(/\D/g,''),label:t,ownLowY:own.length?Math.max(...own):null}})()"""
+return {v:+c.dataset.v/100,cy:+c.getAttribute('cy'),sum:(/^[−-]/.test(t)?-1:1)*+t.replace(/\D/g,''),label:t}})()"""
+
+# еталон прогнозу: баланс рушія на кінець дня (netCents + balShift) до кінця діапазону, тим самим прогоном, що й графік
+REF = r"""to=>{const r=financeProjection(window.__financeInput,Object.assign({},window.__financeOptions,{through:to}));const s=r.snapshot,sh=s.positiveOwnCents-s.cashCents;
+const o={};r.days.forEach(d=>{o[d.date]=(d.netCents+sh)/100});return {bal:o,now:(s.positiveOwnCents-s.creditDebtCents)/100}}"""
+
 
 def _val(ax, y):
     """значення в гривнях для y за двома підписами осі (лінійна шкала)"""
@@ -38,42 +44,55 @@ def _credit(page, label):
     freeze(page, DAY, MONO_DEBT)
     go_tab(page, 0)
     page.wait_for_selector('.dv-fc .fc-svg')
-    chips = page.evaluate(AXIS)['chips']
-    for r in [c for c in ['m', 'm2', 'q', 'y'] if c in chips]:
+    ax = page.evaluate(AXIS)
+    check(ax['legend'] == ['Баланс', 'нижче нуля'], f'легенда графіка {ax["legend"]}, а не «Баланс», «нижче нуля»')
+    for r in [c for c in ['m', 'm2', 'q', 'y'] if c in ax['chips']]:
         page.locator(f'.dv-fc .fc-chips button[data-r={r}]').click()
         page.wait_for_timeout(250)
         ax = page.evaluate(AXIS)
         y0 = ax['y0']
         check(y0 is not None, f'{r}: немає лінії нуля')
+        check(ax['extra'] == 0, f'{r}: лишилась окрема лінія чи точка «Кредитні»')
         neg = [t for t in ax['ticks'] if t['k'] < 0]
         check(neg and all(t['t'].startswith('−') for t in neg), f'{r}: вісь без мінусових підписів {ax["ticks"]}')
-        check(ax['debtY'] and max(ax['debtY']) > y0 + 1, f'{r}: лінія боргу не нижче нуля: max y {max(ax["debtY"] or [0])}, нуль {y0}')
-        check(min(ax['debtY']) >= y0 - 0.5, f'{r}: лінія боргу вище нуля: min y {min(ax["debtY"])}, нуль {y0}')
-        check(ax['clips'] and all(c <= y0 + 0.5 for c in ax['clips']), f'{r}: заливка власних під нулем, кліпи {ax["clips"]}, нуль {y0}')
-        # маркер мінімуму: з ряду власних (не −борг), на висоті свого значення за шкалою осі, підпис «мін.» той самий
-        mn = page.evaluate(MIN)
-        check(mn is not None, f'{r}: немає маркера мінімуму')
-        mv = _val(ax, mn['cy'])
-        check(abs(mv - mn['v']) <= max(50, abs(mn['v']) * 0.01), f'{r}: маркер мінімуму {mv:.0f} ₴ не на осі, значення {mn["v"]}')
-        check(mn['ownLowY'] is not None and abs(mn['cy'] - mn['ownLowY']) <= 0.5, f'{r}: маркер мінімуму не на найнижчій точці лінії власних: cy {mn["cy"]}, лінія {mn["ownLowY"]}')
-        check(abs(mn['sum'] - mn['v']) <= 1, f'{r}: підпис «мін.» {mn["label"]} не дорівнює маркеру {mn["v"]}')
-        # тултіп: перший день з боргом; кружок на лінії боргу нижче нуля і на висоті −борг за шкалою осі
+        check(ax['line'] and max(ax['line']) > y0 + 1, f'{r}: лінія балансу не йде нижче нуля: max y {max(ax["line"] or [0])}, нуль {y0}')
+        # заливка: зелена над нулем (кліп до y0), червона під нулем (кліп від y0)
+        check(len(ax['clips']) == 2 and abs(ax['clips'][0]['bot'] - y0) <= 0.5 and abs(ax['clips'][1]['top'] - y0) <= 0.5,
+              f'{r}: кліпи заливки {ax["clips"]}, нуль {y0}')
+        # підказка по всіх точках діапазону: баланс = власні + кредитні; прогноз = баланс рушія; відʼємний баланс нижче нуля і на своїй висоті
+        ref = page.evaluate(REF, (date.fromisoformat(ax['from']) + timedelta(days=ax['n'] - 1)).isoformat())
         page.locator('.dv-fc .fc-plot').focus()
         page.keyboard.press('Home')
-        tip, seen = None, 0
-        for _ in range(400):
+        bals, fut, negs = [], 0, 0
+        for _ in range(ax['n']):
             t = page.evaluate(TIP)
-            if t and t['crd'] < 0:
-                tip = t
-                break
+            check(t is not None and t['bal'] is not None, f'{r}: немає підказки з рядком «Баланс»')
+            d = (date.fromisoformat(ax['from']) + timedelta(days=t['i'])).isoformat()
+            bals.append(t['bal'])
+            check(abs(t['own'] + t['crd'] - t['bal']) <= 1, f'{r} {d}: власні {t["own"]} + кредитні {t["crd"]} ≠ баланс {t["bal"]}')
+            if t['k'] == 'f':
+                fut += 1
+                check(abs(t['bal'] - ref['bal'][d]) <= 1, f'{r} {d}: баланс підказки {t["bal"]}, а рушія {ref["bal"][d]:.2f}')
+            if t['i'] == ax['past'] - 1:
+                check(abs(t['bal'] - ref['now']) <= 1, f'{r}: сьогодні {t["bal"]}, а плитка «Баланс» {ref["now"]:.2f}')
+            if t['bal'] < 0:
+                negs += 1
+                # строго нижче нуля (малий мінус дає частку пікселя), висота за шкалою осі нижче
+                check(t['cy'] > y0 + 0.05, f'{r} {d}: баланс {t["bal"]} не нижче нуля: cy {t["cy"]}, нуль {y0}')
+                v = _val(ax, t['cy'])
+                check(abs(v - t['bal']) <= max(50, abs(t['bal']) * 0.01), f'{r} {d}: точка {v:.0f} ₴ не на висоті балансу {t["bal"]}')
             page.keyboard.press('ArrowRight')
-            seen += 1
-        check(tip is not None, f'{r}: немає дня з боргом за {seen} кроків')
-        check(tip['cy'] is not None and tip['cy'] > y0 + 1, f'{r}: точка кредитної серії не нижче нуля: {tip}, нуль {y0}')
-        v = _val(ax, tip['cy'])
-        check(abs(v - tip['crd']) <= max(50, abs(tip['crd']) * 0.01), f'{r}: точка {v:.0f} ₴ не збігається з тултіпом {tip["crd"]} ₴')
         page.keyboard.press('Escape')
-        print(f'      {label} {r}: мін. власних {mn["label"]} y={mn["cy"]:.1f} (за віссю {mv:.0f}); нуль y={y0:.1f}, борг y={tip["cy"]:.1f} ({tip["crd"]} ₴, за віссю {v:.0f}), підписи {[t["t"] for t in ax["ticks"]]}')
+        check(len(bals) == ax['n'] and fut > 0 and negs > 0, f'{r}: точок {len(bals)} з {ax["n"]}, прогнозу {fut}, відʼємних {negs}: перевірка не показова')
+        # «мін.» у шапці = найменший баланс діапазону = маркер на найнижчій точці лінії
+        mn = page.evaluate(MIN)
+        check(mn is not None, f'{r}: немає маркера мінімуму')
+        check(abs(mn['sum'] - min(bals)) <= 1, f'{r}: «мін.» {mn["label"]}, а найменший баланс діапазону {min(bals)}')
+        check(abs(mn['sum'] - mn['v']) <= 1, f'{r}: підпис «мін.» {mn["label"]} не дорівнює маркеру {mn["v"]}')
+        check(abs(mn['cy'] - max(ax['line'])) <= 0.5, f'{r}: маркер мінімуму не на найнижчій точці лінії: cy {mn["cy"]}, лінія {max(ax["line"])}')
+        mv = _val(ax, mn['cy'])
+        check(abs(mv - mn['v']) <= max(50, abs(mn['v']) * 0.01), f'{r}: маркер мінімуму {mv:.0f} ₴ не на осі, значення {mn["v"]}')
+        print(f'      {label} {r}: точок {len(bals)} (прогноз {fut}, мінус {negs}), мін. {mn["label"]} y={mn["cy"]:.1f}, нуль y={y0:.1f}, підписи {[t["t"] for t in ax["ticks"]]}')
 
 
 def credit_desk(page):
@@ -148,8 +167,8 @@ def ring_v152(page):
 
 
 CHECKS = [
-    ('v152: «Гроші в часі»: лінія «Кредитні» нижче нуля, вісь з мінусом, усі діапазони (ПК)', 'desktop', credit_desk),
-    ('v152: «Гроші в часі»: лінія «Кредитні» нижче нуля, вісь з мінусом, усі діапазони (телефон)', 'mobile', credit_mob),
+    ('v153: «Гроші в часі»: лінія балансу нижче нуля, мін. = найменший баланс, прогноз = рушій, усі діапазони (ПК)', 'desktop', credit_desk),
+    ('v153: «Гроші в часі»: лінія балансу нижче нуля, мін. = найменший баланс, прогноз = рушій, усі діапазони (телефон)', 'mobile', credit_mob),
     ('v152: кільце бюджету: плоскі кінці, рівні розриви, сусіди різного тону, легенда тих самих кольорів (ПК)', 'desktop', ring_v152),
     ('v152: кільце бюджету: плоскі кінці, рівні розриви, сусіди різного тону, легенда тих самих кольорів (телефон)', 'mobile', ring_v152),
 ]

@@ -10,7 +10,7 @@ MO = ['Січень', 'Лютий', 'Березень', 'Квітень', 'Тр�
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
 # найменший кегль тексту в сітці й таблиці (лише елементи з власним текстом)
 MIN_FS = """sel=>Math.min(...[...document.querySelectorAll(sel+' *')].filter(e=>e.offsetParent&&[...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())).map(e=>parseFloat(getComputedStyle(e).fontSize)))"""
-ROWS = """[...document.querySelectorAll('.ck-day .cal-tbl .cal-ev')].map(r=>({d:r.dataset.date,b:r.dataset.bal==null?null:Number(r.dataset.bal),
+ROWS = """[...document.querySelectorAll('.ck-day .cal-tbl .cal-ev')].map(r=>({d:r.dataset.date,b:r.dataset.bal==null?null:Number(r.dataset.bal),debt:r.dataset.debt==null?null:Number(r.dataset.debt),
 h:r.getBoundingClientRect().height,top:r.getBoundingClientRect().top,bot:r.getBoundingClientRect().bottom,o:r.scrollHeight>r.clientHeight+1,c:r.className,n:r.querySelector('.ce-n').textContent,a:r.querySelector('.ce-b').textContent}))"""
 
 
@@ -133,11 +133,11 @@ def table_1920(page, t):
     check(all(lo <= d <= hi for d in isos), f'у таблиці дати поза {lo}..{hi}: {sorted(d for d in isos if not lo <= d <= hi)}')
     check(t.isoformat() in isos and any('today' in r['c'] for r in rows), 'у таблиці немає підсвіченого рядка «сьогодні»')
     hd = page.evaluate("document.querySelector('.ck-day').innerText")
-    for s in ('Дата', 'Подія', 'Сума', 'Баланс після'):  # v149: баланс = власні мінус борг кредиток (як плитка «Баланс»)
+    for s in ('Дата', 'Подія', 'Сума', 'Власні після', 'Борг'):  # v153: після події власні кошти (як лінія «Власні»), борг кредиток окремою колонкою
         check(s in hd, f'у таблиці немає колонки «{s}»')
     for d in sorted(isos):
-        # рядок прогнозу щоденних витрат (cal-ev-var) підсумовує період і балансу не має
-        rr = [r for r in rows if r['d'] == d and 'cal-ev-var' not in r['c']]
+        # рядок прогнозу щоденних витрат (cal-ev-var) і рядок нестачі на погашення (cal-ev-dshort) окремо
+        rr = [r for r in rows if r['d'] == d and 'cal-ev-var' not in r['c'] and 'cal-ev-dshort' not in r['c']]
         if not rr:
             continue
         if d >= t.isoformat():
@@ -151,22 +151,24 @@ def table_1920(page, t):
     check(not any(e['funding']=='credit' for e in projection['events']), 'база автоматично переносить платежі на кредитку')
     days={d['date']:d for d in projection['days']}
     sh=projection['snapshot']['positiveOwnCents']-projection['snapshot']['cashCents']
-    for d in sorted({r['d'] for r in rows if r['d']>=t.isoformat() and 'cal-ev-var' not in r['c']}):
-        last=[r for r in rows if r['d']==d and 'cal-ev-var' not in r['c']][-1]
+    # v153: «Власні після» = власні кошти рушія після події (cashAfterCents, як лінія «Власні» графіка), борг окремо (data-debt)
+    for d in sorted({r['d'] for r in rows if r['d']>=t.isoformat() and 'cal-ev-var' not in r['c'] and 'cal-ev-dshort' not in r['c']}):
+        last=[r for r in rows if r['d']==d and 'cal-ev-var' not in r['c'] and 'cal-ev-dshort' not in r['c']][-1]
         if 'cal-ev-end' in last['c']:
-            # v144: підсумковий рядок списку; v149: баланс на кінець дня перед зарплатою
-            check(abs(last['b']-(days[d]['netCents']+sh)/100)<=1, 'баланс перед зарплатою не з проєкції '+d)
+            # v144: підсумковий рядок списку; v153: власні на кінець дня перед зарплатою, борг на кінець дня
+            check(abs(last['b']-days[d]['closingCashCents']/100)<=1 and abs(last['debt']-days[d]['debtCents']/100)<=1, 'власні чи борг перед зарплатою не з проєкції '+d)
             continue
         if 'cal-ev-fold' in last['c']:
             # v151: підсумок днів після виплати (дата рядка = перший згорнутий день): баланс після останньої події діапазону
             rng = [b for a, b in folds if a <= d <= b]
             evs = [e for e in projection['events'] if rng and d <= e['date'] <= rng[0] and e['kind'] != 'variable']
-            check(evs and abs(last['b'] - (evs[-1]['cashAfterCents'] - evs[-1]['debtAfterCents'] + sh) / 100) <= 1, 'баланс підсумкового рядка не з єдиної проєкції ' + d)
+            check(evs and abs(last['b'] - evs[-1]['cashAfterCents'] / 100) <= 1, 'власні підсумкового рядка не з єдиної проєкції ' + d)
             continue
-        # v149: «Баланс після» = каса мінус борг після останньої незмінної події дня плюс зсув (змінні витрати дня: у розкладі)
+        # v153: «Власні після» = власні після останньої незмінної події дня (змінні витрати дня: рядок прогнозу нижче й розклад); сьогодні без подій: власні сьогодні
         evs=[e for e in projection['events'] if e['date']==d and e['kind']!='variable']
-        want=(evs[-1]['cashAfterCents']-evs[-1]['debtAfterCents']+sh)/100 if evs else (projection['snapshot']['positiveOwnCents']-projection['snapshot']['creditDebtCents'])/100
-        check(abs(last['b']-want)<=1, 'баланс календаря не з єдиної проєкції '+d)
+        want=evs[-1]['cashAfterCents']/100 if evs else projection['snapshot']['positiveOwnCents']/100
+        wdebt=evs[-1]['debtAfterCents']/100 if evs else projection['snapshot']['creditDebtCents']/100
+        check(abs(last['b']-want)<=1 and abs((last['debt'] or 0)-wdebt)<=1, f'власні чи борг календаря не з єдиної проєкції {d}: {last["b"]}/{last["debt"]}, рушій {want}/{wdebt}')
     for d in pays:
         if int(d) >= t.day:
             cb = page.evaluate(CELLBAL, d)
@@ -219,7 +221,9 @@ def _var_rows(page):
     for r, g in zip(rows, groups.values()):
         amount = f"{round(g['c'] / 100):,}".replace(',', ' ')
         want = f"Щоденні витрати, прогноз: {amount} ₴ ({dm(g['from'])}-{dm(g['to'])})"
-        check(r['d'] == g['from'] and r['b'] is None, f'рядок прогнозу не на першій даті або з балансом: {r}')
+        # v153: рядок прогнозу в останньому дні діапазону, після = власні на кінець цього дня (як у рушії)
+        vown = next(d for d in p['days'] if d['date'] == g['to'])['closingCashCents'] / 100
+        check(r['d'] == g['to'] and r['b'] is not None and abs(float(r['b']) - vown) <= 1, f'рядок прогнозу не в останньому дні діапазону або власні після не з рушія {vown}: {r}')
         check(r['n'].replace(' ', ' ') == want, f'рядок прогнозу {r["n"]!r}, очікувано {want!r}')
     last = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(r=>r.dataset.date).sort().pop()")
     check(last <= hi and rows and max(g['to'] for g in groups.values()) == hi, f'список не доходить до {hi}: останній рядок {last}')
@@ -237,8 +241,9 @@ def breakdown(page, t):
     # v143: підсумок розкладу = каса на кінець дня з рушія (змінні витрати дня в таблиці підсумовані рядком прогнозу)
     ref = finance_ref(page)
     sh = ref['snapshot']['positiveOwnCents'] - ref['snapshot']['cashCents']
-    want = (next(d for d in ref['days'] if d['date'] == iso)['netCents'] + sh) / 100
-    now_bal = (ref['snapshot']['positiveOwnCents'] - ref['snapshot']['creditDebtCents']) / 100
+    # v153: власні на кінець дня з рушія, власні сьогодні = власні рушія на старт
+    want = next(d for d in ref['days'] if d['date'] == iso)['closingCashCents'] / 100
+    now_bal = ref['snapshot']['positiveOwnCents'] / 100
     page.click(f'.ck-cal .cal-cell[data-date="{iso}"]')
     page.wait_for_timeout(250)
     check(cal.locator('.cal-cell.sel').count() == 1, 'клік не виділив день')
@@ -246,15 +251,17 @@ def breakdown(page, t):
     check(f'РОЗКЛАД БАЛАНСУ · {int(iso[8:])} ' in side.upper(), f'шапка розкладу: {side[:60]!r}')
     check('Каса' not in side and 'каса' not in side, f'у розкладі лишилась «каса»: {side[:300]!r}')
     st = page.locator('.ck-bd-st').inner_text()
-    sv = int(''.join(ch for ch in st.split('\n')[-1] if ch.isdigit()) or 0) * (-1 if '−' in st.split('\n')[-1] else 1)
-    check('Баланс сьогодні' in st and abs(sv - now_bal) <= 1, f'немає «Баланс сьогодні» = плитка «Баланс» {now_bal}: {st!r}')
+    sb_ = page.locator('.ck-bd-st .ce-b').inner_text()
+    sv = int(''.join(ch for ch in sb_ if ch.isdigit()) or 0) * (-1 if '−' in sb_ else 1)
+    check('Власні сьогодні' in st and abs(sv - now_bal) <= 1, f'немає «Власні сьогодні» = власні рушія {now_bal}: {st!r}')
     tot = page.locator('.ck-bd-tot').inner_text()
-    v = int(''.join(ch for ch in tot.split('\n')[-1] if ch.isdigit()) or 0) * (-1 if '−' in tot.split('\n')[-1] else 1)
-    check('Баланс на кінець' in tot and abs(v - want) <= 1, f'підсумок розкладу {tot!r}, у рушії {want}')
+    tv = page.locator('.ck-bd-tot .ce-b').inner_text()
+    v = int(''.join(ch for ch in tv if ch.isdigit()) or 0) * (-1 if '−' in tv else 1)
+    check('Власні на кінець' in tot and abs(v - want) <= 1, f'підсумок розкладу {tot!r}, у рушії {want}')
     m = re.search(r'Надходження \+([\d\s\u00a0]+) ₴, відтоки −([\d\s\u00a0]+) ₴', side)
     check(m, f'немає рядка «Надходження/відтоки»: {side[-200:]!r}')
     n_in, n_out = (int(re.sub(r'\D', '', g)) for g in m.groups())
-    check(abs(sv + n_in - n_out - v) <= 2, f'баланс сьогодні {sv} + надходження {n_in} − відтоки {n_out} ≠ баланс на кінець {v}')
+    check(abs(sv + n_in - n_out - v) <= 2, f'власні сьогодні {sv} + надходження {n_in} − відтоки {n_out} ≠ власні на кінець {v}')
     ev = page.locator('.ck-day-events .ck-bd-row')
     names = [ev.nth(i).locator('.ce-n').inner_text() for i in range(ev.count())]
     nvar = sum(1 for e in ref['events'] if e['date'] == iso and e['kind'] == 'variable')

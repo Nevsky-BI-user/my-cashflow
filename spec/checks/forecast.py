@@ -88,9 +88,10 @@ def chart(page):
     vis = _visible(info['first'], t)
     check(chips == [[r, names[r]] for r in vis], f'чипи діапазону: {chips}, а не {vis}')
     check(info['pressed'] == ['q'], f'за замовчуванням не «3 міс.»: {info["pressed"]}')
-    # v150 (модель «власні ≥ 0»): крива = власні кошти, мітка «Сьогодні: власні» (рядок «Власні» плитки «Баланс»); борг окремою лінією
-    own = snap['positiveOwnCents']
-    exp = 'Сьогодні: ' + _money(own)
+    # v153 доповнення 6 (власник: «мені потрібен саме баланс»): крива знову в балансі (власні мінус борг кредиток), як у v148-v149,
+    # мітка «Сьогодні: баланс» = плитка «Баланс»; власні й кредитні лише в підказці, окремої лінії боргу немає
+    bal, shift = snap['positiveOwnCents'] - snap['creditDebtCents'], snap['positiveOwnCents'] - snap['cashCents']
+    exp = 'Сьогодні: ' + _money(bal)
     check(info['today'] == exp, f'мітка сьогодні {info["today"]!r}, а не {exp!r}')
     payouts = sorted({e['date'] for e in ref['events'] if e['kind'] == 'payout'})
     for r in vis:
@@ -109,7 +110,7 @@ def chart(page):
         pays = [d for d in (payouts if info['to'] <= ref['days'][-1]['date'] else _payouts_through(page, info['to'])) if _iso(t) < d <= info['to']]
         check(info['pays'] == len(pays), f'{r}: маркерів виплат {info["pays"]}, а не {len(pays)}')
         # мінімум у підсумку = червона точка; не вище каси прогнозу в діапазоні
-        mins = [d['closingCashCents'] for d in ref['days'] if _iso(t) < d['date'] <= info['to']] + [own]  # v150: власні, точка сьогодні = власні
+        mins = [d['netCents'] + shift for d in ref['days'] if _iso(t) < d['date'] <= info['to']] + [bal]  # v153 доповнення 6: баланс, точка сьогодні = плитка «Баланс»
         check(info['minV'] <= min(mins), f'{r}: мінімум {info["minV"]} вище мінімуму прогнозу {min(mins)}')
         s = info['sum']
         check(re.match(r'^мін\. [−+][\d ]+ ₴ \d\d\.\d\d · макс\. [−+][\d ]+ ₴ \d\d\.\d\d · сьогодні −?[\d ]+ ₴', s), f'{r}: рядок підсумку {s!r}')

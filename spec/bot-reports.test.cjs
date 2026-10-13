@@ -17,6 +17,8 @@ async function setup(){
  const pr=E.financeProjection(fi,{asof:fx.today,through});
  return {pr,rep,ch,fm,fx,fi,E};
 }
+// v153 доповнення 6: підпис графіка на фікстурі; сьогодні і мінімум ті самі, що у v149, після виплати за рушієм v153
+const CAPTION='Баланс сьогодні -33 428 ₴ · мінімум -135 372,2 ₴ 20.09 · після виплати 21.10: 17 670,62 ₴';
 // v151: periodBudgetStart застосунку рівно так, як він лежить в index.html (як у balance.test.cjs), для паритету з копією в боті
 const fs=require('node:fs');
 const html=fs.readFileSync(path.resolve(__dirname,'../index.html'),'utf8');
@@ -34,7 +36,7 @@ test('Бюджет: бюджет періоду як плитка застосу
  const h=rep.histOf(fx.transactions,fx.accounts);
  const app=appPeriodBudget(E)(pr,fi,h.hist,h.allIds,h.ownIds,fx.today),bot=rep.periodBudgetStart(pr,fi,h.hist,h.allIds,h.ownIds,fx.today);
  assert.deepEqual(bot,app);
- assert.deepEqual(E.payoutBudget(app.ownAt,app.reserve,app.debt,app.due,app.repayDay),{repayCents:app.repay,availableCents:app.A,targetCents:app.budget});
+ assert.deepEqual(E.payoutBudget(app.ownAt,app.reserve,app.debt,app.due,app.repayDay),{repayCents:app.repay,dueShortCents:app.dueShort,availableCents:app.A,targetCents:app.budget});
  assert.equal(m.poolCents,app.budget);
  assert.equal(m.spentCents,cp.actualVariableCents);
  assert.equal(m.leftCents,app.budget-cp.actualVariableCents);
@@ -57,13 +59,34 @@ test('Бюджет: бюджет періоду як плитка застосу
  assert.equal(rep.formatBudget(null),'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
 });
 
+// v153: плани категорій бота діляться від того самого бюджету періоду, що й у застосунку (planSplit з index.html), сума планів = бюджету
+test('Бюджет: план категорій бота = planSplit застосунку від бюджету періоду, сума планів дорівнює бюджету',async()=>{
+ const {pr,rep,fx,fi}=await setup();
+ const line=html.split(/\r?\n/).find(l=>l.startsWith('function planSplit('));assert.ok(line,'немає planSplit в index.html');
+ const appSplit=new Function(line+'\nreturn planSplit;')();
+ const m=rep.budgetModel(pr,fx.transactions,fx.categories,fx.today,fi,fx.accounts);
+ const plan=m.rows.filter(r=>!r.noPlan).reduce((n,r)=>n+r.plan,0);
+ const zero=appSplit(m.poolCents,fx.categories).filter(c=>c.totalCents>0&&!m.rows.some(r=>r.id===c.id));
+ assert.equal(plan,m.poolCents-zero.reduce((n,c)=>n+c.totalCents,0),'сума планів рядків');
+ assert.equal(appSplit(m.poolCents,fx.categories).reduce((n,c)=>n+c.totalCents,0),m.poolCents,'planSplit ділить увесь бюджет');
+ for(const r of m.rows.filter(r=>!r.noPlan))assert.equal(r.plan,(appSplit(m.poolCents,fx.categories).find(c=>c.id===r.id)||{totalCents:0}).totalCents,r.name);
+ // паритет копії на різних наборах: ваги, абсолютні ліміти за sort_order, без ваг (усе в «Не розподілено»), неактивні й доходні
+ const sets=[fx.categories,
+  [{id:'2',type:'expense',budget_limit:3},{id:'10',type:'expense',budget_limit:7},{id:'1',type:'expense',budget_limit:0}],
+  [{id:'a',type:'expense',limit_abs:500,sort_order:2},{id:'b',type:'expense',limit_abs:300,sort_order:1},{id:'c',type:'expense',budget_limit:1}],
+  [{id:'a',type:'expense',limit_abs:500,sort_order:null},{id:'b',type:'expense',limit_abs:900,sort_order:1}],
+  [{id:'x',type:'expense',budget_limit:0},{id:'y',type:'income',budget_limit:50},{id:'z',type:'expense',budget_limit:5,active:false}]];
+ for(const cats of sets)for(const total of [0,1,99999,1500000,2000033])assert.deepEqual(rep.planSplit(total,cats),appSplit(total,cats),JSON.stringify(cats)+' '+total);
+});
+
 test('Бюджет: позначки понад план і від 90% плану в моделі, текст без категорій',async()=>{
  const {rep}=await setup();
  const pr={currentPeriod:{start:'2026-10-06',end:'2026-10-21',targetCents:100000,actualVariableCents:19000,dailyCents:9000.7,leftDays:9,periodDays:15},
   snapshot:{positiveOwnCents:0,creditDebtCents:0,cashCents:0,accounts:[]},
   periods:[{basis:'current',categories:[{id:1,totalCents:10000},{id:2,totalCents:10000}]}]};
  const fi={accounts:[],fixed:[],credits:[],salary:null,categories:[],transactions:[]};
- const cats=[{id:1,name:'А',is_income:false},{id:2,name:'Б',is_income:false}];
+ // v153: план категорії = planSplit від бюджету періоду (15 000), тож плани по 100 ₴ задано абсолютними лімітами, решта в «Не розподілено»
+ const cats=[{id:1,name:'А',is_income:false,type:'expense',limit_abs:100,sort_order:1},{id:2,name:'Б',is_income:false,type:'expense',limit_abs:100,sort_order:2}];
  const txs=[{id:1,type:'expense',amount:90,date:'2026-10-07',category_id:1},{id:2,type:'expense',amount:100.01,date:'2026-10-08',category_id:2},
   {id:3,type:'expense',amount:500,date:'2026-10-08',category_id:2,fixed_id:5},{id:4,type:'expense',amount:70,date:'2026-10-05',category_id:1}];
  const m=rep.budgetModel(pr,txs,cats,'2026-10-12',fi,[]);
@@ -137,11 +160,24 @@ test('Місяць: той самий відрізок минулого міся
  assert.deepEqual([mar.prevTo,mar.prevFullTo],['2027-02-28','2027-02-28']);
 });
 
-test('Графік: лінія = власні кошти (v150), точка «сьогодні» = власні, мінімум є на графіку й у підписі',async()=>{
+// v153 доповнення 6 (власник: «і в боті графік має бути БАЛАНС»): лінія = баланс (власні мінус борг кредиток), як у v149, може бути нижче нуля;
+// формули застосунку беруться з index.html рівно так, як вони там лежать (balanceNowCents, balanceAfterCents, balancePast)
+function appBalance(){
+ const lines=html.split(/\r?\n/),line=n=>{const l=lines.find(x=>x.startsWith('function '+n+'('));assert.ok(l,'немає '+n);return l};
+ return new Function([...['pastOwnSeries','balShift','balanceNowCents','balanceAfterCents','balancePast'].map(line),'return {balanceNowCents,balanceAfterCents,balancePast};'].join('\n'))();
+}
+
+test('Графік: лінія = баланс (v153 доповнення 6), сьогодні = плитка «Баланс», минуле й прогноз за формулами застосунку, мінімум на графіку й у підписі',async()=>{
  const {pr,rep,ch,fm,fx}=await setup();
+ const A=appBalance();
  const s=rep.balanceSeries(pr,fx.transactions,fx.accounts,fx.today,{salary:fx.salary,firstOwnDate:'2026-09-01'});
  assert.equal(s.today.date,fx.today);
- assert.equal(s.today.cents,pr.snapshot.positiveOwnCents);
+ assert.equal(s.today.cents,pr.snapshot.positiveOwnCents-pr.snapshot.creditDebtCents);
+ assert.equal(s.today.cents,A.balanceNowCents(pr),'сьогодні = плитка «Баланс» застосунку');
+ // минуле: рівно balancePast застосунку (усі рахунки, назад від плитки «Баланс»)
+ const h=rep.histOf(fx.transactions,fx.accounts);
+ assert.deepEqual(s.past.map(p=>[p.date,p.cents]),A.balancePast(pr,h.hist,h.allIds,h.ownIds,s.from,fx.today).map(p=>[p.date,p.cents]),'минуле = balancePast застосунку');
+ assert.ok([...s.past,...s.future].some(p=>p.cents<0),'фікстура: баланс ніде не відʼємний, перевірка «нижче нуля» не показова');
  assert.equal(s.from,'2026-09-12');
  assert.equal(s.to,'2026-11-12');
  const all=[...s.past,...s.future];
@@ -149,9 +185,11 @@ test('Графік: лінія = власні кошти (v150), точка «с
  assert.ok(all.some(p=>p.date===s.min.date&&p.cents===s.min.cents));
  // Як «мін.» застосунку: за весь видимий відрізок, за рівності перша дата
  assert.equal(s.min.date,all.find(p=>p.cents===s.min.cents).date);
- // Майбутнє: власні на кінець дня рушія, не мінус
- for(const p of s.future){const d=pr.days.find(x=>x.date===p.date);assert.equal(p.cents,d.closingCashCents,p.date);assert.ok(p.cents>=0,p.date);}
- assert.equal(s.afterPayout.cents,pr.days.find(d=>d.date===s.afterPayout.date).closingCashCents,'після виплати у власних');
+ // Майбутнє: баланс рушія на кінець дня (власні мінус борг мінус нестача плюс зсув), як підказка «Баланс» застосунку
+ const shift=pr.snapshot.positiveOwnCents-pr.snapshot.cashCents;
+ for(const p of s.future){const d=pr.days.find(x=>x.date===p.date);assert.equal(p.cents,d.netCents+shift,p.date);assert.equal(p.cents,A.balanceAfterCents(pr,d.closingCashCents,d.debtCents,d.arrearsCents),p.date);}
+ const ad=pr.days.find(d=>d.date===s.afterPayout.date);
+ assert.equal(s.afterPayout.cents,ad.netCents+shift,'після виплати в балансі');
  assert.ok(s.payouts.length>=2,'виплати в межах графіка');
  const c=ch.balanceChartSvg(s);
  assert.match(c.svg,/^<svg [^>]*width="1080" height="720"/);
@@ -166,8 +204,12 @@ test('Графік: лінія = власні кошти (v150), точка «с
  assert.ok(c.yZero!=null);
  const k1=(c.todayXY[1]-c.yZero)/s.today.cents,k2=(c.minXY[1]-c.yZero)/s.min.cents;
  assert.ok(Math.abs(k1-k2)<1e-9,`${k1} ${k2}`);
- // мінімум у минулому: відновлення власних назад від сьогодні за операціями власних рахунків (синтетична історія фікстури не узгоджена з балансами)
- assert.equal(norm(rep.chartCaption(s)),'Власні сьогодні 4 899 ₴ · мінімум -105 134,37 ₴ 20.09 · після виплати 21.10: 17 670,62 ₴');
+ // заголовок «Баланс»; точка з відʼємним балансом нижче нуля на тій самій шкалі
+ assert.ok(c.svg.includes('>Баланс: власні мінус борг кредиток<'),'заголовок графіка «Баланс»');
+ assert.ok(!c.svg.includes('>Власні кошти<'),'лишився заголовок «Власні кошти»');
+ if(s.min.cents<0)assert.ok(c.minXY[1]>c.yZero,'мінімум нижче нуля на графіку');
+ // мінімум у минулому: відновлення балансу назад від сьогодні за операціями всіх рахунків (синтетична історія фікстури не узгоджена з балансами)
+ assert.equal(norm(rep.chartCaption(s)),CAPTION);
  // Історія не раніше першої операції
  const late=rep.balanceSeries(pr,fx.transactions.filter(t=>t.date>='2026-10-01'),fx.accounts,fx.today,{salary:fx.salary,firstOwnDate:'2026-10-01'});
  assert.equal(late.from,'2026-10-01');

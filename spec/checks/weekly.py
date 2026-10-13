@@ -189,7 +189,8 @@ def credit_cash(page):
     check(head and head[0]['date'] == '2026-10-21', f'немає планової розстрочки Навушники 21.10: {head[:1]}')
     cid = head[0]['occurrenceId'].split(':')[1]
     go_tab(page, 3)
-    ev = page.locator('.cal-ev', has_text='Навушники').first
+    # v153 доповнення 5: того ж дня може стояти рядок «Дострокове погашення: Навушники, ...» (прогноз, без кнопки), беремо сам платіж
+    ev = page.locator('.cal-ev', has_text='Навушники').filter(has_not_text='Дострокове').first
     check(ev.locator('.pay-done').count() == 1, 'у розстрочки немає «Внести оплату»')
     ev.locator('.pay-done').click()
     page.wait_for_timeout(400)
@@ -200,7 +201,14 @@ def credit_cash(page):
     page.wait_for_timeout(600)
     after = finance_ref(page, verify_ts=True)
     ids = [e['occurrenceId'] for e in after['events'] if e['occurrenceId'].startswith(f'installment:{cid}:')]
-    check(f'installment:{cid}:2026-10' not in ids and f'installment:{cid}:2026-11' in ids, f'оплата не закрила розстрочку жовтня: {ids[:2]}')
+    # v153 доповнення 5: решту розстрочки рушій може погасити достроково (подія prepay:cid), тоді платежів листопада й далі немає;
+    # інваріант: оплата жовтня зменшує залишок графіка (платежі плюс дострокове) рівно на платіж жовтня
+    def rest(r):
+        return sum(abs(e['amountCents']) for e in r['events'] if e['occurrenceId'].startswith((f'installment:{cid}:', f'prepay:{cid}:')))
+    oct_c = abs(head[0]['amountCents'])
+    check(f'installment:{cid}:2026-10' not in ids, f'оплата не закрила розстрочку жовтня: {ids[:2]}')
+    check(f'installment:{cid}:2026-11' in ids or any(e['occurrenceId'].startswith(f'prepay:{cid}:') for e in after['events']), f'після оплати жовтня немає ні платежу листопада, ні дострокового: {ids[:2]}')
+    check(rest(before) - rest(after) == oct_c, f'залишок розстрочки {rest(before)} -> {rest(after)}, а платіж жовтня {oct_c}')
     check(after['currentPeriod']['actualVariableCents'] == before['currentPeriod']['actualVariableCents'], 'оплата розстрочки потрапила у змінні витрати')
 
 

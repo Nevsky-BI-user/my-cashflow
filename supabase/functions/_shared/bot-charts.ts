@@ -51,7 +51,7 @@ export function balanceChartSvg(s: BalanceSeries): ChartModel {
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`);
   out.push(`<rect width="${W}" height="${H}" fill="${C.bg}"/>`);
   out.push(`<rect x="20" y="20" width="${W - 40}" height="${H - 40}" rx="28" fill="${C.card}"/>`);
-  out.push(text(48, 74, 'Власні кошти', { size: 32, weight: 600 }));
+  out.push(text(48, 74, 'Баланс: власні мінус борг кредиток', { size: 32, weight: 600 }));
   // легенда
   let lx = 48;
   const ly = 112;
@@ -128,14 +128,52 @@ export function balanceChartSvg(s: BalanceSeries): ChartModel {
 }
 
 // ---------- Кільце категорій ----------
-// Насичені градієнтні пари в дусі монобанку (від, до); колір категорії з БД пастельний, тому тут не береться
-const GRADS: [string, string][] = [['#7c3aed', '#c026d3'], ['#06b6d4', '#3b82f6'], ['#f97316', '#f43f5e'], ['#10b981', '#14b8a6'],
-  ['#f59e0b', '#facc15'], ['#ec4899', '#f472b6'], ['#3b82f6', '#6366f1'], ['#84cc16', '#22c55e'], ['#0ea5e9', '#22d3ee']];
-const GRAD_OTHER: [string, string] = ['#64748b', '#94a3b8'];
+// v153 (власник: «кольори категорій бота = кольори застосунку»): палітра BUD_PAL, сірі BUD_OTH і BUD_NONE, сталий тон budStable і порядок budRing
+// рівно як в index.html (паритет перевіряє spec/budget-ring.test.cjs); колір категорії з БД пастельний, тому тут не береться
+export const BUD_PAL: [string, string][] = [['#9c6ef7', '#804ce6'], ['#fbc123', '#e6ab0a'], ['#17cfcf', '#09aeae'], ['#f8596e', '#e82c45'], ['#458cf7', '#2371e7'],
+  ['#fa7238', '#f2520d'], ['#26d98b', '#0eaf69'], ['#e568f3', '#ce40dd'], ['#86df20', '#6bb814'], ['#f55cb2', '#e63398']];
+const BUD_OTH: [string, string] = ['#94a3b8', '#64748b'], BUD_NONE: [string, string] = ['#9ca3af', '#6b7280'];
+const hueOf = (c: string) => {
+  const r = parseInt(c.slice(1, 3), 16) / 255, g = parseInt(c.slice(3, 5), 16) / 255, b = parseInt(c.slice(5, 7), 16) / 255;
+  const mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+  if (!d) return 0;
+  const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return (h * 60 + 360) % 360;
+};
+const budDh = (a: number, b: number) => { const x = Math.abs(hueOf(BUD_PAL[a][0]) - hueOf(BUD_PAL[b][0])) % 360; return Math.min(x, 360 - x); };
+// Сталий індекс палітри: числовий id дає (id мінус 1) mod 10, нечислові за місцем серед нечислових
+export function budStable(ids: string[]): Record<string, number> {
+  const idx: Record<string, number> = {}, N = BUD_PAL.length;
+  let k = 0;
+  for (const raw of ids) { const id = String(raw); idx[id] = /^\d+$/.test(id) ? ((Number(id) - 1) % N + N) % N : (k++) % N; }
+  return idx;
+}
+// Порядок кільця: першим найбільший, далі найбільший із тих, що відрізняються від попереднього ≥ 40° (з поверненням), сірі в кінці;
+// без сірих кільце замкнене (останній із першим теж ≥ 40°); порядку немає: лишається спадний
+export function budRing<T extends { id: string }>(segs: T[], idx: Record<string, number>): T[] {
+  const col = segs.filter((s) => s.id.slice(0, 2) !== '__'), grey = segs.filter((s) => s.id.slice(0, 2) === '__'), n = col.length;
+  if (n < 2) return segs;
+  const closed = !grey.length;
+  const ok = (a: number, b: number) => { const x = idx[col[a].id], y = idx[col[b].id]; return x == null || y == null || budDh(x, y) >= 40; };
+  const used = col.map(() => false), path: number[] = [];
+  let steps = 0;
+  const dfs = (): boolean => {
+    if (path.length === n) return !closed || ok(path[n - 1], path[0]);
+    if (++steps > 20000) return false;
+    for (let i = 0; i < n; i++) {
+      if (used[i] || (path.length && !ok(path[path.length - 1], i))) continue;
+      used[i] = true; path.push(i);
+      if (dfs()) return true;
+      path.pop(); used[i] = false;
+    }
+    return false;
+  };
+  return dfs() ? path.map((i) => col[i]).concat(grey) : segs;
+}
 export type DonutSeg = BudgetRow & { share: number; pct: number; color: string; grad: [string, string] };
 
 // Як budDonutData застосунку: категорії з фактом, дрібні (менше 3%) зливаються в «Інші», якщо їх дві й більше
-export function donutSegments(rows: BudgetRow[]): { total: number; segs: DonutSeg[] } {
+export function donutSegments(rows: BudgetRow[], ids?: string[]): { total: number; segs: DonutSeg[] } {
   const r = rows.filter((x) => x.fact > 0).sort((a, b) => b.fact - a.fact);
   const total = r.reduce((n, x) => n + x.fact, 0);
   if (!(total > 0)) return { total: 0, segs: [] };
@@ -148,11 +186,13 @@ export function donutSegments(rows: BudgetRow[]): { total: number; segs: DonutSe
   const raw = base.map((x) => x.fact / total * 100), fl = raw.map(Math.floor);
   let left = 100 - fl.reduce((n, v) => n + v, 0);
   raw.map((v, i) => [v - fl[i], i]).sort((a, b) => b[0] - a[0]).forEach((q) => { if (left > 0) { fl[q[1]]++; left--; } });
-  let k = 0;
-  const segs = base.map((x, i) => {
-    const grad = x.id === '__other' || x.id === '__none' ? GRAD_OTHER : GRADS[k++ % GRADS.length];
+  // v153: сталий тон за id категорії (усі витратні категорії рядків), порядок кільця як budRing застосунку
+  const idx = budStable((ids || rows.map((x) => x.id)).filter((id) => id.slice(0, 2) !== '__' && id !== 'unallocated'));
+  const segs = budRing(base.map((x, i) => {
+    const k = idx[x.id];
+    const grad = x.id === '__none' ? BUD_NONE : k == null ? BUD_OTH : BUD_PAL[k];
     return { ...x, share: x.fact / total, pct: fl[i], color: grad[0], grad };
-  });
+  }), idx);
   return { total, segs };
 }
 

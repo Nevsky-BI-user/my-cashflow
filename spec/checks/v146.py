@@ -1,5 +1,5 @@
 # v146 (рішення власника 12.10.2026): графік «Гроші в часі» без недоступних періодів (вісь і крива минулого від першої
-# операції на власних рахунках, чип-дубль прихований), «сьогодні» на графіку = власні кошти, як у плитках і боті;
+# операції на власних рахунках, чип-дубль прихований), «сьогодні» на графіку = баланс плитки «Баланс» (v153 доповнення 6), як у боті;
 # дата погашення кредитки на чипі рахунку = подія рушія (виплата 21-го наступного місяця); новий борг у формі в поточному місяці.
 from datetime import date, timedelta
 
@@ -115,17 +115,18 @@ def chart_today_own(page):
     check(own != cash, f'фікстура: каса {cash} дорівнює власним {own}')
     info = page.evaluate(INFO)
     bal = own - snap['creditDebtCents']
-    exp = 'Сьогодні: ' + _money(own)  # v150: крива = власні кошти
+    exp = 'Сьогодні: ' + _money(bal)  # v153 доповнення 6: крива знову в балансі (як у v148-v149), не власні
     check(_norm(info['today']) == exp, f'мітка {info["today"]!r}, а не {exp!r}')
     check(page.locator('.dv-fc .fc-today-bal').count() == 0, 'лишився окремий підпис «баланс» біля мітки')
-    check(_norm(info['sum']).rstrip().endswith('сьогодні ' + _money(own)), f'підсумок {info["sum"]!r} без «сьогодні {_money(own)}»')
+    # v153: після «сьогодні» в рядку ще «у заощадження +X ₴», тож «сьогодні» шукаємо серед частин рядка
+    check('сьогодні ' + _money(bal) in [x.strip() for x in _norm(info['sum']).split('·')], f'підсумок {info["sum"]!r} без «сьогодні {_money(bal)}»')
     sr = _today_point(page)
     want = 'власні ' + _money(own) + ', кредитні ' + _money(-snap['creditDebtCents']) + ', баланс ' + _money(bal)
     check('факт' in sr and sr.endswith(want), f'точка сьогодні {sr!r}, а не {want!r}')
     tile = num(page.locator('.kpi-balance .dv-kpi-v').inner_text())
     check(abs(tile - bal / 100) <= 1, f'плитка «Баланс» {tile}, а еталон {bal / 100:.2f}')
     tile_own = num(page.locator('.kpi-balance [data-r=own] .kpi-rv').inner_text())
-    check(abs(tile_own - own / 100) <= 1, f'рядок «Власні» плитки {tile_own}, а точка сьогодні на графіку {own / 100:.2f}')
+    check(abs(tile_own - own / 100) <= 1, f'рядок «Власні» плитки {tile_own}, а власні в підказці точки {own / 100:.2f}')
     kpi = num(page.locator('.kpi-funds [data-r=cards] .kpi-rv').inner_text()) + num(page.locator('.kpi-funds [data-r=cash] .kpi-rv').inner_text())
     check(abs(kpi - own / 100) <= 1, f'плитка: готівка + карти {kpi}, а власні {own / 100:.2f}')
 
@@ -164,7 +165,7 @@ def debt_month_form(page):
 
 CHECKS = [
     ('v146: графік без недоступних періодів, чип-дубль прихований', 'desktop', chart_trim),
-    ('v146: сьогодні на графіку = власні з плиток (каса інша)', 'desktop', chart_today_own),
+    ('v146: сьогодні на графіку = баланс з плитки, власні в підказці (каса інша)', 'desktop', chart_today_own),
     ('v146: дата погашення на чипі кредитки = подія рушія', 'mobile', repay_chip),
     ('v146: форма рахунку: новий борг у поточному місяці', 'desktop', debt_month_form),
 ]

@@ -44,7 +44,8 @@ export async function loadFinance(sb: any, today: string): Promise<FinanceData> 
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
     sb.from('fixed_payments').select('id,name,amount,day_of_month,period,weekday,bank,type,active,credit_ok,variable,end_date').eq('active', true),
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
-    sb.from('salary_config').select('rate,advance_amount,salary_amount,split_day,advance_day,salary_day,savings_pct').order('id').limit(1).maybeSingle(),
+    // v153: усі колонки, з ними budget_manual (ручний бюджет періоду, міграція 30); до застосування міграції запит не падає
+    sb.from('salary_config').select('*').order('id').limit(1).maybeSingle(),
     sb.from('categories').select('id,name,color,is_income,budget_limit,limit_abs,sort_order,group_id').order('id'),
   ]);
   if (acc.error || fix.error || cred.error || sal.error || cats.error) throw new Error('bot finance lookup failed');

@@ -255,12 +255,17 @@ def next_period_plan(data, asof):
     return {'start':start.isoformat(),'end':end.isoformat(),'days':days,'nextPayout':nxt,'followingPayout':after,'positiveOwnCents':own,'debtCents':debt,'mandatoryCents':mandatory,'otherIncomeCents':income,'eligibleMandatoryCents':eligible,'baseAvailableCents':base,'targetCents':target,'gapCents':gap,'averageDailyCents':target/days,'categories':[{**c,'totalCents':a} for c,a in zip(categories,totals)],'schedule':schedule}
 
 
-def payout_budget(own, reserve, debt, due, repay_day):
-    """v151: розподіл виплати за правилом власника (дзеркало payoutBudget у budget.ts): погашення, A і бюджет min(20 000, A), якщо A > 15 000, інакше 15 000"""
+def payout_budget(own, reserve, debt, due, repay_day, manual=None):
+    """v151: розподіл виплати за правилом власника (дзеркало payoutBudget у budget.ts): погашення, A і бюджет min(20 000, A), якщо A > 15 000, інакше 15 000.
+    v153: спершу резерв і бюджет (авто 15 000 або ручна сума manual), погашення min(борг, max(0, власні − резерв − бюджет)), непокрите належне dueShortCents"""
+    man = manual is not None and manual >= 0
+    base = manual if man else 1500000
+    debt = max(0, debt)
     free = own - reserve
-    repay = min(max(due, min(debt, max(0, free - 1500000))), free) if repay_day else 0
+    repay = min(debt, max(0, free - base)) if repay_day else 0
     available = free - repay
-    return {'repayCents': repay, 'availableCents': available, 'targetCents': min(2000000, available) if available > 1500000 else 1500000}
+    return {'repayCents': repay, 'dueShortCents': max(0, min(max(0, due), debt) - repay) if repay_day else 0, 'availableCents': available,
+            'targetCents': base if man else (min(2000000, available) if available > 1500000 else 1500000)}
 
 
 def finance_projection(data, options):
@@ -351,6 +356,10 @@ def finance_projection(data, options):
     debt=total(a['debtCents'] for a in accounts)
     snapshot={'positiveOwnCents':own,'cashCents':cash,'unassignedAdjustmentCents':adjustment,'creditDebtCents':debt,'accounts':accounts,'warnings':[]}
     cfg=data.get('salary'); payout_list=[]
+    # v153: ручний бюджет періоду (salary_config.budget_manual, гривні); None або порожньо: авто
+    bm=(cfg or {}).get('budget_manual')
+    try: manual=cents(bm) if bm is not None and bm!='' and float(bm)>=0 else None
+    except (ValueError,TypeError): manual=None
     def valid_day(v):
         try: return float(v).is_integer() and 1<=float(v)<=31
         except (ValueError,TypeError): return False
@@ -425,7 +434,7 @@ def finance_projection(data, options):
         row={'accountId':a['id'],'month':asof[:7],'spent':spent/100,'min':cents(a.get('min_spend'))/100,'fee':cents(a.get('min_spend_fee'))/100,'left':max(0,cents(a.get('min_spend'))-spent)/100}
         if met: row['metOn']=met
         min_spend.append(row)
-    order={'payout':0,'income':1,'arrears':2,'repay':3,'savings':4,'mandatory':5,'fee':6,'variable':7}
+    order={'payout':0,'income':1,'arrears':2,'repay':3,'prepay':4,'savings':5,'mandatory':6,'fee':7,'variable':8}
     def event_key(e): return e['date'],order[e['kind']],e['id']
     scenario={'selectedCents':0,'newDebtCents':0,'cashPlanCents':0,'gapCents':0,'repayments':[],'errors':[]} if options.get('scenario') is not None else None
     if scenario is not None:
@@ -492,7 +501,7 @@ def finance_projection(data, options):
         next_plan={'start':next_date,'end':following,'days':distance(next_date,following),'nextPayout':nxt,'followingPayout':after,'positiveOwnCents':own,'debtCents':debt,'mandatoryCents':reserved,'otherIncomeCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='income'),'eligibleMandatoryCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='mandatory' and e.get('creditEligible')),'baseAvailableCents':base,'targetCents':target,'gapCents':max(0,target-base),'averageDailyCents':target/distance(next_date,following),**distribution(target,next_date,following,base)}
         # темп щоденних витрат від завтра до дня перед виплатою: більше з 15 000 ₴ на весь період [start; виплата) і untilPayout на дні, що лишились
         start=next((d for d in reversed(payout_dates) if d<=asof),asof); actual=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start); mandatory_now=mandatory(asof,next_date); available=safe(cash-mandatory_now)
-        period_days=distance(start,next_date); left_days=max(0,distance(plus(asof,1),next_date)); floor_left=1500000*left_days//period_days if period_days>0 else 0; free_left=max(0,until_payout['cents'] if until_payout else 0); remaining=max(floor_left,free_left) if left_days>0 else 0; target=actual+remaining
+        period_days=distance(start,next_date); left_days=max(0,distance(plus(asof,1),next_date)); floor_left=(manual if manual is not None else 1500000)*left_days//period_days if period_days>0 else 0; free_left=max(0,until_payout['cents'] if until_payout else 0); remaining=max(floor_left,manual-actual if manual is not None else free_left) if left_days>0 else 0; target=actual+remaining
         # сума в гривнях на прогноз від завтра: ліміт мінус факт змінних витрат категорії з початку періоду, не нижче 0
         caps=[max(0,c['limitAbsCents']-total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start and t.get('category_id') is not None and sid(t['category_id'])==c['id'])) if 'limitAbsCents' in c else 0 for c in categories]
         dist=distribution(remaining,plus(asof,1),next_date,available,caps)
@@ -509,6 +518,8 @@ def finance_projection(data, options):
     def debt_of(a): return total(book[sid(a['id'])].values())
     def debt_all(): return total(debt_of(a) for a in accounts)
     def debit_only(e): return e['kind']=='fee' or (e['kind']=='mandatory' and e.get('creditEligible') is not True and e.get('funding')!='credit')
+    # v153 А: обовʼязкові з кредитки (credit_ok) теж резервуються з виплати і платяться з власних (див. budget.ts)
+    def ok_funded(e): return e['kind']=='mandatory' and not debit_only(e) and e.get('funding')!='credit'
     sim_end=next_date if has_plan and next_date>through else through
     by_date={}
     def put(e): by_date.setdefault(e['date'],[]).append(e)
@@ -519,8 +530,9 @@ def finance_projection(data, options):
     for e in events:
         if asof<=e['date']<=sim_end: put(e)
     def debit_between(start,end): return total(e['amountCents'] for e in events if start<=e['date']<end and debit_only(e))
+    def ok_between(start,end): return total(e['amountCents'] for e in events if start<=e['date']<end and ok_funded(e))
     bal=own; arrears=own-cash
-    reserved=min(bal,debit_between(asof,next_date) if next_date else 0)
+    reserved=min(bal,debit_between(asof,next_date) if next_date else 0); reserved_ok=min(bal-reserved,ok_between(asof,next_date) if next_date else 0)
     days=[]; head=None; debt_run=debt
     def repay_from(a,limit,d,only_due,out):
         left=limit; b=book[sid(a['id'])]
@@ -532,14 +544,49 @@ def finance_projection(data, options):
             left-=n; k=sid(a['id'])+'|'+m; out[k]=out.get(k,0)+n
         return limit-left
     def due_on(d): return total(v for a in accounts for m,v in book[sid(a['id'])].items() if repay_plan(m,asof)<=d)
+    def due_left(d):
+        # v153: належне, що лишилось непогашеним на дату, за рахунками
+        out=[{'accountId':a['id'],'name':a.get('name') or 'Кредитка','cents':total(v for m,v in book[sid(a['id'])].items() if repay_plan(m,asof)<=d)} for a in accounts]
+        return [x for x in out if x['cents']>0]
     # перше погашення кошика має id repay:<рахунок>:<місяць> (за ним шукає бот), наступні часткові: з датою в кінці
     used_repay=set()
+    # v153 доповнення 5: залишок розстрочки = платіж × неоплачені платежі графіка після asof; дострокове погашення зрізає графік з кінця
+    inst=[]
+    for i,c in enumerate(data.get('credits',[])):
+        m_=max(0,cents(c.get('monthly_amount'))); first=int(c['start_year'])*12+int(c['start_month']); dates=[]
+        for k in range(first,first+int(c['total_payments'])):
+            y,n=ym(k); d=dt(y,n,min(int(c['payment_day']),calendar.monthrange(y,n)[1]))
+            if d<=asof or (c.get('id') is not None and sid(c['id'])+'|'+d[:7] in paid_credit): continue
+            dates.append(d)
+        if m_>0 and dates: inst.append({'id':sid(c.get('id',i)),'name':str(c.get('name') or 'Розстрочка'),'m':m_,'dates':dates,'prepaid':0})
+    def inst_from(x,frm): return max(0,x['m']*len([v for v in x['dates'] if v>=frm])-x['prepaid'])
+    def inst_cut(x,after):
+        for e in [e for e in events if e['kind']=='mandatory' and e['date']>after and str(e['id']).startswith('installment:'+x['id']+':')]:
+            eff=max(0,min(x['m'],x['m']+x['m']*len([v for v in x['dates'] if v>e['date']])-x['prepaid']))
+            if eff>0:
+                e['amountCents']=eff; e['cashDeltaCents']=-eff; continue
+            events[:]=[v for v in events if v is not e]
+            b=by_date.get(e['date'])
+            if b and any(v is e for v in b): b[:]=[v for v in b if v is not e]
     def emit_repays(d,out,lst):
         for k in sorted(out):
             if out[k]<=0: continue
             cut=k.rindex('|'); aid=k[:cut]; m=k[cut+1:]; a=next(v for v in accounts if sid(v['id'])==aid); planned=repay_plan(m,asof)
             base='repay:'+aid+':'+m; rid=base+':'+d if base in used_repay else base; used_repay.add(base)
             e=make(rid,d,a.get('name') or 'Погашення кредитки','repay',out[k],{'accountId':a['id'],'debtDeltaCents':-out[k],'contractualDueDate':due_for(m),'plannedRepaymentDate':planned}); events.append(e); lst.append(e)
+    # списання з власних за шарами: D резерв дебетових, C резерв credit_ok, F вільні; повертає списане
+    def spend(x,tiers):
+        nonlocal bal,reserved,reserved_ok
+        left=x
+        for t in tiers:
+            if left<=0: break
+            room=min(bal,reserved) if t=='D' else min(bal,reserved_ok) if t=='C' else max(0,bal-reserved-reserved_ok)
+            n=min(room,left)
+            if n<=0: continue
+            bal-=n; left-=n
+            if t=='D': reserved-=n
+            elif t=='C': reserved_ok-=n
+        return x-left
     def borrow(n,d):
         left=n
         for a in lenders:
@@ -558,8 +605,19 @@ def finance_projection(data, options):
         payout=[e for e in lst if e['kind']=='payout']; end=next((v for v in payout_dates if v>d),'')
         if payout and end:
             # v152: кожна виплата (зарплата чи аванс) проходить той самий розподіл: погашення, накопичення, готівка, переказ на Mono
-            own_at=bal; reserve=min(bal,debit_between(d,end)); out={}; repay=savings=cash_out=to_mono=offset=0
-            left=payout_budget(bal,reserve,debt_all(),due_on(d),True)['repayCents']
+            # v153 доповнення 7: залишок попереднього періоду (власні на початок дня виплати) до розподілу нової виплати гасить борг кредиток, потім
+            # дострокове розстрочок (найменший залишок першим); без боргів решта йде в накопичення. З нової виплати накопичень немає.
+            leftover=max(0,min(opening,bal)); out={}; pre={}; leftover_prepay=[]; leftover_savings=0; leftover_prepaid=0
+            def prepay_by(budget,lst):
+                left=budget; n0=0
+                for x in sorted(inst,key=lambda x:(inst_from(x,end),x['id'])):
+                    if left<=0: break
+                    n=min(left,inst_from(x,end))
+                    if n<=0: continue
+                    x['prepaid']+=n; left-=n; n0+=n; inst_cut(x,d); pre[x['id']]=pre.get(x['id'],0)+n
+                    lst.append({'creditId':x['id'],'name':x['name'],'cents':n})
+                return n0
+            left=leftover
             for a in accounts:
                 if left<=0: break
                 left-=repay_from(a,left,d,True,out)
@@ -569,20 +627,59 @@ def finance_projection(data, options):
             for a in [a for a in accounts if a.get('mono_account_id')]:
                 if left<=0: break
                 left-=repay_from(a,left,d,False,out)
-            repay=total(out.values())
-            available=bal-reserve-repay; target=payout_budget(available,0,0,0,False)['targetCents']
-            savings=available-target if available-target>1000000 else 0; cash_out=min(300000,max(0,available-savings)); to_mono=max(0,available-savings-cash_out)
-            left=to_mono
+            if left>0 and debt_all()==0:
+                leftover_prepaid=prepay_by(left,leftover_prepay); left-=leftover_prepaid
+            if left>0 and debt_all()==0 and not any(inst_from(x,end)>0 for x in inst): leftover_savings=left
+            leftover_repay=total(out.values()); bal-=leftover_repay+leftover_prepaid+leftover_savings
+            own_at=bal; rd=min(bal,debit_between(d,end)); rc=min(bal-rd,ok_between(d,end)); reserve=rd+rc; repay=cash_out=to_mono=offset=0; savings=leftover_savings
+            left=payout_budget(bal,reserve,debt_all(),due_on(d),True,manual)['repayCents']
+            for a in accounts:
+                if left<=0: break
+                left-=repay_from(a,left,d,True,out)
+            for a in [a for a in accounts if not a.get('mono_account_id')]:
+                if left<=0: break
+                left-=repay_from(a,left,d,False,out)
             for a in [a for a in accounts if a.get('mono_account_id')]:
                 if left<=0: break
                 left-=repay_from(a,left,d,False,out)
-            offset=to_mono-left
-            bal-=repay+offset+savings
+            repay=total(out.values())-leftover_repay
+            available=bal-reserve-repay; target=payout_budget(available,0,0,0,False,manual)['targetCents']; dist=distribution(target,d,end,available)
+            # власні після розподілу проти подій періоду: найглибший мінус, якщо зняти ще x
+            ahead=[e for e in events if d<=e['date']<end and not (e.get('funding')=='credit' and e.get('accountId') is not None) and (e['date']>d if e['kind']=='income' else e['kind'] not in ('payout','repay','prepay','savings','arrears'))]
+            for s in dist['schedule']:
+                for c in s['byCategory']:
+                    if c['amountCents']>0: ahead.append({'id':'variable:'+s['date']+':'+c['id'],'date':s['date'],'kind':'variable','amountCents':c['amountCents']})
+            ahead.sort(key=event_key)
+            def low_with(x):
+                run=bal-repay-x; low=0
+                for e in ahead:
+                    run+=e['amountCents'] if e['kind']=='income' else -e['amountCents']; low=min(low,run)
+                return low
+            # v153 доповнення 5: без боргу кредиток надлишок понад бюджет іде в дострокове погашення розстрочок, найменший залишок першим
+            payout_prepay=[]; prepaid=0
+            if debt_all()==0 and available-target>0 and any(inst_from(x,end)>0 for x in inst):
+                prepaid=prepay_by(min(total(inst_from(x,end) for x in inst),max(0,available-target+low_with(available-target))),payout_prepay)
+            free=available-prepaid
+            cash_out=min(300000,max(0,free)); to_mono=max(0,free-cash_out)
+            # toMono гасить борг Mono лише надлишком понад бюджет
+            cap=min(to_mono,max(0,free-target)); left=cap
+            for a in [a for a in accounts if a.get('mono_account_id')]:
+                if left<=0: break
+                left-=repay_from(a,left,d,False,out)
+            offset=cap-left
+            bal-=repay+offset+prepaid
             emit_repays(d,out,gen)
+            # одна подія дострокового погашення на розстрочку за день (із залишку періоду і з виплати разом)
+            prepay=[{'creditId':x['id'],'name':x['name'],'cents':pre[x['id']]} for x in sorted(inst,key=lambda x:x['id']) if pre.get(x['id'],0)>0]
+            for x in prepay:
+                e=make('prepay:'+x['creditId']+':'+d,d,'Дострокове погашення '+x['name'],'prepay',x['cents'],{'creditId':x['creditId']}); events.append(e); gen.append(e)
+            due_short=due_left(d); due_short_cents=total(x['cents'] for x in due_short)
+            if due_short_cents>0 and d<=through: snapshot['warnings'].append({'kind':'due_short','date':d,'shortCents':due_short_cents,'accounts':due_short})
             if savings>0:
-                e=make('savings:'+d,d,'Накопичення','savings',savings); events.append(e); gen.append(e)
-            reserved=reserve
-            rec={'start':d,'end':end,'basis':'projected' if head else 'headline','openingCashCents':opening,'payoutCents':total(e['amountCents'] for e in payout),'mandatoryCents':mandatory(d,end),'debtReserveCents':repay+offset,'availableCents':available,'targetCents':target,'gapCents':max(0,target-available),'ownCents':own_at,'reserveCents':reserve,'repayCents':repay+offset,'savingsCents':savings,'cashOutCents':cash_out,'toMonoCents':to_mono,'monoOffsetCents':offset,**distribution(target,d,end,available)}
+                ps=([v for v in payout_dates if v<d] or [asof])[-1]; dm=lambda v: v[8:10]+'.'+v[5:7]
+                e=make('savings:'+d,d,'У заощадження: залишок періоду '+dm(ps)+'-'+dm(plus(d,-1)),'savings',savings); events.append(e); gen.append(e)
+            reserved=rd; reserved_ok=rc
+            rec={'start':d,'end':end,'basis':'projected' if head else 'headline','openingCashCents':opening,'payoutCents':total(e['amountCents'] for e in payout),'mandatoryCents':mandatory(d,end),'debtReserveCents':leftover_repay+repay+offset,'availableCents':available,'targetCents':target,'gapCents':max(0,target-available),'ownCents':own_at,'reserveCents':reserve,'repayCents':leftover_repay+repay+offset,'savingsCents':savings,'cashOutCents':cash_out,'toMonoCents':to_mono,'monoOffsetCents':offset,'dueShortCents':due_short_cents,'dueShort':due_short,'prepayCents':prepaid+leftover_prepaid,'prepay':prepay,'leftoverCents':leftover,'leftoverRepayCents':leftover_repay,'leftoverPrepayCents':leftover_prepaid,'leftoverPrepay':leftover_prepay,'leftoverSavingsCents':leftover_savings,'payoutRepayCents':repay+offset,'payoutPrepayCents':prepaid,'payoutPrepay':payout_prepay,'installmentsLeft':[{'creditId':x['id'],'name':x['name'],'cents':inst_from(x,d)} for x in inst if inst_from(x,d)>0],**dist}
             if head is None: head=rec
             if d<=through: periods.append(rec)
             for s in rec['schedule']:
@@ -593,11 +690,15 @@ def finance_projection(data, options):
         else:
             due=due_on(d)
             if due>0:
-                out={}; left=min(due,max(0,bal-reserved))
+                nx=next((v for v in payout_dates if v>d),'9999-12-31')
+                out={}; left=min(due,max(0,bal-reserved-reserved_ok-total(e['amountCents'] for e in events if e['kind']=='variable' and d<=e['date']<nx)))
                 for a in accounts:
                     if left<=0: break
                     left-=repay_from(a,left,d,True,out)
                 bal-=total(out.values()); emit_repays(d,out,gen)
+                due_short=due_left(d)
+                if due_short and d<=through and any(repay_plan(m,asof)==d for a in accounts for m in book[sid(a['id'])]):
+                    snapshot['warnings'].append({'kind':'due_short','date':d,'shortCents':total(x['cents'] for x in due_short),'accounts':due_short})
         ids={id(e) for e in lst}
         lst+=[e for e in by_date.get(d,[]) if e['date']==d and id(e) not in ids]
         lst.sort(key=event_key)
@@ -606,12 +707,13 @@ def finance_projection(data, options):
             x=e['amountCents']
             if e.get('funding')=='credit' and e.get('accountId') is not None:
                 b=book[sid(e['accountId'])]; b[d[:7]]=b.get(d[:7],0)+x; e['cashDeltaCents']=0; e['debtDeltaCents']=x; continue
-            from_own=borrowed=short=0
-            if debit_only(e):
-                from_own=min(bal,x); reserved=max(0,reserved-from_own); short=x-from_own
+            from_own=borrowed=0
+            if debit_only(e): from_own=spend(x,'DFC')
+            elif ok_funded(e):
+                from_own=spend(x,'CF'); borrowed=borrow(x-from_own,d); from_own+=spend(x-from_own-borrowed,'D')
             else:
-                from_own=min(max(0,bal-reserved),x); borrowed=borrow(x-from_own,d); r=min(bal-from_own,x-from_own-borrowed); from_own+=r; reserved=max(0,reserved-r); short=x-from_own-borrowed
-            bal-=from_own; arrears+=short; e['cashDeltaCents']=-from_own; e['debtDeltaCents']=borrowed
+                from_own=spend(x,'F'); borrowed=borrow(x-from_own,d); from_own+=spend(x-from_own-borrowed,'CD')
+            short=x-from_own-borrowed; arrears+=short; e['cashDeltaCents']=-from_own; e['debtDeltaCents']=borrowed
             if short>0:
                 e['shortCents']=short
                 if d<=through and e['kind']!='variable': snapshot['warnings'].append({'kind':'shortage','date':d,'eventId':e['id'],'name':e['name'],'amountCents':x,'shortCents':short})

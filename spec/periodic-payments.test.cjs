@@ -62,17 +62,25 @@ test('weekly without a valid weekday has no events; missing period means monthly
  assert.deepEqual(ids(r,'fixed:9:'),['fixed:9:2026-10','fixed:9:2026-11','fixed:9:2026-12']);
 });
 
+// v153 доповнення 5 (власник: «не можемо заощаджувати поки не закриємо борги за кредиткою та за розстрочками»): без боргу кредиток надлишок виплати
+// гасить розстрочку достроково, її останні платежі зникають з прогнозу. Графік = платежі подіями плюс дострокові погашення.
+const sched=(r,cid)=>[...r.events.filter(e=>e.id.startsWith('installment:'+cid+':')||e.id.startsWith('prepay:'+cid+':'))].reduce((s,e)=>s+e.amountCents,0);
 test('installment due today or earlier is paid by plan, future months stay',()=>{
  const d=fixture();d.credits=[laptop({payment_day:10})];
  const r=both(d);
  assert.ok(!ids(r,'installment:3:').includes('installment:3:2026-10'));
- assert.deepEqual(ids(r,'installment:3:'),['installment:3:2026-11','installment:3:2026-12']);
+ // листопад за планом; грудневий платіж закрито достроково з виплати 06.11 (кредитка вже без боргу), тож у прогнозі його немає
+ assert.deepEqual(ids(r,'installment:3:'),['installment:3:2026-11']);
+ assert.deepEqual(r.events.filter(e=>e.kind==='prepay').map(e=>[e.id,e.amountCents]),[['prepay:3:2026-11-06',100000]]);
+ assert.equal(sched(r,3),200000,'листопад і грудень: подією або достроково');
 });
 
 test('expense with credit_id closes its month installment even before the due date and is not variable',()=>{
  const d=fixture();d.credits=[laptop()];d.transactions=[tx(1,'2026-10-08',{amount:1000,credit_id:3})];
  const r=both(d);
- assert.deepEqual(ids(r,'installment:3:'),['installment:3:2026-11','installment:3:2026-12']);
+ // v153 доповнення 5: жовтень закрито операцією, листопад і грудень у графіку (подією або достроковим погашенням)
+ assert.ok(!ids(r,'installment:3:').includes('installment:3:2026-10'));
+ assert.equal(sched(r,3),200000);
  assert.equal(r.currentPeriod.actualVariableCents,0);
  // та сама витрата без привʼязки: змінна, а платіж місяця лишається
  const open=both(Object.assign(fixture(),{credits:[laptop()],transactions:[tx(1,'2026-10-08',{amount:1000})]}));

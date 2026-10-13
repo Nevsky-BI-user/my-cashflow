@@ -18,45 +18,59 @@ function both(data,asof,through){
 }
 const plus=(s,n)=>new Date(Date.parse(s+'T00:00:00Z')+n*864e5).toISOString().slice(0,10);
 // власні не мінусові в кожній події й кожному дні; зміна (власні − борг − нестача) за день = надходження − обовʼязкові − комісії − змінні − накопичення
+// v153 доповнення 5: дострокове погашення розстрочки (prepay) так само зменшує власні без зміни боргу; у розподілі виплати окремою часткою
 function invariants(r){
  for(const e of r.events)assert.ok(e.cashAfterCents>=0,e.id+' '+e.cashAfterCents);
  let prev=r.snapshot.cashCents-r.snapshot.creditDebtCents;
  for(const d of r.days){
   assert.ok(d.closingCashCents>=0&&d.minCashCents>=0,d.date);
   assert.equal(d.netCents,d.closingCashCents-d.debtCents-d.arrearsCents,d.date);
-  const flow=r.events.filter(e=>e.date===d.date).reduce((s,e)=>s+(e.kind==='payout'||e.kind==='income'?e.amountCents:['mandatory','fee','variable','savings'].includes(e.kind)?-e.amountCents:0),0);
+  const flow=r.events.filter(e=>e.date===d.date).reduce((s,e)=>s+(e.kind==='payout'||e.kind==='income'?e.amountCents:['mandatory','fee','variable','savings','prepay'].includes(e.kind)?-e.amountCents:0),0);
   assert.equal(d.netCents-prev,flow,'conservation '+d.date);prev=d.netCents;
  }
- for(const p of r.periods.filter(p=>p.ownCents!=null&&(p.cashOutCents>0||p.toMonoCents>0||p.savingsCents>0)))
-  assert.equal(p.reserveCents+p.repayCents-p.monoOffsetCents+p.savingsCents+p.cashOutCents+p.toMonoCents,p.ownCents,'payout '+p.start);
+ // v153 доповнення 7: розподіл дня виплати у два кроки. Залишок періоду (власні на початок дня) = погашення + дострокове + накопичення;
+ // нова виплата (ownCents уже після залишку) = резерв + погашення − зарахування Mono + дострокове + готівка + на Mono, накопичень з неї немає.
+ for(const p of r.periods.filter(p=>p.ownCents!=null&&(p.cashOutCents>0||p.toMonoCents>0||p.savingsCents>0))){
+  assert.equal(p.leftoverRepayCents+p.leftoverPrepayCents+p.leftoverSavingsCents,p.leftoverCents,'leftover '+p.start);
+  assert.equal(p.savingsCents,p.leftoverSavingsCents,'savings only from leftover '+p.start);
+  assert.equal(p.repayCents,p.leftoverRepayCents+p.payoutRepayCents,'repay split '+p.start);
+  assert.equal(p.prepayCents,p.leftoverPrepayCents+p.payoutPrepayCents,'prepay split '+p.start);
+  assert.equal(p.reserveCents+p.payoutRepayCents-p.monoOffsetCents+p.payoutPrepayCents+p.cashOutCents+p.toMonoCents,p.ownCents,'payout '+p.start);
+ }
 }
 const empty=(extra)=>Object.assign({accounts:[{id:1,kind:'debit',balance:0,debt:0}],fixed:[],credits:[],salary:{rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:50000,salary_amount:50000},categories:[],transactions:[]},extra);
 
+// v153 доповнення 7: з виплати 21.10 накопичень немає; надлишок понад бюджет лишається у власних і йде в накопичення залишком періоду 06.11
+// (S: власні на початок 06.11 = A − бюджет, якщо A більше бюджету; поріг 10 000 більше не діє, тож 27 000 теж відкладає 7 000).
 test('budget rule at the 21st payout: A 12 000, 18 000, 35 000, 27 000',()=>{
- for(const [A,B,S] of [[12000,15000,0],[18000,18000,0],[35000,20000,15000],[27000,20000,0]]){
+ for(const [A,B,S] of [[12000,15000,0],[18000,18000,0],[35000,20000,15000],[27000,20000,7000]]){
   const r=both(empty({salary:{rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:A,salary_amount:50000}}),'2026-10-20','2026-11-30');
-  const p=r.periods.find(p=>p.start==='2026-10-21');
-  assert.equal(p.availableCents,A*100);assert.equal(p.targetCents,B*100,'budget A='+A);assert.equal(p.savingsCents,S*100,'savings A='+A);
-  assert.equal(p.cashOutCents,300000);assert.equal(p.toMonoCents,A*100-S*100-300000);
+  const p=r.periods.find(p=>p.start==='2026-10-21'),n=r.periods.find(p=>p.start==='2026-11-06');
+  assert.equal(p.availableCents,A*100);assert.equal(p.targetCents,B*100,'budget A='+A);assert.equal(p.savingsCents,0,'savings A='+A);
+  assert.equal(p.cashOutCents,300000);assert.equal(p.toMonoCents,A*100-300000);
   assert.equal(r.nextPlan.targetCents,B*100);
-  assert.equal(r.events.filter(e=>e.kind==='savings'&&e.date==='2026-10-21').length,S?1:0);
+  assert.equal(r.events.filter(e=>e.kind==='savings'&&e.date==='2026-10-21').length,0);
+  assert.equal(n.leftoverCents,S*100,'leftover A='+A);assert.equal(n.savingsCents,S*100,'savings 06.11 A='+A);
+  assert.deepEqual(r.events.filter(e=>e.kind==='savings'&&e.date==='2026-11-06').map(e=>[e.name,e.amountCents]),S?[['У заощадження: залишок періоду 21.10-05.11',S*100]]:[]);
   invariants(r);
  }
 });
 
 // v152 (власник: «одразу має закритись кредитки з власних коштів»): аванс 06.11 проходить той самий розподіл, що й виплата 21-го.
 // Власні 50 000, резерв 0, борг Mono 5 000 (жовтень, планове погашення 20.11, бо 21.11 субота): погашення min(5 000, 50 000 − 15 000) = 5 000 (додатково, раніше плану),
-// A = 45 000, бюджет 20 000, надлишок 25 000 > 10 000 у накопичення, готівка 3 000, на Mono 17 000 (борг уже 0). До v152 аванс ішов без погашення й накопичень.
+// A = 45 000, бюджет 20 000, готівка 3 000, на Mono 42 000 (борг уже 0). До v152 аванс ішов без погашення й накопичень.
+// v153 доповнення 7: надлишок 25 000 у накопичення 06.11 уже не йде; він лишається у власних і відкладається залишком періоду 20.11.
 test('advance on the 6th: same distribution as the 21st (repay, savings, cash, Mono)',()=>{
- const r=both(empty({accounts:[{id:1,kind:'debit',balance:0,debt:0},{id:2,name:'Mono',kind:'credit',mono_account_id:'m',balance:0,debt:5000,credit_limit:30000,debt_month:'2026-10-01'}]}),'2026-11-05','2026-11-19');
+ const r=both(empty({accounts:[{id:1,kind:'debit',balance:0,debt:0},{id:2,name:'Mono',kind:'credit',mono_account_id:'m',balance:0,debt:5000,credit_limit:30000,debt_month:'2026-10-01'}]}),'2026-11-05','2026-11-20');
  const p=r.periods.find(p=>p.start==='2026-11-06');
  assert.equal(p.reserveCents,0);assert.equal(p.repayCents,500000);
- assert.equal(p.availableCents,4500000);assert.equal(p.targetCents,2000000);assert.equal(p.savingsCents,2500000);
- assert.equal(p.cashOutCents,300000);assert.equal(p.toMonoCents,1700000);assert.equal(p.monoOffsetCents,0);
+ assert.equal(p.availableCents,4500000);assert.equal(p.targetCents,2000000);assert.equal(p.savingsCents,0);
+ assert.equal(p.cashOutCents,300000);assert.equal(p.toMonoCents,4200000);assert.equal(p.monoOffsetCents,0);
  const rep=r.events.filter(e=>e.kind==='repay');
  assert.deepEqual(rep.map(e=>[e.id,e.date,e.amountCents,e.plannedRepaymentDate]),[['repay:2:2026-10','2026-11-06',500000,'2026-11-20']]);
  assert.equal(r.days.find(d=>d.date==='2026-11-06').debtCents,0);
- assert.equal(r.events.filter(e=>e.kind==='savings'&&e.date==='2026-11-06').length,1);
+ assert.equal(r.events.filter(e=>e.kind==='savings'&&e.date==='2026-11-06').length,0);
+ assert.deepEqual(r.events.filter(e=>e.kind==='savings').map(e=>[e.date,e.name,e.amountCents]),[['2026-11-20','У заощадження: залишок періоду 06.11-19.11',2500000]]);
  invariants(r);
 });
 
@@ -82,7 +96,7 @@ test('spending over own funds goes to Mono up to its limit, then to the other ca
  assert.equal(r.days.find(x=>x.date==='2026-10-21').arrearsCents,0);
 });
 
-test('21st payout repays mandatory first, then the other card, then Mono, leaving 15 000; the rest to Mono clears Mono',()=>{
+test('21st payout repays mandatory first, then the other card, then Mono, leaving 15 000; the rest to Mono is the budget and does not repay Mono',()=>{
  // власні 0, Приват 10 000 (вересень, належне 21.10), Mono 40 000 (жовтень), виплата 60 000, оренда 16 500 лише з дебетової 01.11
  const d=empty({accounts:[{id:1,kind:'debit',balance:0,debt:0},{id:2,name:'Приват',kind:'credit',balance:0,debt:10000,credit_limit:42500,debt_month:'2026-09-01'},{id:3,name:'Mono',kind:'credit',mono_account_id:'m',balance:0,debt:40000,credit_limit:40000,debt_month:'2026-10-01'}],
   fixed:[{id:1,name:'Оренда',type:'expense',amount:16500,day_of_month:1,credit_ok:false}],salary:{rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:60000,salary_amount:50000}});
@@ -91,10 +105,12 @@ test('21st payout repays mandatory first, then the other card, then Mono, leavin
  const p=r.periods.find(p=>p.start==='2026-10-21');
  // резерв 16 500; погашення min(50 000, 60 000 − 16 500 − 15 000 = 28 500) = 28 500: Приват 10 000, Mono 18 500; A = 15 000
  assert.equal(p.reserveCents,1650000);assert.equal(p.availableCents,1500000);assert.equal(p.targetCents,1500000);
- // готівка 3 000, на Mono 12 000 гасить залишок боргу Mono 21 500 частково
- assert.equal(p.cashOutCents,300000);assert.equal(p.toMonoCents,1200000);assert.equal(p.monoOffsetCents,1200000);
+ // готівка 3 000, на Mono 12 000; v153: ці 12 000 і є бюджет періоду, тож борг Mono ними не гаситься (інакше змінні знову позичались би на Mono)
+ assert.equal(p.cashOutCents,300000);assert.equal(p.toMonoCents,1200000);assert.equal(p.monoOffsetCents,0);assert.equal(p.dueShortCents,0);
  const rep=r.events.filter(e=>e.kind==='repay'&&e.date==='2026-10-21');
- assert.deepEqual(rep.map(e=>[e.id,e.amountCents]),[['repay:2:2026-09',1000000],['repay:3:2026-10',3050000]]);
+ assert.deepEqual(rep.map(e=>[e.id,e.amountCents]),[['repay:2:2026-09',1000000],['repay:3:2026-10',1850000]]);
+ // між виплатами кредитки не ростуть: змінні з бюджету власних
+ assert.ok(r.events.filter(e=>e.date>'2026-10-21'&&e.date<'2026-11-06').every(e=>!(e.debtDeltaCents>0)));
  assert.equal(rep.reduce((s,e)=>s+e.amountCents,0),p.repayCents);
  for(const e of rep)assert.equal(e.cashDeltaCents,-e.amountCents);
 });

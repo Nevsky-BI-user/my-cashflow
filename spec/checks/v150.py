@@ -141,8 +141,8 @@ def _side(page, w, hgt):
             e = early[0]
             check(e['n'].startswith('Події 12.10-') and not e['n'].startswith('Погашення'), f'{tag}: підпис підсумку {e["n"]!r}')
             prev = date.fromisoformat(d) - timedelta(days=1)
-            want = page.evaluate(f"(()=>{{const p=window.__financeProjection;const x=p.days.find(v=>v.date==='{prev.isoformat()}');return x?(x.netCents+balShift(p))/100:null}})()")
-            check(want is not None and abs(_num(e['b']) - want) <= 1, f'{tag}: баланс після підсумку {e["b"]}, а на кінець {prev} {want}')
+            want = page.evaluate(f"(()=>{{const p=window.__financeProjection;const x=p.days.find(v=>v.date==='{prev.isoformat()}');return x?x.closingCashCents/100:null}})()")  # v153: власні після, як лінія «Власні»
+            check(want is not None and abs(_num(e['b']) - want) <= 1, f'{tag}: власні після підсумку {e["b"]}, а на кінець {prev} {want}')
             check(all(r['n'][:5] == d[8:] + '.' + d[5:7] for r in s['rows'] if 'ck-bd-early' not in r['c'] and 'ck-bd-st' not in r['c'] and 'ck-bd-tot' not in r['c']), f'{tag}: окремі рядки не лише вибраного дня: {[r["n"] for r in s["rows"]]}')
         seen.append(f'{d[8:]}.{d[5:7]}: рядків {len(s["rows"])}, панель {s["daySH"]}/{s["dayCH"]}')
     print(f'      {w}x{hgt}: ' + '; '.join(seen))
@@ -240,19 +240,22 @@ def _chips(page):
     print(f'      Приват {p["bg"]}, Mono {m["bg"]}')
 
 
+# v153 доповнення 5: у день виплати подій більше (дострокові погашення), тож рядок «ще N подій» (fc-tip-more) з сумою згорнутих у data-d теж входить у ланцюжок
 OWN_TIP = r"""(()=>{const b=document.querySelector('.dv-fc .fc-box');if(!b)return null;const v=s=>{const e=b.querySelector(s+' .fc-tip-n');if(!e)return null;const t=e.textContent;return (/[−-]/.test(t)?-1:1)*+t.replace(/\D/g,'')};
-return {k:b.dataset.k,i:+b.dataset.i,own:v('.fc-tip-own'),debt:v('.fc-tip-crd'),rows:[...b.querySelectorAll('.fc-tip-ev')].map(r=>({l:r.querySelector('.fc-tip-l').textContent,c:r.className,d:r.dataset.d!=null?+r.dataset.d:null}))}})()"""
+const c=document.querySelector('.dv-fc .fc-cross circle');
+return {k:b.dataset.k,i:+b.dataset.i,own:v('.fc-tip-own'),debt:v('.fc-tip-crd'),bal:v('.fc-tip-bal'),cy:c?+c.getAttribute('cy'):null,rows:[...b.querySelectorAll('.fc-tip-ev,.fc-tip-more')].map(r=>({l:r.querySelector('.fc-tip-l').textContent,c:r.className,d:r.dataset.d!=null?+r.dataset.d:null}))}})()"""
 
 CHART = r"""(()=>{const s=document.querySelector('.dv-fc .fc-svg');const z=s.querySelector('.fc-zero');const y0=z?+z.getAttribute('y1'):null;
 const ys=d=>(d||'').replace(/[MLC]/g,' ').trim().split(/[\s,]+/).map(Number).filter((_,i)=>i%2===1);
-const fut=ys(s.querySelector('.fc-fut')?.getAttribute('d')),debt=ys(s.querySelector('.fc-debt')?.getAttribute('d'));
-return {y0,futMaxY:Math.max(...fut),debtMinY:debt.length?Math.min(...debt):null,n:+s.dataset.n,past:+s.dataset.past,from:s.dataset.from,to:s.dataset.to}})()"""
+const fut=ys(s.querySelector('.fc-fut')?.getAttribute('d'));
+return {y0,futMaxY:Math.max(...fut),extra:s.querySelectorAll('.fc-debt,.fc-cross-crd').length,n:+s.dataset.n,past:+s.dataset.past,from:s.dataset.from,to:s.dataset.to}})()"""
 
 
 def own_120(page):
     """Модель «власні ≥ 0» (координатор: «min(власні) ≥ 0 у моделі, тултіпі й графіку за 120 днів»): демо з боргом Mono і лімітом, тож прогноз бере в кредит.
-    Модель: 121 день, власні дня й після кожної події не мінус; графік (Рік): пунктир прогнозу не нижче нуля, лінія боргу не вище нуля (v152);
-    тултіп: 120 днів кроками, власні не мінус, власні(d-1) + сума рядків(d) = власні(d); є рядки «у кредит» і погашення Mono 21.10."""
+    Модель: 121 день, власні дня й після кожної події не мінус; тултіп: 120 днів кроками, власні не мінус, власні(d-1) + сума рядків(d) = власні(d);
+    є рядки «у кредит» і погашення Mono 21.10. v153 доповнення 6: лінія графіка = баланс (власні − борг), може бути нижче нуля: день з відʼємним
+    балансом малюється нижче лінії нуля, окремої лінії боргу немає (до доповнення 6 лінія була власні й не опускалась нижче нуля)."""
     page.set_viewport_size({'width': 1920, 'height': 900})
     freeze(page, DAY, MONO_DEBT)
     go_tab(page, 0)
@@ -266,17 +269,21 @@ return {n:r.days.length,minDay:Math.min(...r.days.map(d=>d.closingCashCents)),mi
     page.locator('.dv-fc .fc-chips button[data-r=y]').click()
     page.wait_for_timeout(300)
     c = page.evaluate(CHART)
-    check(c['y0'] is not None and c['futMaxY'] <= c['y0'] + 0.5, f'графік: прогноз власних нижче нуля {c}')
-    # v152: борг на осі відʼємний, лінія «Кредитні» не вище нуля
-    check(c['debtMinY'] is None or c['debtMinY'] >= c['y0'] - 0.5, f'графік: лінія боргу вище нуля {c}')
+    check(c['y0'] is not None and c['extra'] == 0, f'графік: немає нуля або лишилась окрема лінія боргу {c}')
+    # v153 доповнення 6: демо з боргом Mono має відʼємний баланс, тож пунктир прогнозу балансу заходить нижче нуля
+    check(c['futMaxY'] > c['y0'] + 1, f'графік: прогноз балансу не нижче нуля, хоча баланс відʼємний {c}')
     page.locator('.dv-fc .fc-plot').focus()
-    prev, chain, credit_rows, mono_rp, low = None, 0, 0, 0, None
+    prev, chain, credit_rows, mono_rp, low, below = None, 0, 0, 0, None, 0
     for step in range(120):
         page.keyboard.press('ArrowRight')
         t = page.evaluate(OWN_TIP)
         check(t and t['k'] == 'f', f'крок {step}: немає тултіпа прогнозу')
         check(t['own'] >= 0, f'день {t["i"]}: власні в тултіпі мінус {t["own"]}')
         low = t['own'] if low is None else min(low, t['own'])
+        check(abs(t['own'] + t['debt'] - t['bal']) <= 1, f'день {t["i"]}: власні {t["own"]} + кредитні {t["debt"]} ≠ баланс {t["bal"]}')
+        if t['bal'] < 0:
+            below += 1
+            check(t['cy'] is not None and t['cy'] > c['y0'] + 0.05, f'день {t["i"]}: баланс {t["bal"]} не нижче нуля на графіку: cy {t["cy"]}, нуль {c["y0"]}')
         credit_rows += sum('fc-tip-cr' in r['c'] for r in t['rows'])
         mono_rp += sum('fc-tip-rp' in r['c'] and 'mono' in r['l'].lower() for r in t['rows'])
         if prev is not None:
@@ -288,7 +295,8 @@ return {n:r.days.length,minDay:Math.min(...r.days.map(d=>d.closingCashCents)),mi
     check(chain == 119, f'ланцюжок власних лише {chain} днів')
     check(credit_rows > 0, 'у тултіпі немає рядків «у кредит», хоча модель бере в кредит')
     check(mono_rp > 0, 'у тултіпі немає погашення Mono')
-    print(f'      модель: мін. власних {m["minDay"] / 100:.2f}, подій у кредит {m["borrowed"]}, макс. борг {m["maxDebt"] / 100:.2f}; тултіп: 120 днів, мін. {low}, рядків «у кредит» {credit_rows}, погашень Mono {mono_rp}')
+    check(below > 0, 'жодного дня з відʼємним балансом: перевірка «нижче нуля» не показова')
+    print(f'      модель: мін. власних {m["minDay"] / 100:.2f}, подій у кредит {m["borrowed"]}, макс. борг {m["maxDebt"] / 100:.2f}; тултіп: 120 днів, мін. {low}, рядків «у кредит» {credit_rows}, погашень Mono {mono_rp}, днів з балансом нижче нуля {below}')
 
 
 CHECKS = [

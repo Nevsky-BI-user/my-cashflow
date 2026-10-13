@@ -85,7 +85,7 @@ test('period budget at period start: payout day income, debit-only mandatory res
  const r2=G.periodBudgetStart(pr2,fi2,txs2,['1','3','4',''],['1',''],'2026-10-25');
  const debt2=3832700-70000;
  assert.equal(r2.repayDay,true);assert.equal(r2.ownAt,6000000);assert.equal(r2.reserve,0);assert.equal(r2.debt,debt2);assert.equal(r2.due,debt2-250000);
- assert.deepEqual(E.payoutBudget(r2.ownAt,r2.reserve,r2.debt,r2.due,true),{repayCents:r2.repay,availableCents:r2.A,targetCents:r2.budget});
+ assert.deepEqual(E.payoutBudget(r2.ownAt,r2.reserve,r2.debt,r2.due,true),{repayCents:r2.repay,dueShortCents:r2.dueShort,availableCents:r2.A,targetCents:r2.budget});assert.equal(r2.dueShort,0);assert.equal(r2.manual,null);
  assert.equal(r2.repay,debt2,'увесь борг: власних вистачає, лишаючи 15 000');assert.equal(r2.A,6000000-debt2);assert.equal(r2.budget,rule(r2.A));
  assert.equal(r2.daily,Math.round(r2.avail/12),'доступно / 12 днів 25.10-05.11');
  // без власних грошей: підлога 15 000 ₴

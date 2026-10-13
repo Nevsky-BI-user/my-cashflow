@@ -41,8 +41,10 @@ test('every payout repays card debt the same day when own funds cover it: credit
  for(const p of pays){
   const prev=r.days.filter(d=>d.date<p.start).pop(),before=prev?prev.debtCents:r.snapshot.creditDebtCents,day=r.days.find(d=>d.date===p.start);
   const dist=r.events.filter(e=>e.date===p.start&&DIST.includes(e.kind)),last=dist[dist.length-1];
-  // розподіл за правилом payoutBudget: погашення = min(борг, max(належне, власні − резерв − 15 000)), не більше власних − резерв
-  assert.equal(p.reserveCents+p.repayCents-p.monoOffsetCents+p.savingsCents+p.cashOutCents+p.toMonoCents,p.ownCents,p.start+': розподіл не сходиться');
+  // розподіл за правилом payoutBudget: погашення = min(борг, max(0, власні − резерв − 15 000)) (v153: бюджет до погашення, належне першим усередині цієї суми)
+  // v153 доповнення 7: залишок періоду розподіляється до нової виплати (погашення, дострокове, накопичення), ownCents уже після нього
+  assert.equal(p.leftoverRepayCents+p.leftoverPrepayCents+p.leftoverSavingsCents,p.leftoverCents,p.start+': залишок не сходиться');
+  assert.equal(p.reserveCents+p.payoutRepayCents-p.monoOffsetCents+p.payoutPrepayCents+p.cashOutCents+p.toMonoCents,p.ownCents,p.start+': розподіл не сходиться');
   if(p.ownCents-p.reserveCents-1500000>=before){
    covered++;
    assert.equal(last.debtAfterCents,0,p.start+': кредитні після розподілу '+last.debtAfterCents+' при власних '+p.ownCents);

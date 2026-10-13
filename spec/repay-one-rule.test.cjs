@@ -44,7 +44,8 @@ test('engine repay events (TS and Python): 21.10 repays Privat (due) and Mono (e
  const r=both(prod());
  // Mono: 21.10 гасить увесь борг на той день; хвіст жовтня (витрати після 21.10) і борг листопада гасить наступна виплата 06.11
  // (v152: кожна виплата гасить борг максимум; до v152 вони чекали 20.11), кожне погашення окремою подією з унікальним id
- assert.deepEqual(repayOf(r,3),[WANT[3],'2026-11-06','2026-11-06']);assert.ok(r.events.some(e=>e.id==='repay:3:2026-10:2026-11-06'));assert.deepEqual(repayOf(r,4),[WANT[4]]);
+ // v153: бюджет після 21.10 не позичається на Mono, тож боргу листопада немає: 06.11 гасить лише хвіст жовтня (витрати 12-20.10)
+ assert.deepEqual(repayOf(r,3),[WANT[3],'2026-11-06']);assert.ok(r.events.some(e=>e.id==='repay:3:2026-10:2026-11-06'));assert.ok(!r.events.some(e=>e.id.startsWith('repay:3:2026-11')));assert.deepEqual(repayOf(r,4),[WANT[4]]);
  for(const a of [3,4]){const e=r.events.find(e=>e.id==='repay:'+a+':'+(a===3?'2026-10':'2026-09'));assert.equal(e.date,WANT[a]);assert.equal(e.plannedRepaymentDate,DUE[a]);}
  // без прострочки: подія не пізніша за обовʼязкову дату кошика
  for(const e of r.events.filter(e=>e.kind==='repay')){assert.ok(e.date<=e.plannedRepaymentDate,e.id);assert.equal(e.contractualDueDate.slice(8),'24');}
