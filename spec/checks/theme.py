@@ -205,7 +205,7 @@ ST = "(e)=>{const s=getComputedStyle(e);return {bg:s.backgroundColor,bl:s.border
 
 
 def drawer_sheet(page):
-    """ПК, світла тема: дровер операції і модалка «Нова операція» білі, з волосяною межею #e6e8ec і тінню 0 8px 24px"""
+    """ПК, світла тема: дровер операції і модалка «Нова операція» білі, з волосяною межею #E5E5EA (v155, Apple; було #e6e8ec) і тінню 0 8px 24px"""
     freeze(page, DAY)
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.evaluate("document.documentElement.setAttribute('data-theme','light')")
@@ -214,13 +214,13 @@ def drawer_sheet(page):
     page.locator('.p-flow.desk .flow-row.tx').first.click()
     page.wait_for_timeout(400)
     d = page.locator('.drawer').first.evaluate(ST)
-    check(d['bg'] == 'rgb(255, 255, 255)' and d['bl'] == '1px rgb(230, 232, 236)' and d['sh'] != 'none' and 'inset' in d['sh'], f'дровер: {d}')
+    check(d['bg'] == 'rgb(255, 255, 255)' and d['bl'] == '1px rgb(229, 229, 234)' and d['sh'] != 'none' and 'inset' in d['sh'], f'дровер: {d}')
     page.keyboard.press('Escape')
     page.wait_for_timeout(300)
     page.keyboard.press('n')
     page.wait_for_timeout(500)
     m = page.locator('.sheet').first.evaluate(ST)
-    check(m['bg'] == 'rgb(255, 255, 255)' and m['bt'] == '1px rgb(230, 232, 236)' and m['sh'] != 'none', f'модалка: {m}')
+    check(m['bg'] == 'rgb(255, 255, 255)' and m['bt'] == '1px rgb(229, 229, 234)' and m['sh'] != 'none', f'модалка: {m}')
     page.keyboard.press('Escape')
 
 

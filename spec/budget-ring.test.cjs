@@ -2,6 +2,12 @@
 // одного тону, тони попарно різняться не менше 25°.
 // v153 (власник: «стабільний колір за категорією, не за місцем у періоді»): тон категорії сталий (budStable за id),
 // сусіди в кільці різняться не менше 40° завдяки порядку сегментів (budRing); бот малює ті самі кольори в тому самому порядку.
+// v155 (власник: «як в епл», рішення координатора 13.10): 10 системних кольорів Apple, пласко, слот = [світла тема, темна тема].
+// Замість «усі пари ≥ 25°»: а) усі пари Lab CIE76 ≥ 15 в обох темах; б) пʼять головних слотів (5, 7, 2, 0, 3) попарно ≥ 30° за тоном
+// в обох темах; в) сусіди кільця ≥ 40°, як було; г) теплі тони (20-70°) попарно Lab ≥ 25 в обох темах; червоного (мінус) у палітрі немає.
+// г) замість «рівно один жовтий або бурштиновий (тон 35-65°)» v152: мета того правила була, щоб у палітрі не було двох схожих
+// жовто-бурштинових тонів. Помаранчевий Apple (35-36,5°) і жовтий (48-50°) різняться на Lab 32,4/32,7, тобто далі, ніж будь-яка
+// пара під загальним порогом 15; тому правило тепер вимагає для теплих тонів більшого розрізнення (25), а не рахує їх кількість.
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -11,22 +17,36 @@ const html=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
 
 function ring(){
  const pick=re=>{const m=html.match(re);assert.ok(m,'не знайдено в index.html: '+re);return m[0];};
- return new Function([pick(/^const BUD_PAL=.*$/m),pick(/^const BUD_OTH=.*$/m),pick(/^function budPal\(.*$/m),pick(/^const budHue=.*$/m),pick(/^function budStable\(.*$/m),pick(/^function budRing\(.*$/m),pick(/^function budDonutData\(.*$/m),
-  'return {BUD_PAL,BUD_OTH,BUD_NONE,budPal,budHue,budDh,budStable,budRing,budDonutData,setIdx:function(x){BUD_IDX=x}};'].join('\n'))();
+ return new Function([pick(/^const BUD_PAL=.*$/m),pick(/^const BUD_OTH=.*$/m),pick(/^let BUD_DARK=.*$/m),pick(/^function budPal\(.*$/m),pick(/^function hexLab\(.*$/m),pick(/^const budHue=.*$/m),pick(/^function budStable\(.*$/m),pick(/^function budRing\(.*$/m),pick(/^function budDonutData\(.*$/m),
+  'return {BUD_PAL,BUD_OTH,BUD_NONE,budPal,budHue,budDh,budStable,budRing,budDonutData,hexLab,setIdx:function(x){BUD_IDX=x},setDark:function(d){BUD_DARK=d}};'].join('\n'))();
 }
 const dh=(a,b)=>{const x=Math.abs(a-b)%360;return Math.min(x,360-x)};
 // детермінований генератор: однакові набори на кожному запуску
 const rng=seed=>()=>{seed=(seed*1103515245+12345)%2147483648;return seed/2147483648};
 
-test('palette: 10 distinct tones, each gradient pair within one tone, tones at least 25 degrees apart',()=>{
- const {BUD_PAL,budHue}=ring();
+test('palette: 10 Apple colours, light and dark of a slot in one tone, Lab distance at least 15, main slots 30 degrees apart, no red',()=>{
+ const {BUD_PAL,budHue,hexLab}=ring();
  assert.equal(BUD_PAL.length,10);
- BUD_PAL.forEach((p,i)=>assert.ok(dh(budHue(p[0]),budHue(p[1]))<=3,'пара '+i+' поза тоном: '+p));
- let min=360;
- for(let i=0;i<10;i++)for(let j=i+1;j<10;j++)min=Math.min(min,dh(budHue(BUD_PAL[i][0]),budHue(BUD_PAL[j][0])));
- assert.ok(min>=25,'найближчі тони '+min.toFixed(1)+'°');
- // один жовтий або бурштиновий (тон 35-65°)
- assert.equal(BUD_PAL.filter(p=>{const h=budHue(p[0]);return h>=35&&h<=65}).length,1);
+ BUD_PAL.forEach((p,i)=>assert.ok(dh(budHue(p[0]),budHue(p[1]))<=3,'світлий і темний слота '+i+' різних тонів: '+p));
+ const lab=(a,b)=>{const x=hexLab(a),y=hexLab(b);return Math.hypot(x[0]-y[0],x[1]-y[1],x[2]-y[2])};
+ for(const t of [0,1]){
+  const th=t?'темна':'світла';
+  // а) усі пари помітно різні
+  let min=1e9,at='';
+  for(let i=0;i<10;i++)for(let j=i+1;j<10;j++){const d=lab(BUD_PAL[i][t],BUD_PAL[j][t]);if(d<min){min=d;at=i+' і '+j}}
+  assert.ok(min>=15,th+': найближчі слоти '+at+', Lab '+min.toFixed(1));
+  // б) пʼять головних слотів (найбільші живі частки) далеко за тоном
+  const MAIN=[5,7,2,0,3];let mh=360;
+  for(let i=0;i<5;i++)for(let j=i+1;j<5;j++)mh=Math.min(mh,dh(budHue(BUD_PAL[MAIN[i]][t]),budHue(BUD_PAL[MAIN[j]][t])));
+  assert.ok(mh>=30,th+': головні слоти ближче за 30°: '+mh.toFixed(1)+'°');
+  // червоний лише для мінусу й перевитрати
+  assert.ok(!BUD_PAL.some(p=>/^#(FF3B30|FF453A)$/i.test(p[t])),th+': червоний у палітрі категорій');
+  // г) теплі тони (20-70°: бурштин, помаранчевий, жовтий, коричневий) не плутаються між собою: попарно Lab ≥ 25
+  const warm=BUD_PAL.map((p,k)=>[k,budHue(p[t])]).filter(q=>q[1]>=20&&q[1]<=70);
+  assert.ok(warm.length>=1,th+': немає теплого тону');
+  for(let i=0;i<warm.length;i++)for(let j=i+1;j<warm.length;j++){const d=lab(BUD_PAL[warm[i][0]][t],BUD_PAL[warm[j][0]][t]);
+   assert.ok(d>=25,th+': теплі слоти '+warm[i][0]+' і '+warm[j][0]+' ('+warm[i][1].toFixed(1)+'°, '+warm[j][1].toFixed(1)+'°) схожі: Lab '+d.toFixed(1))}
+ }
 });
 
 test('budStable: the colour of a category depends on its id only, not on the period, the list order or other categories',()=>{
@@ -60,10 +80,11 @@ test('budRing: neighbours differ by at least 40 degrees (closed ring: last to fi
  assert.ok(found>300&&none>0,'набори не показові: є порядок '+found+', немає '+none);
 });
 
-test('bot ring = app ring: same segments, same order, same gradient pair per category',async()=>{
+test('bot ring = app ring: same segments, same order, same colour per category (bot picture is light)',async()=>{
  const A=ring();
  const ch=await import(pathToFileURL(path.resolve(__dirname,'../supabase/functions/_shared/bot-charts.ts')).href);
  assert.deepEqual(ch.BUD_PAL,A.BUD_PAL,'палітра бота інша');
+ A.setDark(false);
  const r=rng(7);
  for(let t=0;t<200;t++){
   const n=2+Math.floor(r()*14);
@@ -72,8 +93,8 @@ test('bot ring = app ring: same segments, same order, same gradient pair per cat
   if(r()<0.3)rows.push({id:'__none',name:'Без категорії',fact:Math.round(r()*30000)/100,plan:0,over:false,near:false,noPlan:true});
   rows.sort((a,b)=>b.fact-a.fact);
   const idx=A.budStable(ids);A.setIdx(idx);
-  const d=A.budDonutData(rows);const app=A.budRing(d.segs,idx).map(s=>[s.id,s.pct,A.budPal(s.id,null)||A.BUD_OTH]);
-  const bot=ch.donutSegments(rows).segs.map(s=>[s.id,s.pct,s.grad]);
+  const d=A.budDonutData(rows);const app=A.budRing(d.segs,idx).map(s=>[s.id,s.pct,(A.budPal(s.id,null)||A.BUD_OTH)[0]]);
+  const bot=ch.donutSegments(rows).segs.map(s=>[s.id,s.pct,s.color]);
   assert.deepEqual(bot,app,'набір '+t);
  }
 });

@@ -108,11 +108,14 @@ RING = r"""scope=>{const ring=document.querySelector(scope+' .bd-ring');if(!ring
 const hue=c=>{const n=(c.match(/[\d.]+/g)||[]).map(Number);const [r,g,b]=n.slice(0,3).map(v=>v/255),mx=Math.max(r,g,b),d=mx-Math.min(r,g,b);if(d<0.15)return null;/* сірі «Інші» й «Без категорії» без тону */const h=mx===r?((g-b)/d)%6:mx===g?(b-r)/d+2:(r-g)/d+4;return (h*60+360)%360};
 const segs=[...ring.querySelectorAll('.bd-seg')].map(e=>{const d=e.getAttribute('d');const nums=t=>t.trim().split(/[\s,]+/).map(Number);const cmds=d.match(/[MALZ][^MALZ]*/g);const pts=[],radii=[];
 cmds.forEach(c=>{const v=nums(c.slice(1));if(c[0]==='M'||c[0]==='L')pts.push([v[0],v[1]]);if(c[0]==='A'){radii.push(v[0]);pts.push([v[5],v[6]])}});
-const id=(getComputedStyle(e).fill.match(/url\("?#([^")]+)"?\)/)||[])[1];const st=id?[...document.getElementById(id).querySelectorAll('stop')].map(x=>getComputedStyle(x).stopColor):[];
-return {id:e.dataset.id,cmd:cmds.map(c=>c[0]).join(''),radii,pts,stops:st,hues:st.map(hue)}});
-const sw=[...document.querySelectorAll(scope+' .bd-row')].map(r=>({id:r.dataset.id,bg:getComputedStyle(r.querySelector('.bd-sw')).backgroundImage}));
-const pal=BUD_PAL.map(p=>p.map(c=>{const n=[1,3,5].map(i=>parseInt(c.slice(i,i+2),16));return hue('rgb('+n.join(',')+')')}));
-return {R,r0,ro,segs,sw,pal}}"""
+/* v155: сегмент плаский, суцільна заливка кольором категорії (без linearGradient) */const fill=getComputedStyle(e).fill;
+return {id:e.dataset.id,cmd:cmds.map(c=>c[0]).join(''),radii,pts,fill,flat:!/url\(/.test(fill),hues:[hue(fill)]}});
+const sw=[...document.querySelectorAll(scope+' .bd-row')].map(r=>{const c=getComputedStyle(r.querySelector('.bd-sw'));return {id:r.dataset.id,bg:c.backgroundColor,bi:c.backgroundImage}});
+const rgb=c=>'rgb('+[1,3,5].map(i=>parseInt(c.slice(i,i+2),16)).join(', ')+')';
+const pal=BUD_PAL.map(p=>p.map(c=>hue(rgb(c))));
+const dark=document.documentElement.getAttribute('data-theme')!=='light';
+const lab=BUD_PAL.map(p=>p.map(hexLab));
+return {R,r0,ro,segs,sw,pal,lab,dark,theme:BUD_PAL.map(p=>rgb(p[dark?1:0])).concat([BUD_OTH,BUD_NONE].map(p=>rgb(p[dark?1:0])))}}"""
 
 
 def _dh(a, b):
@@ -125,11 +128,19 @@ def _ring(page, scope, tag):
     st = page.evaluate(RING, scope)
     check(st and st['segs'], f'{tag}: кільця немає')
     R, r0, ro, segs = st['R'], st['r0'], st['ro'], st['segs']
-    # палітра: тон однаковий у межах пари, різні тони попарно ≥ 25°
+    # палітра (v155, кольори Apple): світлий і темний варіант слота одного тону; замість «усі тони попарно ≥ 25°»:
+    # усі пари Lab CIE76 ≥ 15 і пʼять головних слотів (5, 7, 2, 0, 3) попарно ≥ 30° за тоном, в обох темах
     for i, (a, b) in enumerate(st['pal']):
-        check(_dh(a, b) <= 3, f'палітра: пара {i} градієнт поза тоном {a:.0f}/{b:.0f}')
-    pw = min(_dh(st['pal'][i][0], st['pal'][j][0]) for i in range(len(st['pal'])) for j in range(i + 1, len(st['pal'])))
-    check(pw >= 25, f'палітра: два тони ближче 25° ({pw:.1f})')
+        check(_dh(a, b) <= 3, f'палітра: слот {i}, світлий і темний різних тонів {a:.0f}/{b:.0f}')
+    N = len(st['pal'])
+    for t in (0, 1):
+        lw = min(math.dist(st['lab'][i][t], st['lab'][j][t]) for i in range(N) for j in range(i + 1, N))
+        check(lw >= 15, f'палітра ({"темна" if t else "світла"}): два слоти ближче Lab 15 ({lw:.1f})')
+        mw = min(_dh(st['pal'][i][t], st['pal'][j][t]) for i in (5, 7, 2, 0, 3) for j in (5, 7, 2, 0, 3) if i < j)
+        check(mw >= 30, f'палітра ({"темна" if t else "світла"}): головні слоти ближче 30° ({mw:.1f})')
+    # сегменти пласкі й кольору своєї теми
+    for s in segs:
+        check(s['flat'] and s['fill'] in st['theme'], f'{tag}: сегмент {s["id"]} не пласкої заливки кольором теми ({"темна" if st["dark"] else "світла"}): {s["fill"]}')
     n = len(segs)
     if n > 1:
         for s in segs:
@@ -148,10 +159,10 @@ def _ring(page, scope, tag):
             if ha is not None and hb is not None:
                 check(_dh(ha, hb) >= 40, f'{tag}: сусіди {a["id"]} і {b["id"]} одного тону: {ha:.0f}° і {hb:.0f}°')
         print(f'      {tag}: сегментів {n}, розриви {sorted(set(gaps))}, сусідні тони {[round(_dh(segs[k]["hues"][0] or 0, segs[(k + 1) % n]["hues"][0] or 0)) for k in range(n)]}')
-    # легенда бере ті самі кольори
-    sw = {x['id']: x['bg'] for x in st['sw']}
+    # легенда: пласка мітка того самого кольору, що сегмент (v155: суцільний колір сегмента = колір мітки)
+    sw = {x['id']: x for x in st['sw']}
     for s in segs:
-        check(s['id'] in sw and all(c in sw[s['id']] for c in s['stops']), f'{tag}: легенда {s["id"]} іншого кольору: {sw.get(s["id"])} проти {s["stops"]}')
+        check(s['id'] in sw and sw[s['id']]['bi'] == 'none' and sw[s['id']]['bg'] == s['fill'], f'{tag}: мітка легенди {s["id"]} іншого кольору або з градієнтом: {sw.get(s["id"])} проти {s["fill"]}')
 
 
 def ring_v152(page):

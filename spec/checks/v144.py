@@ -251,7 +251,7 @@ let fg=P(getComputedStyle(t).color);const a=fg.length>3?fg[3]:1;let b=bg;const t
 
 
 def colors(page):
-    """Градієнти карток за банком (обидві теми, контраст тексту від 4.5 на найсвітлішій зупинці), кольорові KPI, градієнтні акцентна кнопка і активна вкладка."""
+    """Градієнти карток за банком (обидві теми, контраст тексту від 4.5 на найсвітлішій зупинці), KPI на фоні картки (v155), градієнтні акцентна кнопка і активна вкладка."""
     freeze(page, DAY)
     for theme in ('light', 'dark'):
         page.evaluate('(t)=>document.documentElement.setAttribute("data-theme",t)', theme)
@@ -262,8 +262,9 @@ def colors(page):
         ratios = [r for i in range(len(cards)) for r in page.locator('.dv-cards .bcard').nth(i).evaluate(CR)]
         print(f'      {theme}: контраст тексту карток мін. {min(ratios)}')
         check(min(ratios) >= 4.5, f'{theme}: контраст тексту на картці {min(ratios)} < 4.5')
-        kpi = page.evaluate("[...document.querySelectorAll('.dv-kpi')].filter(e=>e.offsetParent).map(e=>getComputedStyle(e).backgroundImage)")
-        check(kpi and all('gradient' in k for k in kpi), f'{theme}: KPI без кольорового акценту')
+        # v155, рішення власника «одна система» (v154) у палітрі Apple: KPI-плитки без кольорових підкладок, фон = токен картки (раніше тут вимагався градієнт)
+        kpi = page.evaluate("(()=>{const d=document.createElement('div');d.style.background='var(--card)';document.body.appendChild(d);const cc=getComputedStyle(d).backgroundColor;d.remove();return [...document.querySelectorAll('.dv-kpi')].filter(e=>e.offsetParent).map(e=>{const s=getComputedStyle(e);return {bi:s.backgroundImage,ok:s.backgroundColor===cc}})})()")
+        check(kpi and all(k['bi'] == 'none' and k['ok'] for k in kpi), f'{theme}: KPI з кольоровою підкладкою або фоном не картки: {kpi}')
         check('gradient' in page.evaluate("getComputedStyle(document.querySelector('.side-add')).backgroundImage"), f'{theme}: кнопка «+ Операція» без градієнта')
         check('gradient' in page.evaluate("getComputedStyle(document.querySelector('.side-item[aria-current=page]')).backgroundImage"), f'{theme}: активна вкладка без градієнта')
         page.mouse.move(2, 2)

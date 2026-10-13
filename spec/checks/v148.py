@@ -96,7 +96,7 @@ def unlock_all_phone(page):
     check(locks.count() == 0 and sh.locator('.bud-unlock-all').count() == 0, f'після «Розблокувати всі» заблоковано {locks.count()}')
 
 
-# v148, кільце бюджету: сегменти без обводок (v150: насичені градієнти замість пастелі), число в центрі всередині внутрішнього кола, підказка в межах вʼюпорту, легенда з контрастом AA
+# v148, кільце бюджету: сегменти без обводок (v150: насичені градієнти замість пастелі; v155: пласка насичена заливка), число в центрі всередині внутрішнього кола, підказка в межах вʼюпорту, легенда з контрастом AA
 RING = r"""scope=>{const ring=document.querySelector(scope+' .bd-ring');if(!ring)return null;const r0=+ring.dataset.r0,c=ring.getBoundingClientRect(),cx=c.left+c.width/2,cy=c.top+c.height/2;
 const out=[...ring.querySelectorAll('.bd-c b,.bd-c span')].map(e=>{const r=e.getBoundingClientRect(),dx=Math.max(Math.abs(r.left-cx),Math.abs(r.right-cx)),dy=Math.max(Math.abs(r.top-cy),Math.abs(r.bottom-cy));return [e.textContent,Math.round(Math.hypot(dx,dy)*10)/10,r0,parseFloat(getComputedStyle(e).fontSize),e.scrollWidth<=e.clientWidth+1]});
 const rgb=s=>{const n=(s.match(/[\d.]+/g)||[]).map(Number);return /^color\(/.test(s)?n.map((v,i)=>i<3?v*255:v):n};const lum=a=>{const f=v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4)};return 0.2126*f(a[0])+0.7152*f(a[1])+0.0722*f(a[2])};
@@ -119,10 +119,11 @@ def _ring_state(page, scope, tag):
         check(cr >= 4.5, f'{tag}: контраст легенди {cls} «{txt}» {cr} < 4,5')
     for sid, fill, stroke, sw, stops, grad in st['segs']:
         check(sw == 0 or stroke in ('none', 'rgba(0, 0, 0, 0)'), f'{tag}: сегмент {sid} з обводкою {stroke} {sw}')
-        # v150 (власник: «кольори як у монобанку»): замість пастелі насичений градієнт; сегмент заливає власний градієнт з 2+ кольоровими зупинками
-        check(grad and len(stops) >= 2, f'{tag}: сегмент {sid} без градієнта {fill}: {stops}')
+        # v150 (власник: «кольори як у монобанку»): замість пастелі насичений градієнт з 2+ кольоровими зупинками;
+        # v155 (власник: «як в епл»): сегмент пласкої суцільної заливки насиченим кольором, без linearGradient
+        check(not grad and len(stops) == 1 and 'url(' not in fill, f'{tag}: сегмент {sid} не пласкої заливки {fill}: {stops}')
         # службові сегменти (__none: без категорії) лишаються сірими навмисно
-        check(sid.startswith('__') or all(0.2 <= l <= 0.9 and c >= 0.2 for l, c in stops), f'{tag}: сегмент {sid}: зупинки градієнта не кольорові (світлість, насиченість) {stops}')
+        check(sid.startswith('__') or all(0.2 <= l <= 0.9 and c >= 0.2 for l, c in stops), f'{tag}: сегмент {sid}: заливка не кольорова (світлість, насиченість) {stops}')
     return st
 
 
@@ -179,6 +180,6 @@ CHECKS = [
     ('v148: Розподіл бюджету: % / ₴ у рядку категорії', 'desktop', alloc_units),
     ('v148: Розподіл бюджету: % / ₴ у рядку категорії', 'mobile', alloc_units),
     ('v148: Розподіл бюджету: «Розблокувати всі» на телефоні', 'mobile', unlock_all_phone),
-    ('v148: кільце бюджету на ПК: градієнт (v150), центр у колі, підказка у вʼюпорті, контраст легенди', 'desktop', ring_readable),
-    ('v148: кільце бюджету на телефоні: градієнт (v150), центр у колі, підказка у вʼюпорті, контраст легенди', 'mobile', ring_readable),
+    ('v148: кільце бюджету на ПК: пласка заливка (v155), центр у колі, підказка у вʼюпорті, контраст легенди', 'desktop', ring_readable),
+    ('v148: кільце бюджету на телефоні: пласка заливка (v155), центр у колі, підказка у вʼюпорті, контраст легенди', 'mobile', ring_readable),
 ]
