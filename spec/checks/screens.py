@@ -12,8 +12,9 @@ const r=last.getBoundingClientRect(),b=box.getBoundingClientRect();const ok=r.bo
 
 
 def desktop(page):
-    check(page.evaluate("getComputedStyle(document.querySelector('header')||document.createElement('header')).display") == 'none'
-          or page.locator('header').count() == 0, 'шапка на ПК не схована')
+    header = page.locator('.shell > .header')
+    check(header.count() == 1, 'немає шапки застосунку .shell > .header')
+    check(header.evaluate("e=>getComputedStyle(e).display") == 'none', 'шапка на ПК не схована')
     w = page.evaluate("document.querySelector('.side').getBoundingClientRect().width")
     check(abs(w - 220) < 1, f'бічна панель {w}px, а не 220')
     for i, (tid, title) in enumerate(TABS):

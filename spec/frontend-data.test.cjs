@@ -15,29 +15,22 @@ function paged(rows,failSecond=false){
    return query;
  }};
 }
-const savingCode=html.match(/const loadSavings=(async function\(\)\{[^\r\n]+\});/)[1];
-const feedLine=html.split(/\r?\n/).find(line=>line.includes("'операції рахунків'")&&line.includes('for(let page=0;page<100;page++)'));
-const feedCode=feedLine.slice(feedLine.indexOf('async function(){'),feedLine.indexOf('})(),function(r)')+1);
+const guards=html.split('/* REFRESH READ GUARDS */')[1].split('/* END REFRESH READ GUARDS */')[0];
+const {refreshPageRows,refreshViewRows}=new Function(guards+';return{refreshPageRows,refreshViewRows}')();
+const readRows=(sb,table)=>refreshPageRows(()=>sb.from(table).select('*').order('id'),()=>true);
 test('saved balance includes all contributions beyond the old 20 and server 1000 limits',async()=>{
- const rows=Array.from({length:1001},(_,id)=>({id,amount:1}));const sb=paged(rows);let saved;
- const load=new Function('sb','setSavingsLog','return '+savingCode)(sb,value=>saved=value);
- await load();assert.equal(saved.length,1001);assert.equal(saved.reduce((s,r)=>s+r.amount,0),1001);
- assert.deepEqual(sb.calls.map(c=>c.range[0]),[[0,999],[1000,1999]]);
+ const rows=Array.from({length:1001},(_,id)=>({id,amount:1}));const sb=paged(rows);const saved=await readRows(sb,'savings_log');
+ assert.equal(saved.length,1001);assert.equal(saved.reduce((s,r)=>s+r.amount,0),1001);assert.deepEqual(sb.calls.map(c=>c.range[0]),[[0,999],[1000,1999]]);
 });
 test('canonical frontend feed retains prior-month facts, unassigned rows and stable pages',async()=>{
- const rows=Array.from({length:1001},(_,id)=>({id,account_id:null,date:'2026-09-22',amount:1}));const sb=paged(rows);
- const run=new Function('sb','pbIso','now','accSince','financeFrom','return ('+feedCode+')()');
- const out=await run(sb,d=>d.toISOString().slice(0,10),new Date('2026-10-03T12:00:00Z'),'2026-10-01T00:00:00Z','2026-08-04');
- assert.equal(out.data.length,1001);
- for(const q of sb.calls){assert.deepEqual(q.order[0],['id']);assert.ok(q.or[0][0].includes('date.gte.2026-08-04'));assert.ok(q.or[0][0].includes('created_at.gt.2026-10-01T00:00:00Z'));assert.deepEqual(q.lte[0],['date','2026-10-03']);}
+ const rows=Array.from({length:1001},(_,id)=>({id,account_id:null,date:'2026-09-22',amount:1}));rows.push({id:1001,date:'2026-01-01',created_at:'2026-10-02T00:00:00Z',account_id:1},{id:1002,date:'2026-10-04',account_id:1});const sb=paged(rows);
+ const all=await readRows(sb,'transactions');const out=refreshViewRows(all,{start:'2026-10-01',next:'2026-11-01',end:'2026-12-01',prev:'2026-09-01',today:'2026-10-03',current:'2026-09-21',finance:'2026-08-04',accSince:'2026-10-01T00:00:00Z',history:'all',month:'2026-10-01',fixed:'2026-08-01'});
+ assert.equal(out.accounts.length,1002);assert.equal(out.accounts.filter(t=>t.account_id==null).length,1001);assert.equal(out.accounts.some(t=>t.id===1002),false);assert.equal(out.prev.length,1001);
+ for(const q of sb.calls)assert.deepEqual(q.order[0],['id']);assert.deepEqual(sb.calls.map(c=>c.range[0]),[[0,999],[1000,1999]]);
 });
 test('failed second page never publishes partial savings or financial transactions',async()=>{
- const rows=Array.from({length:1001},(_,id)=>({id,amount:1}));let saved=false;
- const load=new Function('sb','setSavingsLog','return '+savingCode)(paged(rows,true),()=>saved=true);
- await assert.rejects(load());assert.equal(saved,false);
- const run=new Function('sb','pbIso','now','accSince','financeFrom','return ('+feedCode+')()');
- const result=await run(paged(rows,true),d=>d.toISOString().slice(0,10),new Date('2026-10-03T12:00:00Z'),null,'2026-08-04');
- assert.ok(result.error);assert.ok(!result.data);
+ const rows=Array.from({length:1001},(_,id)=>({id,amount:1}));
+ for(const table of ['savings_log','transactions']){let published=false;await assert.rejects(readRows(paged(rows,true),table).then(()=>published=true));assert.equal(published,false);}
 });
 
 const functionCode=name=>html.split(/\r?\n/).find(line=>line.startsWith('const '+name+'=')).slice(('const '+name+'=').length,-1);
@@ -53,7 +46,7 @@ function categoryContext(fail=false,absLims={}){
     if(operation==='insert'){const row={...payload,id:3};records.push(row);return {data:row,error:null};}
     return {data:records.map(r=>({...r})),error:null};
    }).then(resolve,reject)}};return q;}};
- const context={sb,categoryRow,activeCats:state.cats,wCats:state.cats,allCats:state.cats,budgetLimits:{1:25,2:75},lockedCats:{},absLims,budgetSaveLock:{current:false},
+ const context={sb,requestFinance:async()=>{state.cats=records.map(categoryRow);return{status:'updated'}},categoryRow,activeCats:state.cats,wCats:state.cats,allCats:state.cats,budgetLimits:{1:25,2:75},lockedCats:{},absLims,budgetSaveLock:{current:false},
   setBudgetBusy:()=>{},setBudgetError:v=>state.error=v,setShowBudgetEdit:v=>state.closed=!v,
   setDbCats:v=>state.cats=typeof v==='function'?v(state.cats):v,
   newCatName:state.name,newCatPct:20,PALETTE:['#888'],session:{user:{id:'synthetic-user'}},

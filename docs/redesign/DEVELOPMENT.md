@@ -40,7 +40,8 @@ App-preview використовує наявний `spec/preview.py`: демо,
 node --test spec/forecast-model.test.cjs
 node --test spec/next-period.test.cjs
 node --test spec/finance-projection.test.cjs spec/finance-message.test.cjs spec/telegram-finance.test.cjs spec/canonical-copy.test.cjs spec/frontend-data.test.cjs
-.\.venv\Scripts\python.exe spec/release_smoke.py --version v159
+node --test (Get-ChildItem spec -Filter '*.test.cjs' -File).FullName
+.\.venv\Scripts\python.exe spec/release_smoke.py --version v160
 .\.venv\Scripts\python.exe scripts/build-design-preview.py
 git diff --check
 ```
