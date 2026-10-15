@@ -19,7 +19,7 @@ def _check(page, tag, many):
     st = page.evaluate(STATE)
     check(st['cols'] >= 2, f'{tag}: легенда в {st["cols"]} колонку {st}')
     check(all(v <= 2 for v in st['inner']), f'{tag}: внутрішня прокрутка колонок {st}')
-    check(st['svg'] >= 240, f'{tag}: графік нижчий за 240px {st}')
+    check(st['svg'] >= (180 if st['vh'] < 840 else 240), f'{tag}: графік нижчий за адаптивний мінімум {st}')
     if st['doc'] > st['vh'] + 1:
         check(st['scroll'] or st['vh'] < 840, f'{tag}: сторінка вища за екран без режиму прокрутки {st}')
         page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)')

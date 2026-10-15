@@ -4,6 +4,7 @@
 4) Нова операція: спалах рядка лише для нових id (не на першому завантаженні), в «Останні операції» і в Потоці.
 5) Кільце бюджету: росте лише сегмент категорії, без перемонтування.
 reduced-motion: без руху, одразу кінцевий стан."""
+import re
 from helpers import ROOT, check, dialog, freeze, go_tab, settle
 
 DAY = '2026-10-13'
@@ -147,13 +148,15 @@ def chart_theme(page):
     check(not new, f'зміна теми додала анімації: {new}')
 
 def version(page):
-    """Версія v158 у sw.js і застосунку; картки розподілу і файлів монети в цьому релізі немає (вони у v159)."""
+    """Версії sw.js і застосунку узгоджені; відкладена картка розподілу та монета відсутні."""
     html = (ROOT / 'index.html').read_text(encoding='utf-8')
     sw = (ROOT / 'sw.js').read_text(encoding='utf-8')
-    check("const CACHE = 'cashflow-v158'" in sw and "APP_VER='v158'" in html, 'версія не v158')
+    app = re.search(r"APP_VER='(v[0-9]+)'", html)
+    cache = re.search(r"const CACHE = 'cashflow-(v[0-9]+)'", sw)
+    check(app and cache and app.group(1) == cache.group(1), 'версії застосунку й кешу не збігаються')
     check('assets/coin' not in sw and 'assets/coin' not in html, 'файли монети в ASSETS або в index.html')
     _desk(page)
-    check(page.locator('.pyo, .pyo-slot, .coin-fly').count() == 0, 'картка розподілу є в v158')
+    check(page.locator('.pyo, .pyo-slot, .coin-fly').count() == 0, 'відкладена картка розподілу присутня')
 
 
 CHECKS = [

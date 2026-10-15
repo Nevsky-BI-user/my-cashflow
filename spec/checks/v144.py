@@ -122,16 +122,21 @@ c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').te
         check(abs(num(g['s'].split('/')[1]) - pl) <= len(g['c']), f'{g["n"]}: план групи {g["s"]} проти суми категорій {pl}')
     other = next((g for g in rows if g['n'] == 'Інше'), None)
     check(other and any(c['n'] == 'Інше' for c in other['c']), 'категорія без group_id не потрапила в групу «Інше»')
-    # факт категорій за тим самим правилом, що actualVariableCents рушія: без операцій з fixed_id/credit_id;
-    # різниця лише операції без категорії (у жодну категорію не входять)
+    # Усі змінні факти включно з некатегоризованими: одна вибірка [start,end), до asof.
     st = finance_state(page)
     fsum = sum(num(c['v'].split('/')[0]) for g in rows for c in g['c'])
-    av = st['result']['currentPeriod']['actualVariableCents'] / 100
-    start = st['result']['currentPeriod']['start']
-    nocat = sum(float(x['amount']) for x in st['data']['transactions'] if x.get('type') == 'expense' and not x.get('category_id')
-                and not x.get('fixed_id') and not x.get('credit_id') and start <= str(x.get('date'))[:10] <= DAY)
-    print(f'      факт категорій {fsum}, actualVariable рушія {av}, без категорії {nocat}')
-    check(abs(fsum - (av - nocat)) <= 1, f'факт категорій {fsum} не дорівнює actualVariable {av} мінус без категорії {nocat}')
+    cp = st['result']['currentPeriod']
+    av = cp['actualVariableCents'] / 100
+    unique = {str(x['id']): x for x in st['data']['transactions']}
+    actual = [x for x in unique.values() if x.get('type') == 'expense'
+              and x.get('fixed_id') is None and x.get('credit_id') is None
+              and cp['start'] <= str(x.get('date'))[:10] < cp['end']
+              and str(x.get('date'))[:10] <= st['options']['asof']]
+    raw = sum(round(float(x['amount']) * 100) for x in actual) / 100
+    print(f'      факт груп {fsum}, незалежний факт {raw}, actualVariable рушія {av}')
+    check(abs(fsum - raw) <= 1 and abs(raw - av) <= .01,
+          f'факт груп {fsum}, сирі змінні факти {raw}, рушій {av}')
+    start = cp['start']
     food = lambda: num(page.locator('.bud-cat', has_text='Продукти').locator('.bud-nums').inner_text().split('/')[0])
     f0 = food()
     # фікстура: дві витрати на Продукти з fixed_id і credit_id не змінюють ні факт категорії, ні actualVariable

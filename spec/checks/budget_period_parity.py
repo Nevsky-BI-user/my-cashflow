@@ -1,0 +1,135 @@
+"""Незалежні суми й паритет екранів; дати та межі обчислюються в Python."""
+from datetime import date, timedelta
+from helpers import check, freeze, go_tab, num
+from checks.v157 import _nav, _snap, _bud_card
+
+DAY='2026-10-13'
+
+def verify(page):
+    raw=page.evaluate("()=>({tx:window.__cashSnap().transactions,periods:window.__cashCore.projection.periods,pbs:window.__periodBudget,view:window.__budgetView})")
+    v=raw['view']; start,end=v['start'],v['end']
+    tx={str(t['id']):t for t in raw['tx']}.values()
+    tx=[t for t in tx if start<=t['date']<end and t['date']<=DAY]
+    cents=lambda t:round(float(t['amount'])*100)
+    income=sum(cents(t) for t in tx if t['type']=='income')
+    expense=sum(cents(t) for t in tx if t['type']=='expense')
+    fact=sum(cents(t) for t in tx if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None)
+    month=start.endswith('-01') and end.endswith('-01')
+    cur=start<=DAY<end
+    if end<=DAY: plan=None
+    elif month: plan=fact+sum(d['spendCents'] for p in raw['periods'] for d in p['schedule'] if start<=d['date']<end and d['date']>DAY)
+    elif cur: plan=raw['pbs']['budget']
+    else: plan=next(p['targetCents'] for p in raw['periods'] if p['start']==start)
+    check((v['fact'],v['plan'],v['income'],v['expense'],v['balance'])==(fact,plan,income,expense,income-expense), f'range {start}..{end}: adapter differs from raw sums')
+    cursor=date.fromisoformat(start);total=0
+    for w in v['weeks']:
+        stop=min(cursor+timedelta(days=7),date.fromisoformat(end)); last=stop-timedelta(days=1)
+        label=cursor.strftime('%d.%m')+'-'+last.strftime('%d.%m')
+        check((w['start'],w['end'],w['label'])==(cursor.isoformat(),stop.isoformat(),label),'week date boundaries/label')
+        expected=sum(cents(t) for t in tx if t['type']=='expense' and w['start']<=t['date']<w['end'])
+        check(w['cents']==expected,'week amount');total+=w['cents'];cursor=stop
+    check(cursor.isoformat()==end and total==expense,'weeks do not partition entire selected range')
+    vp='desktop' if page.viewport_size['width']>=1024 else 'mobile'
+    got=_snap(page);a,b=_bud_card(got,vp)
+    if month and plan is not None: check(got['budLbl']=='Бюджет місяця','monthly budget label')
+    check(abs(a-fact/100)<.51 and ((b is None and plan is None) or (b is not None and plan is not None and abs(b-plan/100)<.51)),f'{vp} Overview {got["bud"]}, expected {fact}/{plan}')
+    if vp=='mobile':
+        labels=page.locator('.o-weeks').inner_text()
+        check(all(w['label'] in labels for w in v['weeks']),'week UI is not selected range')
+        expected=page.evaluate('v=>[v.income,v.expense,Math.abs(v.balance)].map(n=>fmtK(n/100))',v)
+        strip=page.locator('.o-strip').inner_text()
+        check(all(x in strip for x in expected),'income/expense/net strip differs from selected range')
+    go_tab(page,1)
+    if plan is None: actual=num(page.locator('.p-budget strong').inner_text())
+    elif vp=='desktop':
+        actual=num(page.locator('.bud-spent .bud-kpi-v').inner_text())
+        check(abs(num(page.locator('.bud-pool .bud-kpi-v').inner_text())-plan/100)<.51,'Budget pool differs from Overview')
+    else:
+        text=page.locator('.p-budget > .card-x').first.inner_text()
+        check(str(round(plan/100)) in ''.join(c for c in text if c.isdigit() or c=='/'),'mobile Budget plan missing')
+        actual=fact/100
+        values=page.locator('.p-budget > .card-x').first.locator('span').all_text_contents()
+        check(any(abs(num(x)-fact/100)<.51 for x in values if any(c.isdigit() for c in x)),'mobile Budget fact differs')
+    check(abs(actual-fact/100)<.51,'Budget fact differs from Overview incl uncategorized')
+    print(f'      {vp} {start}..{end}: fact {fact/100}, plan {None if plan is None else plan/100}, weekly {total/100}')
+    go_tab(page,0)
+
+def parity(page):
+    for mode in ('period','month'):
+        page.evaluate('m=>localStorage.setItem("per_mode",m)',mode)
+        freeze(page,DAY)
+        verify(page)
+        _nav(page,1);verify(page)
+        _nav(page,-2);verify(page)
+
+def edges(page):
+    for start,end in [('2026-02-01','2026-03-01'),('2028-02-01','2028-03-01'),('2026-09-01','2026-10-01'),('2026-09-21','2026-10-06')]:
+        s,e=date.fromisoformat(start),date.fromisoformat(end);today=(s+timedelta(days=8)).isoformat()
+        rows=[dict(id=str(i),date=(s+timedelta(days=i)).isoformat(),type='expense',amount=i+.25,category_id='unknown') for i in range((e-s).days)]
+        rows += [rows[0],dict(id='fixed',date=start,type='expense',amount=300,fixed_id='f'),dict(id='credit',date=start,type='expense',amount=400,credit_id='c'),dict(id='before',date=(s-timedelta(days=1)).isoformat(),type='expense',amount=999),dict(id='after',date=end,type='expense',amount=999)]
+        got=page.evaluate('a=>budgetRangeFacts(a.rows,[],a.start,a.end,a.today)',dict(rows=rows,start=start,end=end,today=today))
+        expected=sum(round((i+.25)*100) for i in range(9))
+        check(got['fact']==expected and got['byCategory']=={'unallocated':expected},'dedup/exclusions/no future facts')
+        check(sum(w['cents'] for w in got['weeks'])==expected+70000,'all expense weekly total')
+        check(got['weeks'][-1]['end']==end and got['weeks'][-1]['label'].endswith((e-timedelta(days=1)).strftime('%d.%m')),'invalid month end')
+
+def drilldown(page):
+    page.evaluate("localStorage.setItem('per_mode','month')")
+    freeze(page,DAY)
+    page.locator('.bd-row').filter(has_text='Без категорії').click()
+    check(num(page.locator('.cat-drw-f').inner_text())==340,'unallocated drawer fact')
+    check(page.locator('.cat-op').count()==1 and 'Аптека' in page.locator('.cat-op').inner_text(),'unallocated drawer must show its transaction')
+    page.locator('.cat-to-flow').click()
+    check('Аптека' in page.locator('.p-flow').inner_text() and 'Сільпо' not in page.locator('.p-flow').inner_text(),'unallocated flow filter')
+    if page.viewport_size['width']<1024:
+        check('Без категорії' in page.locator('.flow-mobile-filter').inner_text(),'missing active filter explanation')
+        page.get_by_role('button',name='Показати всі операції').click()
+        check('Сільпо' in page.locator('.p-flow').inner_text(),'clear filter must restore operations')
+
+
+def unavailable(page):
+    page.evaluate("localStorage.setItem('per_mode','month')")
+    freeze(page,DAY,[("const baseProjection=financeProjection(financeInput,{asof:financeOptions.asof,through:financeThrough});", "const baseProjection=financeProjection(financeInput,{asof:financeOptions.asof,through:'2026-11-05'});")])
+    _nav(page,1)
+    check(page.evaluate('window.__budgetView.plan') is None,'partial future month cannot have complete zero/partial plan')
+    check('/' not in page.locator('.dv-bud-v,.o-bud-v').inner_text(),'unavailable Overview shows a numeric plan')
+    go_tab(page,1)
+    check('Збереженого плану' in page.locator('.p-budget').inner_text(),'unavailable Budget lacks explanation')
+
+
+CHECKS=[('budget_period_parity: all selected ranges desktop','desktop',parity),('budget_period_parity: all selected ranges mobile','mobile',parity),('budget_period_parity: February September crossmonth boundaries and exclusions','desktop',edges)]
+
+CHECKS += [('budget_period_parity: unallocated drawer and flow desktop','desktop',drilldown),('budget_period_parity: unallocated drawer and flow mobile','mobile',drilldown),('budget_period_parity: incomplete projection month unavailable','desktop',unavailable)]
+
+
+def responsive(page):
+    freeze(page,DAY)
+    for width,height in [(320,812),(1280,800),(1440,900)]:
+        page.set_viewport_size(dict(width=width,height=height))
+        page.wait_for_timeout(700)
+        from helpers import settle
+        settle(page)
+        geo=page.evaluate("""()=>({wide:document.documentElement.scrollWidth,clipped:[...document.querySelectorAll('.dv-kpi-v,.kpi-rv')].filter(e=>e.offsetParent&&e.scrollWidth>e.clientWidth+1).map(e=>e.textContent),main:(()=>{const e=document.querySelector('.dv-main');return e?{height:e.clientHeight,scroll:e.scrollHeight,bottom:e.getBoundingClientRect().bottom}:null})(),budget:(()=>{const e=document.querySelector('.dv-bud');return e?e.getBoundingClientRect().bottom:null})(),chart:(()=>{const e=document.querySelector('.dv-fc svg');return e?e.getBoundingClientRect().height:null})()})""")
+        check(geo['wide']<=width and not geo['clipped'],f'{width}: cropped money or horizontal overflow {geo}')
+        if width>=1024:
+            check(geo['main']['scroll']<=geo['main']['height']+2 and geo['budget']<=height and geo['budget']<=geo['main']['bottom']+1,f'{width}: Budget outside visible column {geo}')
+            check(geo['chart']>=(179.5 if height<840 else 239.5),f'{width}: graph too short {geo}')
+        from helpers import ROOT
+        page.screenshot(path=str(ROOT / 'spec' / '.out' / f'budget-parity-final-{width}.png'),full_page=True)
+        print(f'      responsive {width}x{height}: {geo}')
+
+CHECKS += [('budget_period_parity: responsive full money and visible Budget','desktop',responsive)]
+
+
+def historical_geometry(page):
+    from checks.v157 import PAST_TX
+    from helpers import ROOT, settle
+    freeze(page,DAY,PAST_TX)
+    _nav(page,-1)
+    page.set_viewport_size(dict(width=1280,height=800));page.wait_for_timeout(500);settle(page)
+    geo=page.evaluate("""()=>{const o={};for(const sel of ['.dtitle','.p-overview','.dv-main','.dv-side','.dv-fc','.dv-fc svg','.dv-bud','.dv-near']){const e=document.querySelector(sel),r=e.getBoundingClientRect();o[sel]={top:r.top,bottom:r.bottom,height:r.height,client:e.clientHeight,scroll:e.scrollHeight}}return o}""")
+    check(geo['.dv-main']['scroll']<=geo['.dv-main']['client']+2 and geo['.dv-bud']['bottom']<=geo['.dv-main']['bottom']+1,'historical Budget must remain fully visible without inner scroll')
+    print('      historical exact geometry:',geo)
+    page.screenshot(path=str(ROOT/'spec'/'.out'/'budget-parity-historical-1280.png'),full_page=True)
+
+CHECKS += [('budget_period_parity: historical exact geometry','desktop',historical_geometry)]

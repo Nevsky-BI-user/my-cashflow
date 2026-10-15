@@ -30,16 +30,15 @@ def audit(page):
                 rows.append({'theme': theme, 'width': width, 'tab': i, **geometry})
                 check(geometry['width'] <= width, f'{theme}/{width}/{tab}: горизонтальне переповнення {geometry}')
                 if width >= 1024:
-                    # v148: графік Огляду не нижче 240px, тому нижче 840px Огляд ПК прокручується сторінкою (рішення власника)
-                    scroll_ok = i == 0 and height < 840
-                    check(scroll_ok or geometry['height'] <= height + 1, f'{theme}/{width}/{tab}: сторінка вища за екран {geometry}')
+                    # v159: мінімум графіка 180px на низькому ПК; стандартні картки вміщуються.
+                    check(geometry['height'] <= height + 1, f'{theme}/{width}/{tab}: сторінка вища за екран {geometry}')
                     clipped = page.evaluate("""[...document.querySelectorAll('.kpi-rv,.dv-kpi-v,.bud-kpi-v,.flow-amt,.ce-a,.ce-b,.goals-log-a')].filter(e=>e.offsetParent&&e.scrollWidth>e.clientWidth+1).map(e=>[e.className,e.innerText,e.scrollWidth,e.clientWidth])""")
                     check(not clipped, f'{theme}/{width}/{tab}: обрізані суми {clipped[:3]}')
                     if i == 0:
                         bottom = page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom')
                         check(page.evaluate("[...document.querySelectorAll('.dv-main,.dv-side')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'{width}: внутрішня прокрутка огляду')
-                        check(scroll_ok or bottom <= height, f'{width}: останні операції нижче екрана: {bottom}')
-                        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= 239.5, f'{width}x{height}: графік нижчий за 240px')
+                        check(bottom <= height, f'{width}: останні операції нижче екрана: {bottom}')
+                        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (179.5 if height < 840 else 239.5), f'{width}x{height}: графік нижчий за адаптивний мінімум')
                 elif i == 0:
                     # v145: рядки плиток KPI: підпис і сума не зливаються; рядок «Доступно до» (data-r=until) окремим блоком на всю ширину
                     overlap = page.evaluate("""[...document.querySelectorAll('.kpi-row')].filter(e=>e.offsetParent).filter(e=>{const l=e.querySelector('.kpi-rl').getBoundingClientRect(),v=e.querySelector('.kpi-rv').getBoundingClientRect();return l.right>v.left+1&&l.bottom>v.top+1}).map(e=>e.innerText)""")
@@ -78,9 +77,9 @@ def current_overview(page):
         go_tab(page, 0)
         page.wait_for_timeout(150)
         check(page.evaluate("[...document.querySelectorAll('.dv-main,.dv-side')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'Today/{width}/{height}: внутрішня прокрутка огляду')
-        # v148: нижче 840px Огляд прокручується сторінкою; нижня картка досяжна прокруткою, без внутрішньої
-        check(height < 840 or page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight'), 'Нижня картка обрізана')
-        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= 239.5, f'Today/{width}/{height}: графік нижчий за 240px')
+        # Стандартний Огляд повністю вміщується, включно з низьким ПК.
+        check(page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight'), 'Нижня картка обрізана')
+        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (179.5 if height < 840 else 239.5), f'Today/{width}/{height}: графік нижчий за адаптивний мінімум')
         check(page.locator('.dv-near .dv-ev').count() == (5 if width < 1400 or height < 1000 else 8), 'Неправильна кількість найближчих подій')
         if width == 1280 and height == 800:
             page.screenshot(path=str(OUT / 'shots/redesign-v4-today-1280-overview.png'))
