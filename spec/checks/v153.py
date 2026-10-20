@@ -16,7 +16,7 @@ SAV = r"""(()=>{const s=document.querySelector('.dv-fc .fc-svg'),e=document.quer
 const to=s.dataset.to,today=window.__financeOptions.asof;const through=window.__financeProjection.days.slice(-1)[0].date>=to?null:to;
 const pr=through?financeProjection(window.__financeInput,Object.assign({},window.__financeOptions,{through:through})):window.__financeProjection;
 const ev=pr.events.filter(x=>x.kind==='savings'&&x.date>today&&x.date<=to);
-return {to,today,text:e.textContent,v:+e.dataset.v,color:getComputedStyle(e).color,green:getComputedStyle(document.documentElement).getPropertyValue('--green-t').trim(),
+return {to,today,text:e.textContent,v:+e.dataset.v,color:getComputedStyle(e).color,green:getComputedStyle(e).getPropertyValue('--green-t').trim(),
 ref:ev.reduce((n,x)=>n+x.amountCents,0),dates:ev.map(x=>[x.date,x.amountCents]),from:s.dataset.from,
 sumRight:Math.round(document.querySelector('.dv-fc .fc-sum').getBoundingClientRect().right),cardRight:Math.round(document.querySelector('.dv-fc').getBoundingClientRect().right),
 cut:[...document.querySelectorAll('.dv-fc .fc-sum span[data-k]')].some(x=>x.scrollWidth>x.clientWidth+1)}})()"""

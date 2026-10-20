@@ -268,7 +268,7 @@ def colors(page):
         print(f'      {theme}: контраст тексту карток мін. {min(ratios)}')
         check(min(ratios) >= 4.5, f'{theme}: контраст тексту на картці {min(ratios)} < 4.5')
         # v155, рішення власника «одна система» (v154) у палітрі Apple: KPI-плитки без кольорових підкладок, фон = токен картки (раніше тут вимагався градієнт)
-        kpi = page.evaluate("(()=>{const d=document.createElement('div');d.style.background='var(--card)';document.body.appendChild(d);const cc=getComputedStyle(d).backgroundColor;d.remove();return [...document.querySelectorAll('.dv-kpi')].filter(e=>e.offsetParent).map(e=>{const s=getComputedStyle(e);return {bi:s.backgroundImage,ok:s.backgroundColor===cc}})})()")
+        kpi = page.evaluate("(()=>{const d=document.createElement('div');d.style.background='var(--card)';return [...document.querySelectorAll('.dv-kpi')].filter(e=>e.offsetParent).map(e=>{(e.closest('.p-overview')||document.body).appendChild(d);const cc=getComputedStyle(d).backgroundColor;d.remove();const s=getComputedStyle(e);return {bi:s.backgroundImage,ok:s.backgroundColor===cc}})})()")
         check(kpi and all(k['bi'] == 'none' and k['ok'] for k in kpi), f'{theme}: KPI з кольоровою підкладкою або фоном не картки: {kpi}')
         check('gradient' in page.evaluate("getComputedStyle(document.querySelector('.side-add')).backgroundImage"), f'{theme}: кнопка «+ Операція» без градієнта')
         check('gradient' in page.evaluate("getComputedStyle(document.querySelector('.side-item[aria-current=page]')).backgroundImage"), f'{theme}: активна вкладка без градієнта')
