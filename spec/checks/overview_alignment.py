@@ -2,7 +2,7 @@
 from helpers import check, freeze, go_tab, settle
 
 DAY = '2026-10-12'
-VIEWPORTS = ((1280, 800), (1280, 860), (1440, 900), (1920, 1080))
+VIEWPORTS = ((1280, 720), (1366, 768), (1536, 760), (1280, 800), (1280, 860), (1440, 900), (1920, 940), (1920, 1080))
 
 GEOMETRY = r"""()=>{
  const q=s=>document.querySelector(s),box=e=>{if(!e)return null;const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};

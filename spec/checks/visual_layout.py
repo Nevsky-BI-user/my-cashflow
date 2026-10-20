@@ -22,7 +22,7 @@ def audit(page):
             page.evaluate('(theme)=>document.documentElement.dataset.theme=theme', theme)
             page.wait_for_timeout(100)
             expected = palettes[('desktop' if width >= 1024 else 'mobile') + '-' + theme]
-            palette = page.evaluate("""expected=>{const now=getComputedStyle(document.documentElement);return Object.entries(expected).filter(([k,v])=>now.getPropertyValue(k).trim()!==v).map(([k,v])=>[k,v,now.getPropertyValue(k)])}""", expected)
+            palette = page.evaluate("""expected=>{const now=getComputedStyle(document.documentElement);if(document.querySelector('.shell.overview-active')){const canvas=document.documentElement.dataset.theme==='light'?'#f3f2ee':'#0b0e14';expected={...expected,'--bg':canvas,'--html-bg':canvas};}return Object.entries(expected).filter(([k,v])=>now.getPropertyValue(k).trim()!==v).map(([k,v])=>[k,v,now.getPropertyValue(k)])}""", expected)
             check(not palette, f'Змінено палітру {theme}/{width}: {palette}')
             for i, tab in enumerate(('overview', 'budget', 'operations', 'payments', 'savings')):
                 go_tab(page, i)

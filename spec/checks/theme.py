@@ -51,7 +51,7 @@ def fonts_cards_buttons(page):
     page.evaluate("document.documentElement.setAttribute('data-theme','dark')")
     page.wait_for_timeout(300)
     bg = page.evaluate("getComputedStyle(document.body).backgroundColor")
-    check(bg == 'rgb(15, 17, 21)', f'фон ПК у темній темі {bg}, а не #0f1115')
+    check(bg == 'rgb(11, 14, 20)', f'фон ПК-Огляду в темній темі {bg}, а не #0b0e14')
     shot(page, 'ov-dark-1920.jpg', full=False)
 
 

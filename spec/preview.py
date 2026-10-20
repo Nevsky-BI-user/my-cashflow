@@ -19,7 +19,7 @@ SWAPS = [
     ("sb&&h('button',{className:'dact'", "h('button',{className:'dact'"),
     ("if('serviceWorker' in navigator){", "if(false){"),
 ]
-COPY = ['manifest.json', 'icon-192.svg', 'icon-512.svg']
+COPY = ['manifest.json', 'icon-192.svg', 'icon-512.svg', 'brand-mark.svg']
 
 
 def build():
