@@ -372,9 +372,18 @@ def past_period(page):
     print(f'      {tag}: плитки {[got["kpis"]["kpi-" + k]["v"] for k in ("funds", "budget", "balance", "inst")]}, бюджет «{got["bud"]}», платежі {rows}, графік «{ch["per"][1]}»')
     if vp == 'desktop':
         _geometry(page, tag, base)
-    # вкладка «Бюджет» того самого періоду пише ті самі слова
+    # Бюджет відкриває власний поточний місяць; його історію гортати окремо.
     go_tab(page, 1)
-    check('Фактичні витрати періоду' in page.inner_text('.tab-page'), 'вкладка «Бюджет» минулого періоду без «Фактичні витрати періоду»')
+    check(page.locator('.p-budget').get_attribute('data-month')==DAY[:7]+'-01','минулий період Огляду змінив місяць Бюджету')
+    _nav(page,-1)
+    budget=page.locator('.p-budget')
+    check(budget.get_attribute('data-month')=='2026-09-01','не відкрився минулий календарний місяць')
+    tx=list({str(t['id']):t for t in raw['fin']['transactions']}.values())
+    monthly_fact=sum(_round(t['amount']) for t in tx if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and '2026-09-01'<=t['date'][:10]<'2026-10-01')/100
+    check(abs(num(budget.locator('.bud-spent .bud-kpi-v').inner_text())-monthly_fact)<.01,'історичний місячний факт не відповідає сирим операціям')
+    check(budget.locator('.bud-pool .bud-kpi-v').inner_text()=='Не задано' and 'Збереженого плану' in budget.inner_text(),'історичний місяць отримав вигаданий план')
+    go_tab(page,0)
+    check(page.evaluate(PER_T)==per,'навігація Бюджету змінила історичний період Огляду')
 
 
 def month_mode(page):

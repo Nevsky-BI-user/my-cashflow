@@ -188,12 +188,9 @@ def events_own(page):
 
 
 def _bopen(page):
-    go_tab(page, 1)
-    page.click('.dact')
-    page.wait_for_timeout(500)
-    sh = page.locator('[role=dialog]', has_text='Розподіл бюджету').last
-    check(sh.count() == 1, 'аркуш «Розподіл бюджету» не відкрився')
-    return sh
+    page.locator('.side-item',has_text='Налаштування').click()
+    page.get_by_role('navigation',name='Розділи налаштувань').get_by_role('button',name='Розподіл бюджету').click()
+    return page.locator('.set-page')
 
 
 PB = r"""(()=>{const p=window.__financeProjection,q=p.periods.find(x=>x.start==='2026-10-21');const b=window.__periodBudget;

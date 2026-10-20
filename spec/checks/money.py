@@ -100,11 +100,13 @@ def budget_capped(page):
     d0 = r['days'][0]['debtCents']
     check(all(d['closingCashCents']>=0 for d in r['days']), 'власні кошти пішли в мінус')
     check(any(d['shortfallCents']>0 or d['debtCents']>d0 for d in r['days']), 'демо не показує розриву: ні боргу кредитки, ні нестачі')
-    go_tab(page,1)
+    go_tab(page,0)
     # v150: плитка «Бюджет періоду» = повний бюджет періоду від виплати (periodBudgetStart), не ціль рушія від сьогодні
     pb=page.evaluate('window.__periodBudget')
-    check(abs(num(page.inner_text('.bud-pool .bud-kpi-v'))-pb['budget']/100)<=1, 'бюджет не є повним бюджетом періоду')
-    check('обмежено готівкою' not in page.inner_text('.bud-pool'), 'мовчазне обмеження готівкою')
+    from checks.v157 import _snap, _bud_card
+    _,plan_ui=_bud_card(_snap(page),'desktop')
+    check(plan_ui is not None and abs(plan_ui-pb['budget']/100)<=1, 'картка Огляду не показує повний бюджет періоду')
+    check('обмежено готівкою' not in page.inner_text('.dv-bud'), 'мовчазне обмеження готівкою')
     shot(page,'budget-1920.jpg',full=False)
 
 

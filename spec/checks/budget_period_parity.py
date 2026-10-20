@@ -38,17 +38,12 @@ def verify(page):
         check(all(w['label'] in labels for w in v['weeks']),'week UI is not selected range')
         check(page.locator('.o-strip,.o-ccy').count()==0,'removed mobile bottom totals or rates returned')
     go_tab(page,1)
-    if plan is None: actual=num(page.locator('.p-budget strong').inner_text())
-    elif vp=='desktop':
-        actual=num(page.locator('.bud-spent .bud-kpi-v').inner_text())
-        check(abs(num(page.locator('.bud-pool .bud-kpi-v').inner_text())-plan/100)<.51,'Budget pool differs from Overview')
-    else:
-        text=page.locator('.p-budget > .card-x').first.inner_text()
-        check(str(round(plan/100)) in ''.join(c for c in text if c.isdigit() or c=='/'),'mobile Budget plan missing')
-        actual=fact/100
-        values=page.locator('.p-budget > .card-x').first.locator('span').all_text_contents()
-        check(any(abs(num(x)-fact/100)<.51 for x in values if any(c.isdigit() for c in x)),'mobile Budget fact differs')
-    check(abs(actual-fact/100)<.51,'Budget fact differs from Overview incl uncategorized')
+    monthly=page.evaluate("()=>({v:window.__calendarBudget,tx:txDemo(2026,9)})")
+    mb=monthly['v']
+    actual_month=sum(cents(t) for t in monthly['tx'] if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and '2026-10-01'<=t['date'][:10]<=DAY)
+    check(mb['start']=='2026-10-01' and mb['fact']==actual_month,'Budget must use its own current calendar month')
+    check(mb['plan'] is None and page.locator('.bud-pool .bud-kpi-v').inner_text()=='Не задано','unsaved month inherited projection plan')
+    check(abs(num(page.locator('.bud-spent .bud-kpi-v').inner_text())-actual_month/100)<.01,'monthly Budget fact differs from raw rows')
     print(f'      {vp} {start}..{end}: fact {fact/100}, plan {None if plan is None else plan/100}, weekly {total/100}')
     go_tab(page,0)
 
@@ -92,7 +87,7 @@ def unavailable(page):
     check(page.evaluate('window.__budgetView.plan') is None,'partial future month cannot have complete zero/partial plan')
     check('/' not in page.locator('.dv-bud-v,.o-bud-v').inner_text(),'unavailable Overview shows a numeric plan')
     go_tab(page,1)
-    check('Збереженого плану' in page.locator('.p-budget').inner_text(),'unavailable Budget lacks explanation')
+    check('Збереженого плану' in page.locator('.p-budget').inner_text() and page.locator('.p-budget').get_attribute('data-month')=='2026-10-01','independent monthly Budget lacks explanation')
 
 
 CHECKS=[('budget_period_parity: all selected ranges desktop','desktop',parity),('budget_period_parity: all selected ranges mobile','mobile',parity),('budget_period_parity: February September crossmonth boundaries and exclusions','desktop',edges)]
