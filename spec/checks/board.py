@@ -69,12 +69,20 @@ def delete_one(page):
 
 
 def columns(page):
-    # Фактичні накопичення вгорі, дошка на всю ширину без вкладеної прокрутки.
+    # Фактичні накопичення — четверта картка одного верхнього ряду.
     # «Горизонт подій», «Що як» та «Історія накопичень» прибрано свідомо: це прогноз строків зі старої
     # формули надлишку (docs/redesign/projection-contract.md, розділ «Заощадження»)
     main = page.locator('.goals-main').inner_text().lower()
     check(page.locator('.goals-main .board-d').count() == 1, 'немає карти цілей')
     log = page.locator('.goals-log').bounding_box()
+    cards = page.locator('.goals-kpis > .surface')
+    check(cards.count() == 4 and cards.nth(3).locator('.goals-log-tot').count() == 1,
+          'фактичні накопичення не четверта верхня картка')
+    boxes = [cards.nth(i).bounding_box() for i in range(4)]
+    check(max(b['y'] for b in boxes) - min(b['y'] for b in boxes) <= 1,
+          'верхні чотири картки не в одному ряду')
+    check(max(b['height'] for b in boxes) - min(b['height'] for b in boxes) <= 1,
+          'верхні чотири картки різної висоти')
     board = page.locator('.board-d').bounding_box()
     check(log and board and log['y'] + log['height'] <= board['y'], 'фактичні накопичення не над картками')
     coin = page.locator('.board-wrap .coin').bounding_box()
