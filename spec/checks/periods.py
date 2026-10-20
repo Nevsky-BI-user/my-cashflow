@@ -72,7 +72,8 @@ def salary(page):
     raw=page.evaluate("txDemo(2026,9)")
     fact=sum(round(t['amount']*100) for t in raw if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and '2026-10-01'<=t['date'][:10]<=TODAY)/100
     check(abs(num(budget.locator('.bud-spent .bud-kpi-v').inner_text())-fact)<.01,'місячний факт не дорівнює сирим операціям')
-    check(budget.locator('.bud-pool .bud-kpi-v').inner_text()=='Не задано','місячний план замінено ціллю виплати')
+    from checks.budget_period_parity import assert_unsaved_salary
+    assert_unsaved_salary(page)
     go_tab(page,2)
     check(ui_rows(page)==ui,'повернення з Бюджету змінило межі Потоку')
 

@@ -381,7 +381,8 @@ def past_period(page):
     tx=list({str(t['id']):t for t in raw['fin']['transactions']}.values())
     monthly_fact=sum(_round(t['amount']) for t in tx if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and '2026-09-01'<=t['date'][:10]<'2026-10-01')/100
     check(abs(num(budget.locator('.bud-spent .bud-kpi-v').inner_text())-monthly_fact)<.01,'історичний місячний факт не відповідає сирим операціям')
-    check(budget.locator('.bud-pool .bud-kpi-v').inner_text()=='Не задано' and 'Збереженого плану' in budget.inner_text(),'історичний місяць отримав вигаданий план')
+    from checks.budget_period_parity import assert_unsaved_salary
+    assert_unsaved_salary(page,'2026-09-01')
     go_tab(page,0)
     check(page.evaluate(PER_T)==per,'навігація Бюджету змінила історичний період Огляду')
 
