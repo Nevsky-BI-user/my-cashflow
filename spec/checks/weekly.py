@@ -239,14 +239,14 @@ def cash_account(page):
 
 
 def cash_account_mobile(page):
-    """Телефон 390: «+» у ряду рахунків Огляду створює рахунок банку «Готівка»: чип у ряду, рахунок у формі операції, власні кошти ростуть на баланс."""
+    """Телефон 390: додавання готівки створює картку з історією, рахунок у формі операції й збільшує власні кошти."""
     page.set_viewport_size({'width': 390, 'height': 844})
     freeze(page, DAY)
     before = finance_state(page)['result']['snapshot']['cashCents']
-    row = page.locator('.p-overview .o-accs')
-    chips = row.locator('.o-acc-chip:not(.o-unas):not(.o-acc-add)')
-    n0 = chips.count()
-    add = row.locator('.o-acc-add')
+    row = page.locator('.p-overview .o-account-section')
+    cards = row.locator('.o-bank-card')
+    n0 = cards.count()
+    add = row.get_by_role('button', name='+ Додати рахунок', exact=True)
     check(add.count() == 1, '390: у ряду рахунків немає «+»')
     add.scroll_into_view_if_needed()
     add.click()
@@ -257,7 +257,13 @@ def cash_account_mobile(page):
     _amount(d, 'Баланс (власні кошти)', 700)
     d.locator('button', has_text='Зберегти').click()
     page.wait_for_timeout(500)
-    check(chips.count() == n0 + 1, f'390: чипів рахунків {chips.count()}, очікували {n0 + 1}')
+    check(cards.count() == n0 + 1, f'390: карток рахунків {cards.count()}, очікували {n0 + 1}')
+    card = cards.filter(has_text='Гаманець')
+    card.scroll_into_view_if_needed()
+    card.click()
+    history = dialog(page, 'Операції: Гаманець')
+    check(history.count() == 1 and 'Усі операції' in history.inner_text(), '390: картка не відкрила історію рахунку')
+    history.get_by_role('button', name='Закрити історію рахунку', exact=True).click()
     acc = [a for a in finance_state(page)['data']['accounts'] if a['name'] == 'Гаманець']
     check(len(acc) == 1 and acc[0].get('bank') == 'cash', f'390: рахунок не з банком cash: {acc}')
     after = finance_ref(page)['snapshot']['cashCents']
@@ -352,7 +358,7 @@ CHECKS = [
     ('Сплачене без «Внести оплату» на телефоні', 'mobile', paid_no_button),
     ('Розстрочка: банк «Готівка», «Внести оплату» з credit_id', 'desktop', credit_cash),
     ('Рахунок банку «Готівка»: картка, форма операції, власні кошти', 'desktop', cash_account),
-    ('Рахунок банку «Готівка» на телефоні: чип, форма операції, власні кошти', 'mobile', cash_account_mobile),
+    ('Рахунок банку «Готівка» на телефоні: картка, історія, форма операції, власні кошти', 'mobile', cash_account_mobile),
     ('Погашення кредитки з мінусом у всіх списках', 'desktop', debt_minus),
     ('Огляд ПК: «Доступно до» прибрано з плитки бюджету (v148)', 'desktop', until_line),
     ('Огляд телефона: «Доступно до» прибрано з плитки бюджету (v148)', 'mobile', until_line),

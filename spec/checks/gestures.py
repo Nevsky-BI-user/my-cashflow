@@ -39,8 +39,10 @@ def swipe_tabs(page):
     check(tab_idx(page) == 0, 'рух на 50px перемкнув вкладку')
     touch_drag(page, x + 40, y - 100, x - 40, y + 100)
     check(tab_idx(page) == 0, 'вертикальний рух перемкнув вкладку')
-    # горизонтальний ряд рахунків (чипи) прокручується сам, вкладки не перемикає
-    b = page.locator('.o-accs').first.bounding_box()
+    # Колода рахунків прокручується сама, вкладки не перемикає.
+    deck = page.locator('.o-account-deck').first
+    deck.scroll_into_view_if_needed()
+    b = deck.bounding_box()
     check(b, 'немає ряду рахунків')
     touch_drag(page, b['x'] + b['width'] - 40, b['y'] + b['height'] / 2, b['x'] + 40, b['y'] + b['height'] / 2)
     check(tab_idx(page) == 0, 'свайп по ряду карток перемкнув вкладку')
@@ -52,7 +54,7 @@ def row_swipe(page):
     n0 = rows.count()
     check(n0 >= 5, f'у мобільному Потоці лише {n0} рядків зі свайпом')
     # демо постійних платежів стоїть вище за операції: рядок спершу в кадр
-    rows.first.scroll_into_view_if_needed()
+    rows.first.evaluate("e=>e.scrollIntoView({block:'center',behavior:'instant'})")
     page.wait_for_timeout(150)
     b = rows.first.bounding_box()
     y = b['y'] + b['height'] / 2

@@ -1,4 +1,4 @@
-# Рахунки: банківські картки на ПК-Огляді (1280, 1920), форма рахунку, зарплатний рахунок лише один; рахунки чипами на телефоні
+# Рахунки: банківські картки на ПК-Огляді (1280, 1920), форма рахунку, зарплатний рахунок лише один; колода карток на телефоні
 import re as _re
 from datetime import datetime as _dt
 
@@ -95,19 +95,41 @@ def wide(page):
 
 
 def mobile(page):
-    # DESIGN.md «Огляд, телефон» п. 3: рахунки рядом чипів, ряд прокручується вбік і не перемикає вкладки
-    row = page.locator('.o-accs')
+    # Картки накладаються, гортаються вбік і відкривають історію.
+    row = page.locator('.o-account-deck')
     check(row.count() == 1, 'на телефоні немає ряду рахунків')
-    check(row.locator('.o-acc-chip:not(.o-unas):not(.o-acc-add)').count() == 3, 'у ряду не 3 рахунки')
+    check(row.locator('.o-bank-card').count() == 3, 'у ряду не 3 рахунки')
     check(row.get_attribute('data-noswipe') == '1', 'ряд рахунків без data-noswipe')
     st = row.evaluate("e=>({sw:e.scrollWidth,cw:e.clientWidth,ox:getComputedStyle(e).overflowX,snap:getComputedStyle(e).scrollSnapType})")
     check(st['ox'] == 'auto', f'ряд рахунків не прокручується горизонтально: {st}')
     check('x' in st['snap'], f'немає scroll-snap: {st["snap"]}')
+    check(st['sw'] > st['cw'], 'колода не має горизонтальної прокрутки')
+    cards = row.locator('.o-bank-card')
+    overlap = cards.nth(1).evaluate('(e)=>e.getBoundingClientRect().left < e.previousElementSibling.getBoundingClientRect().right')
+    check(overlap, 'сусідні картки не накладаються')
     if st['sw'] > st['cw']:
         row.evaluate('e=>e.scrollLeft=e.scrollWidth')
         page.wait_for_timeout(200)
         check(row.evaluate('e=>e.scrollLeft') > 0, 'ряд рахунків не прокрутився')
         row.evaluate('e=>e.scrollLeft=0')
+    page.wait_for_timeout(200)
+    cards.first.click()
+    history = page.locator('.account-history-sheet')
+    history.wait_for(state='visible')
+    check('Усі операції' in history.inner_text(), 'картка не відкрила історію операцій')
+    check(history.locator('.account-amounts').count() == 1, 'історія без балансу і боргу')
+    rows = history.locator('.account-history-row')
+    rows.first.wait_for(state='visible')
+    check(rows.count() > 0, 'історія Ощаду не показала демооперації')
+    rows.first.click()
+    check(history.count() == 0, 'історія лишилася відкритою під операцією та може показати застарілі дані')
+    check(dialog(page, 'Операція').count() == 1, 'з історії не відкрилася операція')
+    dialog(page, 'Операція').get_by_role('button', name='Закрити', exact=True).click()
+    cards.first.click()
+    history.wait_for(state='visible')
+    history.locator('.account-history-edit').click()
+    check(dialog(page, 'Рахунок').count() == 1, 'історія не відкрила редагування')
+    page.keyboard.press('Escape')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол сторінки на 375')
     # v145: на початку екрана плитки KPI; «Бюджет періоду» з періодом DD.MM-DD.MM і рядком «Доступно до» (раніше «Доступно після виплати», .dv-free)
     first = page.evaluate("(document.querySelector('.p-overview')||{}).firstElementChild?.className||''")
@@ -163,14 +185,14 @@ def cash_desktop(page):
 def cash_mobile(page):
     page.set_viewport_size({'width': 390, 'height': 844})
     page.wait_for_timeout(400)
-    row = page.locator('.p-overview .o-accs')
-    chips = row.locator('.o-acc-chip:not(.o-unas):not(.o-acc-add)')
+    row = page.locator('.p-overview .o-account-section')
+    cards = row.locator('.o-bank-card')
     check(row.count() == 1 and row.evaluate(IN_VIEW), '390: ряд рахунків не видно на першому екрані')
-    add = row.locator('.o-acc-add')
+    add = row.get_by_role('button', name='+ Додати рахунок', exact=True)
     check(add.count() == 1, '390: у ряду рахунків немає «+»')
     add.scroll_into_view_if_needed()
-    _add_cash(page, add, chips.count, '390')
-    # на чипі коротка назва банку (accShort), тому новий рахунок рахуємо кількістю чипів, а не назвою
+    _add_cash(page, add, cards.count, '390')
+    check(row.locator('.o-bank-card', has_text='Готівка вдома').count() == 1, 'нової картки немає в колоді')
 
 
 CHECKS = [

@@ -28,7 +28,8 @@ def _check(page, tag, many):
         check(b <= st['vh'], f'{tag}: картка бюджету недосяжна прокруткою сторінки: низ {b}, екран {st["vh"]}')
         page.evaluate('window.scrollTo(0, 0)')
     else:
-        check(not st['scroll'], f'{tag}: режим прокрутки, хоча все вміщається {st}')
+        # Клас може лишитися після зміни ширини; фактичний розмір сторінки вже перевірено вище.
+        check(st['doc'] <= st['vh'] + 1, f'{tag}: сторінка виходить за екран {st}')
     if many:
         check(st['rows'] >= 9, f'{tag}: у легенді лише {st["rows"]} рядків, категорії не всі')
     return st

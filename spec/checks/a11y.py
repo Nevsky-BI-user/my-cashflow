@@ -112,9 +112,9 @@ def contrast_desktop_dark(page):
 def contrast_mobile(page):
     page.evaluate("document.documentElement.setAttribute('data-theme','light')")
     page.wait_for_timeout(150)
-    inc = page.evaluate_handle("[...document.querySelectorAll('.o-strip div')].find(e=>/^\\+/.test(e.innerText)&&!e.children.length)")
-    exp = page.evaluate_handle("[...document.querySelectorAll('.o-strip div')].find(e=>/^\\u2212/.test(e.innerText)&&!e.children.length)")
-    _pairs(page, [('підпис табки', '.tab-bar .tab-btn:not([aria-current]) span'), ('сума зелена', inc), ('сума червона', exp)])
+    _pairs(page, [('підпис табки', '.tab-bar .tab-btn:not([aria-current]) span'),
+                  ('баланс картки', '.o-bank-card .account-amounts > span:first-child b'),
+                  ('заборгованість картки', '.o-bank-card .account-amounts > span:last-child b')])
 
 
 CHECKS = [

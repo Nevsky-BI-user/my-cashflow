@@ -220,8 +220,8 @@ def list_2000(page):
 
 
 CHIPS = r"""(()=>{const amb=(()=>{const d=document.createElement('div');d.style.background='var(--amber-bg)';document.body.appendChild(d);const c=getComputedStyle(d).backgroundColor;d.remove();return c})();
-return {amb,chips:[...document.querySelectorAll('.chip-due')].map(e=>{const card=e.closest('.bcard'),chip=e.closest('.o-acc-chip');
-const bank=card?({privat:'Приват',mono:'Mono'})[(card.className.match(/bk-(\w+)/)||[])[1]]||'':chip?(chip.textContent.match(/Mono|Приват/)||[''])[0]:'';
+return {amb,chips:[...document.querySelectorAll('.chip-due,.o-bank-due')].map(e=>{const card=e.closest('.bcard'),chip=e.closest('.o-bank-card');
+const name=chip?.querySelector('.o-bank-name')?.textContent||'';const bank=card?({privat:'Приват',mono:'Mono'})[(card.className.match(/bk-(\w+)/)||[])[1]]||'':/приват/i.test(name)?'Приват':/mono/i.test(name)?'Mono':'';
 return {bank,extra:e.classList.contains('extra'),late:e.classList.contains('late'),bg:getComputedStyle(e).backgroundColor,t:e.textContent}})}})()"""
 
 

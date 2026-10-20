@@ -81,9 +81,9 @@ def unassigned_chip(page):
 def unassigned_phone(page):
     """(в) телефон: першим у ряді рахунків чип «N без рахунку · вибрати»."""
     freeze(page, DAY, PATCH)
-    c = page.locator('.o-accs .o-unas')
+    c = page.locator('.o-account-section > .o-unas')
     check(c.count() == 1 and 'без рахунку' in c.inner_text(), 'на телефоні немає чипа «без рахунку»')
-    first = page.evaluate("document.querySelector('.o-accs').firstElementChild.className")
+    first = page.evaluate("document.querySelector('.o-account-section').firstElementChild.className")
     check('o-unas' in first, f'чип «без рахунку» не першим: {first}')
 
 
@@ -213,10 +213,14 @@ def min_spend_late(page):
 
 
 def min_spend_phone(page):
-    """Телефон: смужка в чипі Ощаду, рядок порогу під рахунками і порада."""
+    """Телефон: смужка на картці Ощаду, рядок порогу під рахунками і порада."""
     freeze(page, DAY)
-    chip = page.locator('.o-accs .o-acc-chip.o-ms')
-    check(chip.count() == 1 and chip.locator('.o-ms-bar').count() == 1, 'у чипі Ощаду немає смужки порогу')
+    card = page.locator('.o-bank-card', has_text='Ощад')
+    check(card.count() == 1 and card.locator('.o-bank-progress-track').count() == 1, 'на картці Ощаду немає смужки порогу')
+    ms = page.evaluate("window.__cashCore.minSpend.find(x=>x.accountId==='l1')")
+    summary = card.locator('.o-bank-progress').inner_text()
+    expected = page.evaluate("r=>'Витрати '+fmtM(r.spent)+' / '+fmtM(r.min)+' ₴'", ms)
+    check(summary == expected, f'поріг картки {summary!r}, очікували {expected!r}')
     row = page.locator('.o-ms-list .ms-wrap[data-acc="l1"]')
     check(row.count() == 1 and 'у жовтні' in row.inner_text(), 'під рахунками немає рядка порогу')
     check(page.locator('.o-ms-list .ms-adv').count() == 1, 'на телефоні немає поради')

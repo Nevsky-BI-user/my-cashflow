@@ -132,7 +132,7 @@ def chart_today_own(page):
 
 
 def repay_chip(page):
-    """Телефон: «до DD.MM» на чипі кредитки = дата події погашення рушія (виплата 21-го наступного місяця, як у боті)."""
+    """Телефон: дата на картці кредитки = подія погашення рушія (виплата 21-го наступного місяця, як у боті)."""
     freeze(page, DAY)
     ref = finance_ref(page)
     accs = [a for a in ref['snapshot']['accounts'] if a.get('debtCents', 0) > 0]
@@ -143,9 +143,9 @@ def repay_chip(page):
         print(f'      {a.get("name")}: кошики {a["debt_months"]}, погашення {ev["date"]}, договірний строк {ev["contractualDueDate"]}')
         check(ev['date'][8:10] in ('20', '21', '22') or ev['date'] == DAY, f'{a.get("name")}: погашення {ev["date"]} не з виплати 21-го')
         if a.get('kind') == 'credit':
-            exp.append('план погашення ' + ev['date'][8:10] + '.' + ev['date'][5:7])  # v149: замість «до»
-    got = sorted(_norm(x) for x in page.locator('.o-accs .o-acc-chip .chip-due').all_inner_texts())
-    check(got == sorted(exp), f'дати на чипах кредиток {got}, а не {sorted(exp)}')
+            exp.append('План погашення ' + ev['date'][8:10] + '.' + ev['date'][5:7])
+    got = sorted(_norm(x) for x in page.locator('.o-account-deck .o-bank-card .o-bank-due').all_inner_texts())
+    check(got == sorted(exp), f'дати на картках кредиток {got}, а не {sorted(exp)}')
 
 
 def debt_month_form(page):
