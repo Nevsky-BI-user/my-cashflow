@@ -56,7 +56,7 @@ def _complete_snapshot(page):
 
 def demo_no_skel(page):
     check(page.locator('.skel').count() == 0, 'у превʼю без БД видно скелетони')
-    check(page.locator('.dv-kpi').count() == 4, 'у превʼю без БД немає 4 KPI Огляду')
+    check(page.locator('.dv-kpis > .dv-kpi').count() == 3, 'у превʼю без БД немає 3 головних KPI Огляду')
     check(page.locator('.ld-err').count() == 0, 'банер помилки без БД')
 
 

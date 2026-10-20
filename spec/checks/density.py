@@ -6,7 +6,7 @@ from helpers import check, dialog, finance_ref, freeze, go_tab, shot
 DAY = '2026-10-08'
 FIT = "({sh:document.scrollingElement.scrollHeight,ih:innerHeight})"
 KPI_FS = """[...document.querySelectorAll('.dv-kpi-v, .ck-kpi > div:nth-child(2), .bud-kpi-v, .goals-kpis strong')].filter(e=>e.offsetParent).map(e=>parseFloat(getComputedStyle(e).fontSize))"""
-KPI_H = """[...document.querySelectorAll('.dv-kpi, .ck-kpi, .goals-kpis > .surface')].filter(e=>e.offsetParent).map(e=>Math.round(e.getBoundingClientRect().height))"""
+KPI_H = """[...document.querySelectorAll('.dv-kpis > .dv-kpi, .ck-kpi, .goals-kpis > .surface')].filter(e=>e.offsetParent).map(e=>Math.round(e.getBoundingClientRect().height))"""
 FLOW = """({bar:Math.round(document.querySelector('.p-flow.desk .flow-bar').getBoundingClientRect().height),
 rows:[...document.querySelectorAll('.p-flow.desk .flow-row')].filter(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight}).length})"""
 # висота рядка Потоку і кількість текстових рядків в описі (getClientRects текстового вузла)

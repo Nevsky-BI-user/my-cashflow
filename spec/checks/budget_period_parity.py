@@ -115,7 +115,7 @@ def responsive(page):
         page.wait_for_timeout(700)
         from helpers import settle
         settle(page)
-        geo=page.evaluate("""()=>({wide:document.documentElement.scrollWidth,clipped:[...document.querySelectorAll('.dv-kpi-v,.kpi-rv')].filter(e=>e.offsetParent&&e.scrollWidth>e.clientWidth+1).map(e=>e.textContent),main:(()=>{const e=document.querySelector('.dv-main');return e?{height:e.clientHeight,scroll:e.scrollHeight,bottom:e.getBoundingClientRect().bottom}:null})(),budget:(()=>{const e=document.querySelector('.dv-bud');return e?e.getBoundingClientRect().bottom:null})(),chart:(()=>{const e=document.querySelector('.dv-fc svg');return e?e.getBoundingClientRect().height:null})()})""")
+        geo=page.evaluate("""()=>({wide:document.documentElement.scrollWidth,clipped:[...document.querySelectorAll('.dv-kpi-v,.kpi-rv')].filter(e=>e.offsetParent&&e.scrollWidth>e.clientWidth+1).map(e=>e.textContent),main:(()=>{const e=document.querySelector('.dv-cols');return e?{height:e.clientHeight,scroll:e.scrollHeight,bottom:e.getBoundingClientRect().bottom}:null})(),budget:(()=>{const e=document.querySelector('.dv-bud');return e?e.getBoundingClientRect().bottom:null})(),chart:(()=>{const e=document.querySelector('.dv-fc svg');return e?e.getBoundingClientRect().height:null})()})""")
         check(geo['wide']<=width and not geo['clipped'],f'{width}: cropped money or horizontal overflow {geo}')
         if width>=1024:
             check(geo['main']['scroll']<=geo['main']['height']+2 and geo['budget']<=height and geo['budget']<=geo['main']['bottom']+1,f'{width}: Budget outside visible column {geo}')
@@ -133,8 +133,8 @@ def historical_geometry(page):
     freeze(page,DAY,PAST_TX)
     _nav(page,-1)
     page.set_viewport_size(dict(width=1280,height=800));page.wait_for_timeout(500);settle(page)
-    geo=page.evaluate("""()=>{const o={};for(const sel of ['.dtitle','.p-overview','.dv-main','.dv-side','.dv-fc','.dv-fc svg','.dv-bud','.dv-near']){const e=document.querySelector(sel),r=e.getBoundingClientRect();o[sel]={top:r.top,bottom:r.bottom,height:r.height,client:e.clientHeight,scroll:e.scrollHeight}}return o}""")
-    check(geo['.dv-main']['scroll']<=geo['.dv-main']['client']+2 and geo['.dv-bud']['bottom']<=geo['.dv-main']['bottom']+1,'historical Budget must remain fully visible without inner scroll')
+    geo=page.evaluate("""()=>{const o={};for(const sel of ['.dtitle','.p-overview','.dv-cols','.dv-near','.dv-fc','.dv-fc svg','.dv-bud']){const e=document.querySelector(sel),r=e.getBoundingClientRect();o[sel]={top:r.top,bottom:r.bottom,height:r.height,client:e.clientHeight,scroll:e.scrollHeight}}return o}""")
+    check(geo['.dv-cols']['scroll']<=geo['.dv-cols']['client']+2 and geo['.dv-bud']['bottom']<=geo['.dv-cols']['bottom']+1,'historical Budget must remain fully visible without inner scroll')
     print('      historical exact geometry:',geo)
     page.screenshot(path=str(ROOT/'spec'/'.out'/'budget-parity-historical-1280.png'),full_page=True)
 

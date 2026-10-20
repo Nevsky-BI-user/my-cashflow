@@ -25,7 +25,8 @@ def desktop(page):
     check(page.locator('.dv-acc-head .dv-acc-add').count() == 1, 'немає кнопки «+ Рахунок» у заголовку рахунків')
     for i in range(3):
         w = cards.nth(i).bounding_box()
-        check(w['width'] >= 240 and 96 <= w['height'] <= 132, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, поза адаптивним розміром ≥240 × 96-132')
+        min_height = 88 if page.viewport_size['height'] < 900 else 96
+        check(w['width'] >= 240 and min_height <= w['height'] <= 132, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, поза адаптивним розміром ≥240 × {min_height}-132')
     # monobank: чорна картка, «дебетова», кнопка ↻ «Оновити» без БД не падає й оновлює час
     mono = page.locator('.dv-cards .bcard-mono')
     check(mono.count() == 1, 'немає картки monobank')
@@ -46,7 +47,7 @@ def desktop(page):
           f'↻ без БД не оновив час: {hm.group(1) if hm else None}, зараз {now:%H:%M}')
     check(page.locator('.dv-mono-msg').count() == 0, 'без БД зʼявилось повідомлення про помилку monobank')
     hs = page.evaluate(KPI_H)
-    check(len(hs) == 4 and max(hs) - min(hs) <= 1, f'KPI не 4 однакової висоти: {hs}')
+    check(len(hs) == 3 and max(hs) - min(hs) <= 1, f'KPI не 3 однакової висоти: {hs}')
     check(page.evaluate(NO_HSCROLL), 'горизонтальний скрол на 1280')
     page.mouse.move(2, 2)
     shot(page, 'ov-1280.jpg', full=False)

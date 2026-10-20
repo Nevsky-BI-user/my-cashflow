@@ -21,8 +21,11 @@ CAPTURE = r"""()=>{
  const T=e=>e?e.textContent.replace(/\s+/g,' ').trim():null;
  const vis=e=>!!e&&e.getBoundingClientRect().width>0;
  const pick=sel=>[...document.querySelectorAll(sel)].find(vis)||null;
+ const rowText=e=>{const name=e.querySelector('.kpi-in'),amount=e.querySelector('.kpi-iv');
+  if(e.matches('[data-r=inst]')&&name&&amount){const end=e.querySelector('.kpi-ie');return T(name)+' · '+T(amount).replace(/^·\s*/,'')+(end?' '+T(end):'')}
+  return T(e)};
  const kpis={};document.querySelectorAll('.kpi-t').forEach(k=>{if(!vis(k))return;const c=[...k.classList].find(x=>/^kpi-(funds|budget|balance|inst)$/.test(x));
-  kpis[c]={v:T(k.querySelector('.dv-kpi-v')),sub:T(k.querySelector('.kpi-asof')),rows:[...k.querySelectorAll('.kpi-row,.kpi-inst')].map(T)}});
+  kpis[c]={v:T(k.querySelector('.dv-kpi-v')),sub:T(k.querySelector('.kpi-asof')),rows:[...k.querySelectorAll('.kpi-row,.kpi-inst')].map(rowText)}});
  const bv=pick('.dv-bud-v,.o-bud-v');const card=bv?bv.closest('.dv-bud,.o-budget'):null;
  const bd=card?card.querySelector('.bd'):null;
  const near=pick('.dv-near,.o-next');
@@ -201,7 +204,7 @@ def _tiles_equal(got, exp, tag):
 
 
 GEO = r"""()=>{const svg=document.querySelector('.dv-fc svg'),pan=document.querySelector('.p-overview'),t=document.querySelector('.dtitle'),o=document.querySelector('.dtitle .ov-per');
- return {chart:svg.getBoundingClientRect().height,inner:[...document.querySelectorAll('.dv-main,.dv-side')].filter(e=>e.offsetParent).some(e=>e.scrollHeight>e.clientHeight+2),
+ return {chart:svg.getBoundingClientRect().height,inner:[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).some(e=>e.scrollHeight>e.clientHeight+2),
   scroll:pan.classList.contains('ov-scroll'),recent:document.querySelector('.dv-recent').getBoundingClientRect().bottom,wide:document.documentElement.scrollWidth,
   clipped:[...document.querySelectorAll('.kpi-rv,.dv-kpi-v,.kpi-asof,.ov-per-t')].filter(e=>e.offsetParent&&e.scrollWidth>e.clientWidth+1).map(e=>e.textContent),
   title:t.getBoundingClientRect().height,per:o?o.getBoundingClientRect().bottom:null}}"""

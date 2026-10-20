@@ -105,10 +105,10 @@ def kpi_i_desktop(page):
     freeze(page, DAY)
     go_tab(page, 0)
     for k in KEYS:
-        tile = page.locator(f'.dv-kpis .kpi-{k}')
+        tile = page.locator(f'.p-overview.desk .kpi-t.kpi-{k}')
         i = tile.locator('.kpi-i')
         for sel in ('', ' .dv-kpi-v', ' .kpi-rows'):
-            loc = page.locator(f'.dv-kpis .kpi-{k}{sel}').first
+            loc = page.locator(f'.p-overview.desk .kpi-t.kpi-{k}{sel}').first
             if not loc.count():
                 continue
             loc.hover()
