@@ -26,8 +26,7 @@ def verify(page, n, tag):
     small = [x for x in t if not x['big']]
     for x in small:
         check(abs(x['w'] - small[0]['w']) <= TOL, f'{tag}: ширини плиток різні {[round(s["w"]) for s in small]}')
-        want = x['w'] * 10 / 16
-        check(abs(x['h'] - want) <= TOL, f'{tag}: висота плитки {x["h"]:.0f} замість {want:.0f} (16:10)')
+        check(150 <= x['h'] <= 230, f'{tag}: плитка поза адаптивною висотою: {x["h"]:.0f}')
     hs = [round(x['h']) for x in small]
     check(not hs or max(hs) - min(hs) <= TOL, f'{tag}: висоти звичайних плиток різні {hs}')
     if big:
@@ -36,7 +35,7 @@ def verify(page, n, tag):
             want = 2 * small[0]['h'] + 16
             check(abs(b['h'] - want) <= TOL, f'{tag}: велика {b["h"]:.0f}px, очікували 2 ряди + gap = {want:.0f}')
         else:
-            check(abs(b['w'] / b['h'] - 16 / 9) < 0.03, f'{tag}: велика не 16:9 ({b["w"]:.0f}x{b["h"]:.0f})')
+            check(150 <= b['h'] <= 230, f'{tag}: висота поточної цілі поза адаптивним рядом ({b["h"]:.0f})')
     # жодна плитка не накладається на іншу
     for i, a in enumerate(t):
         for c in t[i + 1:]:
@@ -70,13 +69,18 @@ def delete_one(page):
 
 
 def columns(page):
-    # ПК-Заощадження v142: ліворуч карта цілей, праворуч фактичні накопичення; між колонками 12-14px.
+    # Фактичні накопичення вгорі, дошка на всю ширину без вкладеної прокрутки.
     # «Горизонт подій», «Що як» та «Історія накопичень» прибрано свідомо: це прогноз строків зі старої
     # формули надлишку (docs/redesign/projection-contract.md, розділ «Заощадження»)
     main = page.locator('.goals-main').inner_text().lower()
-    side = page.locator('.goals-side').inner_text().lower()
-    check(page.locator('.goals-main .board-d').count() == 1, 'карта цілей не в лівій колонці')
-    check('фактичні накопичення' in side and 'фактичні накопичення' not in main, '«Фактичні накопичення» не в правій колонці')
+    check(page.locator('.goals-main .board-d').count() == 1, 'немає карти цілей')
+    log = page.locator('.goals-log').bounding_box()
+    board = page.locator('.board-d').bounding_box()
+    check(log and board and log['y'] + log['height'] <= board['y'], 'фактичні накопичення не над картками')
+    coin = page.locator('.board-wrap .coin').bounding_box()
+    check(coin and coin['y'] + coin['height'] <= board['y'], 'монетка перекриває картки або їхні дії')
+    check('фактичні накопичення' not in main, 'журнал потрапив у дошку цілей')
+    check(page.evaluate("[...document.querySelectorAll('.goals-main,.goals-cols,.board-d')].every(e=>e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1)"), 'внутрішня прокрутка або переповнення дошки')
     page_txt = page.locator('.p-goals').inner_text().lower()
     for t in ('Горизонт подій', 'Що як', 'Історія накопичень'):
         # межі слова: «що якщо» в інших текстах не рахується
@@ -87,6 +91,20 @@ def columns(page):
 
 def desktop(page):
     go_tab(page, 4)
+    for width, height in ((1280, 800), (1910, 917)):
+        page.set_viewport_size({'width': width, 'height': height})
+        page.wait_for_timeout(300)
+        columns(page)
+        check(page.evaluate('document.documentElement.scrollWidth<=innerWidth&&document.documentElement.scrollHeight<=innerHeight+1'), f'{width}: стандартний екран заощаджень потребує прокрутки')
+        shot(page, f'goals-aligned-{width}.jpg', full=False)
+    page.set_viewport_size({'width': 1280, 'height': 860})
+    page.wait_for_timeout(300)
+    page.locator('.board-d > .gtile').nth(1).hover()
+    edit = page.locator('.board-d > .gtile').nth(1).get_by_role('button', name='Редагувати', exact=True)
+    check(edit.evaluate('e=>{const b=e.getBoundingClientRect();return e.contains(document.elementFromPoint(b.right-8,b.top+b.height/2))}'), 'кнопку редагування перекрито')
+    edit.click(position={'x': 80, 'y': 14})
+    check(dialog(page, 'Ціль').count() == 1, 'редагування правої верхньої цілі відкрило іншу дію')
+    page.keyboard.press('Escape')
     columns(page)
     both_widths(page, 3, 'goals-1280-3.jpg')
     page.locator('.dtitle .goals-add').click()
