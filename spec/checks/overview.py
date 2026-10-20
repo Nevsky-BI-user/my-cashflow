@@ -8,7 +8,7 @@ from helpers import check, dialog, finance_ref, current_ref, demo_snapshot, free
 TODAY = '2026-10-08'
 # o-ms-list: поріг мінімальних витрат рахунку (п. 11), у демо в Ощаду він є
 # v145: блок «Баланс» (o-bal) прибрано, баланс у плитці KPI
-ORDER = ['projection-summary', 'o-accs', 'o-next', 'dv-fc', 'o-ms-list', 'o-budget', 'o-recent', 'o-weeks', 'o-strip', 'o-ccy']
+ORDER = ['projection-summary', 'o-account-section', 'o-next', 'dv-fc', 'o-ms-list', 'o-budget', 'o-recent', 'o-weeks']
 
 
 def _spent(page, start, today):
@@ -26,18 +26,18 @@ def mobile_today(page):
     blocks = page.evaluate("[...document.querySelector('.panel.p-overview').children].map(e=>e.className)")
     got = [next((c for c in ORDER if c in b.split()), b) for b in blocks]
     check(got == ORDER, f'порядок блоків Огляду: {got}')
-    # рахунки чипами: на кожен активний рахунок чип із залишком (кредитка: «борг» і сума боргу), «+» додає рахунок
-    accs = page.evaluate("window.__cashCore.accounts.filter(a=>a.active!==false).map(a=>({k:a.kind,b:Number(a.balance)||0,d:Number(a.debt)||0}))")
-    chips = page.evaluate("[...document.querySelectorAll('.o-accs .o-acc-chip:not(.o-unas):not(.o-acc-add)')].map(e=>e.innerText)")
-    check(len(chips) == len(accs), f'чипів рахунків {len(chips)}, а рахунків {len(accs)}')
-    for a, c in zip(accs, chips):
-        v = a['d'] if a['k'] == 'credit' else a['b']
-        b = c.split('\n')
-        got = [x for x in c.replace('\n', ' ').split(' ') if x]
-        check(('борг' in c) == (a['k'] == 'credit'), f'чип {c!r}: позначка боргу не відповідає рахунку')
-        check(f'{round(v):,}'.replace(',', ' ') in c.replace('\u00a0', ' ').replace('\u202f', ' '), f'чип {c!r} без суми {v}')
-    check(page.locator('.o-accs .o-acc-add').count() == 1, 'у ряді рахунків немає «+»')
-    shown = len(chips)
+    # Баланс і заборгованість видно для кожного активного рахунку.
+    accs = page.evaluate("window.__cashCore.accounts.filter(a=>a.active!==false).map(a=>({b:Number(a.balance)||0,d:Number(a.debt)||0}))")
+    cards = page.locator('.o-account-deck .o-bank-card')
+    check(cards.count() == len(accs), f'карток {cards.count()}, а рахунків {len(accs)}')
+    for i, a in enumerate(accs):
+        card = cards.nth(i)
+        labels = card.locator('.account-amounts small').all_text_contents()
+        values = card.locator('.account-amounts b').all_text_contents()
+        check(labels == ['Баланс', 'Заборгованість'], f'картка {i}: підписи {labels}')
+        check(len(values) == 2 and abs(num(values[0]) - a['b']) <= 1 and abs(num(values[1]) - a['d']) <= 1,
+              f'картка {i}: суми {values}, рахунок {a}')
+    check(page.locator('.o-account-actions button').count() == 1, 'під колодою немає додавання рахунку')
     ref = finance_ref(page)
     n = ref['nextPlan']
     # v148: плитка «Бюджет періоду» = бюджет на старт періоду після виплати (не нижче 15 000), рядки «Доступно» = бюджет мінус змінні витрати і «Щоденні витрати» = бюджет / днів
@@ -53,8 +53,6 @@ def mobile_today(page):
     check('бюджет періоду' in page.inner_text('.projection-summary').lower(), 'немає назви «Бюджет періоду»')
     fs = page.evaluate("getComputedStyle(document.querySelector('.kpi-budget .dv-kpi-v')).fontSize")
     check(float(fs.removesuffix('px')) >= 18, f'кегль суми плитки {fs}')
-    lbl = page.evaluate("[...document.querySelectorAll('.o-strip div')].filter(e=>/^(Дохід|Витрати|Залишок)$/i.test(e.innerText.trim())).map(e=>getComputedStyle(e).fontSize)")
-    check(len(lbl) == 3 and all(x == '11px' for x in lbl), f'підписи стрічки періоду: {lbl}')
     nxt = page.locator('.o-next .o-next-row')
     check(nxt.count() == 3, f'у «Найближче» {nxt.count()} подій, а не 3')
     # v148 (власник: «прибери це»): рядка «Щоденні витрати, прогноз» у «Найближче» немає, у Потоці й календарі він лишається

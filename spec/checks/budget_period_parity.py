@@ -36,9 +36,7 @@ def verify(page):
     if vp=='mobile':
         labels=page.locator('.o-weeks').inner_text()
         check(all(w['label'] in labels for w in v['weeks']),'week UI is not selected range')
-        expected=page.evaluate('v=>[v.income,v.expense,Math.abs(v.balance)].map(n=>fmtK(n/100))',v)
-        strip=page.locator('.o-strip').inner_text()
-        check(all(x in strip for x in expected),'income/expense/net strip differs from selected range')
+        check(page.locator('.o-strip,.o-ccy').count()==0,'removed mobile bottom totals or rates returned')
     go_tab(page,1)
     if plan is None: actual=num(page.locator('.p-budget strong').inner_text())
     elif vp=='desktop':
