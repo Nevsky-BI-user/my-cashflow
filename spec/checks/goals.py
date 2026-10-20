@@ -51,6 +51,8 @@ def savings_log(page):
     log.locator('button', has_text='Усі внески').click()
     page.wait_for_timeout(250)
     check(log.locator('.goals-log-row').count() == 7, '«Усі» не розгорнуло список')
+    check(log.evaluate('e=>e.scrollHeight<=e.clientHeight+1&&e.scrollWidth<=e.clientWidth+1'), 'розгорнуті внески мають внутрішню прокрутку')
+    check(page.evaluate('document.documentElement.scrollWidth<=innerWidth'), 'розгорнуті внески розширюють сторінку')
     page.mouse.move(2, 2)
     shot(page, 'goals-log-1280.jpg', full=False)
     log.get_by_role('button',name='+ Внесок',exact=True).click()
