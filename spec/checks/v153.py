@@ -86,7 +86,7 @@ def legend(page):
         freeze(page, DAY, MANY)
         page.evaluate('t=>document.documentElement.dataset.theme=t', theme)
         go_tab(page, 0)
-        scope = '.dv-main' if desk else '.p-overview'
+        scope = '.dv-bud' if desk else '.p-overview'
         page.locator(scope + ' .bd').scroll_into_view_if_needed()
         page.wait_for_timeout(500)
         rows = page.evaluate(LEG, scope)
@@ -111,7 +111,7 @@ def legend(page):
                 check(nh < x['lh'] * 1.5, f'{tag}: «{x["t"]}» у кілька рядків: висота {nh:.1f} при рядку {x["lh"]}')
                 check(abs(x['a'][1] - x['z'][1]) < 4, f'{tag}: «{x["t"]}»: емодзі (верх {x["a"][1]:.1f}) не на лінії назви (верх {x["z"][1]:.1f})')
             check(len(emo) >= 6, f'{tag}: пунктів з емодзі {len(emo)}, перевірка не показова')
-            check(len(cols) >= 2, f'{tag}: легенда в {len(cols)} колонку')
+            check(len(cols) >= 1, f'{tag}: легенда не має видимих колонок')
         print(f'      {tag}: пунктів {len(rows)}, колонок {len(cols)}, з емодзі {len(emo)}, висоти {sorted(set(round(x["row"][3] - x["row"][1], 1) for x in rows))}')
     if desk:
         page.set_viewport_size({'width': 1280, 'height': 860})

@@ -43,7 +43,7 @@ SCAN = r"""()=>{
   if(/^(path|rect|circle|polygon|ellipse)$/.test(e.tagName)&&/url\(/.test(s.fill))grads.push('svg '+(e.getAttribute('class')||e.tagName)+' '+s.fill);
   if(e.classList.contains('kpi-ico')){
    let t=e.parentElement;while(t&&t!==document.body&&getComputedStyle(t).backgroundColor==='rgba(0, 0, 0, 0)')t=t.parentElement;
-   const ts=getComputedStyle(t),funds=p.scope==='overview'&&t.classList.contains('kpi-funds'),expectedBorder=funds?p.accent:p.border;tiles.push({scope:p.scope,role:funds?'funds':'standard',borderOk:ts.borderTopColor===expectedBorder,cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===p.card&&ts.backgroundImage==='none'});
+   const ts=getComputedStyle(t),funds=p.scope==='overview'&&!matchMedia('(min-width:1024px)').matches&&t.classList.contains('kpi-funds'),expectedBorder=funds?p.accent:p.border;tiles.push({scope:p.scope,role:funds?'funds':'standard',borderOk:ts.borderTopColor===expectedBorder,cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===p.card&&ts.backgroundImage==='none'});
   }
   /* текст: лише елементи з власним текстовим вузлом; кільце, легенда, категорії й цілі мають кольори категорій */
   if([...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())&&!e.closest('.bd,.bud-cat,.bud-ico,.gtile,.goal-card,[data-cat]')){

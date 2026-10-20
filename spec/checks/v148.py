@@ -139,7 +139,7 @@ def ring_readable(page):
     import math
     desk = page.viewport_size['width'] >= 1024
     sizes = ((1920, 1080), (1280, 800), (1280, 860)) if desk else ((375, 812), (390, 844))
-    scope = '.dv-main' if desk else '.p-overview'
+    scope = '.dv-bud' if desk else '.p-overview'
     for theme in ('dark', 'light'):
         for w, hgt in sizes:
             page.set_viewport_size({'width': w, 'height': hgt})
