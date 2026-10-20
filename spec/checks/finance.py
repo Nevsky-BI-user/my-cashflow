@@ -78,12 +78,15 @@ def weights(page):
     check(r['nextPlan']['targetCents']==old['nextPlan']['targetCents'], 'зміна ваги змінила загальну ціль')
     for period in r['periods']:
         check(sum(c['totalCents'] for c in period['categories'])==sum(d['spendCents'] for d in period['schedule']), 'ваги втратили копійки')
-    go_tab(page,1)
-    page.locator('.side-arr').nth(1).click()
-    page.wait_for_timeout(200)
-    expand_groups(page)
-    row=page.locator('.bud-cat',has_text='Продукти')
-    check(abs(num(row.locator('.bud-nums').inner_text().split('/')[1])-food(r)/100)<=1, 'екран категорії не оновив план')
+    go_tab(page,0)
+    # Легенда Огляду показує фактичні категорії поточного періоду.
+    # Майбутній розподіл уже звірено з Python/TS вище; тут перевіряємо вагу в редакторі.
+    page.locator('.bd-row',has_text='Продукти').click()
+    cats=finance_state(page)['data']['categories']
+    weighted=[c for c in cats if c.get('type')!='income' and c.get('limit_abs') is None]
+    expected=round(next(c['budget_limit'] for c in weighted if c['id']=='food') / sum(c['budget_limit'] for c in weighted)*100, 1)
+    shown=num(page.locator('#cat-lim-v').input_value())
+    check(abs(shown-expected)<=0.1, 'категорія на Огляді не відобразила змінену вагу прогнозу')
 
 def unavailable(page):
     data=json.loads(json.dumps(FIXTURE));data['fixed'][0]['credit_ok']=False;del data['accounts'][1]['credit_limit']

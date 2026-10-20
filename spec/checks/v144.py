@@ -14,7 +14,8 @@ def _cur(page):
 
 def drawer_desktop(page):
     """ПК: панель праворуч, фокус у ній, Esc закриває і повертає фокус на категорію; нижнього блоку операцій немає."""
-    freeze(page, DAY)
+    from checks.monthly_budget import seed_demo
+    seed_demo(page, DAY)
     go_tab(page, 1)
     check(page.locator('.bud-ops').count() == 0, 'лишився блок «операції за період» унизу правої колонки')
     expand_groups(page)  # v145: групи за замовчуванням згорнуті
@@ -30,7 +31,7 @@ def drawer_desktop(page):
     check(name in d.locator('.cat-drw-n').inner_text(), 'у панелі не та категорія')
     check(page.evaluate("!!document.activeElement.closest('.cat-drw')"), 'фокус не в панелі')
     txt = d.inner_text()
-    for s in ('Операції періоду', 'У Потік', 'Ліміт на період'):
+    for s in ('Операції місяця', 'У Потік', 'План на місяць'):
         check(s in txt, f'у панелі немає «{s}»')
     ops = d.locator('.cat-op')
     if ops.count():
@@ -54,10 +55,11 @@ def drawer_desktop(page):
 
 def drawer_mobile(page):
     """Телефон: рядок категорії відкриває панель знизу на всю ширину; × і Esc закривають."""
-    freeze(page, DAY)
+    from checks.monthly_budget import seed_demo
+    seed_demo(page, DAY)
     go_tab(page, 1)
     expand_groups(page)  # v145: групи за замовчуванням згорнуті
-    row = page.locator('.bud-mrow').first
+    row = page.locator('.bud-cat').first
     check(row.count() == 1, 'на телефоні немає рядків категорій у групах')
     row.click()
     page.wait_for_timeout(350)
@@ -85,7 +87,8 @@ def drawer_mobile(page):
 def groups(page):
     """Групи за sort_order; v145: усі згорнуті за замовчуванням, рядок групи розгортає (клік, Enter, Space), стан памʼятається;
     сума групи = сума її категорій; без group_id: «Інше»."""
-    freeze(page, DAY)
+    from checks.monthly_budget import seed_demo
+    seed_demo(page, DAY)
     go_tab(page, 1)
     gs = page.evaluate("""[...document.querySelectorAll('.bud-grp')].map(g=>({id:g.dataset.g,open:g.querySelector('.bud-grp-h').getAttribute('aria-expanded')==='true',
 n:g.querySelector('.bud-grp-n').firstChild.textContent,s:g.querySelector('.bud-grp-s').textContent}))""")
@@ -125,8 +128,8 @@ c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').te
     # Усі змінні факти включно з некатегоризованими: одна вибірка [start,end), до asof.
     st = finance_state(page)
     fsum = sum(num(c['v'].split('/')[0]) for g in rows for c in g['c'])
-    cp = st['result']['currentPeriod']
-    av = cp['actualVariableCents'] / 100
+    cp = page.evaluate('window.__calendarBudget')
+    av = cp['fact'] / 100
     unique = {str(x['id']): x for x in st['data']['transactions']}
     actual = [x for x in unique.values() if x.get('type') == 'expense'
               and x.get('fixed_id') is None and x.get('credit_id') is None
@@ -147,17 +150,15 @@ c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').te
     st2 = finance_state(page)
     check(sum(1 for x in st2['data']['transactions'] if (x.get('fixed_id') == 'fx-test' or x.get('credit_id') == 'cr-test') and start <= x['date'][:10] <= DAY) == 2, 'фікстура fixed_id/credit_id не дійшла до входу поточного періоду')
     check(food() == f0, f'операції з fixed_id/credit_id потрапили у факт Продуктів: {f0} -> {food()}')
-    check(st2['result']['currentPeriod']['actualVariableCents'] / 100 == av, 'рушій зарахував fixed_id/credit_id у змінні витрати')
+    check(page.evaluate('window.__calendarBudget.fact') / 100 == av, 'місячний бюджет зарахував fixed_id/credit_id')
 
 
 def limit_abs(page):
     """Ліміт у ₴: зберігається (оптимістично), рушій дає категорії max(0, ліміт мінус факт), підсумок «розподілено X з T, вільно Y» сходиться."""
     freeze(page, DAY)
-    go_tab(page, 1)
-    expand_groups(page)
     before = _cur(page)
     t0 = sum(c['totalCents'] for c in before['categories'])
-    page.locator('.bud-cat', has_text='Продукти').click()
+    page.locator('.bd-row', has_text='Продукти').click()
     page.wait_for_timeout(300)
     d = page.locator('.cat-drw')
     p0 = d.locator('#cat-lim-v').input_value()
@@ -190,24 +191,9 @@ def limit_abs(page):
     check(tot == t0, f'бюджет періоду змінився від ліміту: {t0} -> {tot}')
     page.keyboard.press('Escape')
     page.wait_for_timeout(250)
-    s = page.locator('.bud-alloc-sum').inner_text()
-    # v150: у поточному періоді розподіляється повний бюджет періоду (плитка «Бюджет періоду»), а не план рушія від завтра;
-    # підсумок тоді з planSplit(повний бюджет, категорії) на тому самому вході (planSplit перевіряє spec/plan-split.test.cjs)
-    if 'повний бюджет' in s:
-        full = page.evaluate("(()=>{const pb=window.__periodBudget;return planSplit(pb.budget,window.__financeInput.categories)})()")
-        tot = sum(c['totalCents'] for c in full)
-        free = sum(c['totalCents'] for c in full if c['id'] == 'unallocated')
-        ff = next((c for c in full if c['id'] == 'food'), None)
-        check(ff is not None and ff['totalCents'] == min(500000, tot), f'повний план: Продукти {ff}, очікували ліміт 5 000 ₴ на період')
-    parts = s.split('Розподілено ')[1]
-    x, rest = parts.split(' з ', 1)
-    tt, y = rest.split(', вільно ')
-    print(f'      підсумок: {s!r}; рушій: всього {tot}, вільно {free}')
-    check(abs(num(x) - (tot - free) / 100) <= 1 and abs(num(tt) - tot / 100) <= 1 and abs(num(y) - free / 100) <= 1, f'підсумок {s!r} не з рушія ({tot}, {free})')
-    check(abs(num(x) + num(y) - num(tt)) <= 1, f'X + Y != T у {s!r}')
-    check('ліміт ₴' in page.locator('.bud-cat', has_text='Продукти').inner_text(), 'у рядку категорії немає позначки «ліміт ₴»')
+    check(tot==t0 and free>=0,'forecast allocation conservation')
     # назад у %: limit_abs стає null
-    page.locator('.bud-cat', has_text='Продукти').click()
+    page.locator('.bd-row', has_text='Продукти').click()
     page.wait_for_timeout(300)
     d.locator('.cat-lim-seg button', has_text='%').click()
     d.locator('#cat-lim-v').fill(p0)

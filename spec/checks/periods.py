@@ -2,7 +2,7 @@
 # Еталон: Python-підрахунок операцій txDemo за тим самим правилом [виплата; наступна виплата) з вихідними (helpers._adj).
 from datetime import date
 
-from helpers import ADV_DAY, SAL_DAY, _adj, check, freeze, go_tab, shot
+from helpers import ADV_DAY, SAL_DAY, _adj, check, freeze, go_tab, shot, num
 
 TODAY = '2026-10-08'
 MON_GEN = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня']
@@ -65,13 +65,16 @@ def salary(page):
     print(f'      зарплата {lo}..{hi}: еталон {len(ref)} операцій, у Потоці {n_ui}; після 21-го в txDemo {len(late)}')
     check(n_ui == len(ref), f'у періоді зарплати {n_ui} операцій, еталон {len(ref)}')
     check(all(lo <= d < hi for d, n in ui if n), f'у періоді зарплати операції після 21-го або до 6-го: {ui}')
-    # Історичний бюджет не підставляє ціль наступної виплати під минулу дату.
+    # Бюджет має власний календарний місяць, незалежний від періоду Потоку.
     go_tab(page, 1)
     budget = page.locator('.p-budget')
-    check('Фактичні витрати періоду' in budget.inner_text(), 'немає факту історичного бюджету')
-    check('Збереженого плану для цього періоду немає' in budget.inner_text(), 'немає пояснення відсутнього історичного плану')
-    check(budget.locator('.bud-pool').count() == 0, 'історичний період показує майбутню ціль бюджету')
-    check(budget.locator('strong').count() > 0, 'історичні фактичні суми приховано')
+    check(budget.get_attribute('data-month')=='2026-10-01','період Потоку змінив місяць Бюджету')
+    raw=page.evaluate("txDemo(2026,9)")
+    fact=sum(round(t['amount']*100) for t in raw if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and '2026-10-01'<=t['date'][:10]<=TODAY)/100
+    check(abs(num(budget.locator('.bud-spent .bud-kpi-v').inner_text())-fact)<.01,'місячний факт не дорівнює сирим операціям')
+    check(budget.locator('.bud-pool .bud-kpi-v').inner_text()=='Не задано','місячний план замінено ціллю виплати')
+    go_tab(page,2)
+    check(ui_rows(page)==ui,'повернення з Бюджету змінило межі Потоку')
 
 
 CHECKS = [
