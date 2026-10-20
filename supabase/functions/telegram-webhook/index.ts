@@ -19,16 +19,29 @@ const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
 // Сильніша модель: одна повторна спроба для підозрілого результату Haiku (див. receiptSuspect)
 const RECEIPT_MODEL_STRONG = 'claude-sonnet-5-5';
 const RECEIPT_SYSTEM =
-  'Розпізнай чек. Відповідай ТІЛЬКИ JSON без пояснень: ' +
+  'Розпізнай чек або скриншот операцій. Відповідай ТІЛЬКИ JSON без пояснень. ' +
+  'Якщо на ОДНОМУ зображенні кілька незалежних чеків або список банківських операцій, поверни ' +
+  '{"kind":"transactions","complete":true,"readable":"good","transactions":[' +
+  '{"amount":число,"type":"expense" або "income","currency":"UAH","description":"короткий опис","date":"YYYY-MM-DD" або null}]}. ' +
+  'Включи ВСІ незалежні операції, максимум 20. amount завжди додатна, type визначай за напрямком платежу. ' +
+  'НЕ включай баланс, підсумки списку, перекази між власними рахунками, очікувані/скасовані платежі чи товарні позиції одного чека. ' +
+  'Не вгадуй валюту, суму чи напрямок. Якщо є нерозбірлива/обрізана операція, невідома валюта/напрямок, ' +
+  'переказ між власними рахунками або понад 20 операцій — поверни {"error":"коротко чому"}, не повертай частину списку. ' +
+  'Для одного звичайного чека збережи формат: ' +
   '{"has_total": true або false, "amount": число або null, "items_sum": число або null, ' +
   '"description": назва магазину або 2-3 слова, "date": "YYYY-MM-DD" або null, "readable": "good" або "poor"}. ' +
+  'Для кожної незалежної операції (і для одного чека) додай bank: "privat", "mono", "oschad" або null, ' +
+  'card_last4: лише останні 4 цифри картки рядком або null, card_network: "visa", "mastercard" або null. ' +
+  'Це банк і картка власника операції, НЕ банк отримувача чи термінала. Бери лише явно видимі ознаки; ' +
+  'логотип VISA сам по собі не визначає банк. Невпевнені ознаки — null. Повний номер картки не повертай. ' +
   'readable = "poor", якщо частина цифр розмита, обрізана або нечітка, інакше "good". ' +
   'has_total = true ЛИШЕ коли на фото є рядок підсумку чека (СУМА, До сплати, Разом, Всього, TOTAL), ' +
   'і тоді amount = саме це число з рядка підсумку. ' +
   'НІКОЛИ не сумуй позиції в amount: якщо рядка підсумку немає, повертай has_total: false, amount: null, ' +
   'а в items_sum клади суму видимих позицій (орієнтовно). ' +
   'Якщо фото кілька, це частини одного чека по порядку, підсумок зазвичай на останньому. ' +
-  'Якщо це не чек: {"error": "коротко чому"}.';
+  'Кілька фото ЗАВЖДИ частини одного чека, не повертай kind transactions. ' +
+  'Якщо це не чек і не список операцій: {"error": "коротко чому"}.';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -65,6 +78,8 @@ const HELP =
   '+51000 зарплата (плюс = дохід)\n' +
   '/income 51000 зарплата (або /дохід): теж дохід\n\n' +
   'Фото чека: сума й магазин розпізнаються автоматично\n' +
+  'Скриншот із кількома операціями: до 20 доходів/витрат у гривнях, кожна окремим записом і з вибором рахунку\n' +
+  'Банк на скриншоті допоможе вибрати рахунок; якщо є сумнів, бот запропонує кнопки. Підпис фото має пріоритет.\n' +
   '/yes: підтвердити дохід, схожий на Monobank\n' +
   '/balance: баланс, картки, розстрочки\n' +
   '/chart: графік балансу, /budget: бюджет періоду, /week: тиждень, /month: місяць\n' +
@@ -107,18 +122,19 @@ async function tgCall(method: string, body: Record<string, unknown>) {
 
 // Рахунки операцій. Сімʼя спільна: активні рахунки обох без фільтра user_id.
 // Рахунки Monobank (mono_account_id) для ручних операцій не пропонуються: їхні операції приходять з банку самі,
-// інакше витрата задвоїться. Тому вони не потрапляють ні в слова-ключі, ні в кнопки, ні в callback
+// інакше витрата задвоїться. Виняток — фото/скриншоти: банк може визначатися із зображення.
 type Acc = { id: number; name: string; bank: string | null; kind: string; is_salary: boolean | null };
 const BANK_WORDS: Record<string, string> = {
   'ощад': 'oschad', 'oschad': 'oschad', 'приват': 'privat', 'privat': 'privat',
   'моно': 'mono', 'mono': 'mono', 'monobank': 'mono', 'готівка': 'cash', 'кеш': 'cash', 'cash': 'cash',
 };
 
-async function activeAccounts(): Promise<Acc[]> {
-  const { data, error } = await sb.from('accounts')
+async function activeAccounts(includeMono = false): Promise<Acc[]> {
+  let query = sb.from('accounts')
     .select('id,name,bank,kind,is_salary')
-    .eq('active', true)
-    .is('mono_account_id', null)
+    .eq('active', true);
+  if (!includeMono) query = query.is('mono_account_id', null);
+  const { data, error } = await query
     .order('sort_order', { ascending: true })
     .order('id', { ascending: true });
   if (error) console.error('accounts lookup error:', error);
@@ -218,7 +234,10 @@ async function onCallback(cq: any) {
     const m = String(cq?.data || '').match(/^acc:(\d+):(\d+)$/);
     if (!m) return answer('Невідома дія');
     const txId = Number(m[1]), accId = Number(m[2]);
-    const accs = await activeAccounts();
+    const { data: tx, error: txErr } = await sb.from('transactions').select('receipt_url').eq('id', txId).eq('source', 'telegram').maybeSingle();
+    if (txErr) return answer('Помилка, спробуйте ще раз');
+    if (!tx) return answer('Операцію не знайдено');
+    const accs = await activeAccounts(!!tx.receipt_url);
     const acc = accs.find((a) => a.id === accId);
     if (!acc) return answer('Рахунок недоступний');
     const { data: rows, error: upErr } = await sb.from('transactions')
@@ -232,10 +251,9 @@ async function onCallback(cq: any) {
     }
     if (!rows || !rows.length) return answer('Операцію не знайдено');
     await answer(`Рахунок: ${acc.name}`);
-    const kb = accKeyboard(txId, accs, accId);
     await tgCall('editMessageText', {
       chat_id: chatId, message_id: msgId, text: txText(rows[0] as TxView, acc.name),
-      ...(kb ? { reply_markup: kb } : {}),
+      reply_markup: { inline_keyboard: [] },
     });
   } catch (e) {
     console.error('callback error:', (e as Error)?.message);
@@ -377,7 +395,7 @@ async function askReceipt(b64s: string[], model: string): Promise<any | null> {
       },
       body: JSON.stringify({
         model,
-        max_tokens: 400,
+        max_tokens: 4096,
         system: RECEIPT_SYSTEM,
         messages: [{
           role: 'user',
@@ -387,7 +405,7 @@ async function askReceipt(b64s: string[], model: string): Promise<any | null> {
               type: 'text',
               text: b64s.length > 1
                 ? `Розпізнай чек; це ${b64s.length} фото одного чека, підсумок на останньому`
-                : 'Розпізнай чек',
+                : 'Розпізнай усі незалежні операції на зображенні або один чек',
             },
           ],
         }],
@@ -398,12 +416,13 @@ async function askReceipt(b64s: string[], model: string): Promise<any | null> {
       console.error('claude error:', r.status, j?.error?.message || j);
       return null;
     }
+    if (j?.stop_reason !== 'end_turn') return { error: 'Розпізнавання не завершено. Надішліть менший або чіткіший фрагмент.' };
     const text = (j?.content || [])
       .filter((c: any) => c?.type === 'text')
       .map((c: any) => c.text)
       .join('');
     const parsed = extractJson(text);
-    if (!parsed) console.error('claude non-json reply:', text);
+    if (!parsed) console.error('claude non-json reply');
     return parsed ?? { error: 'відповідь не у форматі JSON' };
   } catch (e) {
     console.error('claude fetch error:', e);
@@ -415,6 +434,10 @@ async function askReceipt(b64s: string[], model: string): Promise<any | null> {
 // підсумок розходиться із сумою позицій більше ніж на max(1 ₴, 2 %), дата з чека не пройшла б receiptDate як є
 function receiptSuspect(r: any): string | null {
   if (!r || r.error) return 'error';
+  if (r.kind === 'transactions' || 'transactions' in r) {
+    if (!receiptBatch(r)) return 'invalid_batch';
+    return r.transactions.some((t: any) => t.date != null && receiptDate(t.date) !== t.date) ? 'date' : null;
+  }
   const amount = posNum(r.amount);
   const items = posNum(r.items_sum);
   if (amount === null && items === null) return 'no_amount';
@@ -428,7 +451,95 @@ function receiptSuspect(r: any): string | null {
 
 // Відповідь придатна: є підсумок або (немає підсумку і є сума позицій)
 function receiptValid(r: any): boolean {
+  if (r && (r.kind === 'transactions' || 'transactions' in r)) return receiptBatch(r) !== null;
   return !!r && !r.error && (posNum(r.amount) !== null || (r.has_total === false && posNum(r.items_sum) !== null));
+}
+
+type ReceiptBankHint = { bank: 'privat' | 'mono' | 'oschad' | null; card_last4: string | null; card_network: 'visa' | 'mastercard' | null };
+function receiptBankHint(r: any): ReceiptBankHint {
+  return {
+    bank: ['privat', 'mono', 'oschad'].includes(r?.bank) ? r.bank : null,
+    card_last4: typeof r?.card_last4 === 'string' && /^\d{4}$/.test(r.card_last4) ? r.card_last4 : null,
+    card_network: ['visa', 'mastercard'].includes(r?.card_network) ? r.card_network : null,
+  };
+}
+
+// Лише однозначний збіг. Видимий номер іншої картки ПриватБанку не підміняємо своєю.
+function receiptAccount(r: any, accs: Acc[]): Acc | null {
+  const hint = receiptBankHint(r);
+  if (!hint.bank || (r?.card_last4 != null && hint.card_last4 === null)) return null;
+  let candidates = accs.filter((a) => a.bank === hint.bank);
+  if (hint.bank === 'privat') {
+    if (hint.card_last4 && hint.card_last4 !== '0882') return null;
+    if (hint.card_last4 === '0882') {
+      const exact = candidates.filter((a) => /(?:^|\D)0882(?:\D|$)/.test(a.name));
+      if (exact.length) candidates = exact;
+    }
+  }
+  if (hint.bank === 'mono') {
+    if (hint.card_network !== 'visa') return null;
+    if (candidates.length > 1) candidates = candidates.filter((a) => /\bvisa\b/i.test(a.name));
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+type ReceiptTransaction = { amount: number; type: 'expense' | 'income'; description: string; date: string | null; hint: ReceiptBankHint };
+
+type ReceiptRow = { amount: number | string; type: string; date: string; account_id: number | null; description: string | null };
+const receiptDescription = (v: unknown) => String(v || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+function sameReceiptOperation(a: ReceiptRow, b: ReceiptRow): boolean {
+  return a.type === b.type && Math.round(Number(a.amount) * 100) === Math.round(Number(b.amount) * 100) &&
+    Math.abs(Date.parse(a.date) - Date.parse(b.date)) <= 3 * 86400000 &&
+    ((a.account_id != null && b.account_id != null && String(a.account_id) === String(b.account_id)) ||
+      (!!receiptDescription(a.description) && receiptDescription(a.description) === receiptDescription(b.description)));
+}
+
+// Перевірка всіх джерел до INSERT. Неповний результат або помилка не означають відсутність дубля.
+async function receiptDuplicate(rows: ReceiptRow[]): Promise<string | null> {
+  const duplicate = (r: ReceiptRow, inside = false) =>
+    `${inside ? 'На зображенні є схожі операції' : 'Схожа операція вже записана'}: ${r.date.split('-').reverse().join('.')}, ${fmtMoney(Number(r.amount))}. ` +
+    'Збігаються сума, тип і рахунок або опис; дати відрізняються не більше ніж на 3 дні. Нічого не додано. Перевірте записи й надішліть лише нові операції.';
+  for (let i = 0; i < rows.length; i++) {
+    if (rows.slice(0, i).some((r) => sameReceiptOperation(rows[i], r))) return duplicate(rows[i], true);
+  }
+  const dates = rows.map((r) => r.date).sort();
+  const shift = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  const failure = 'Не вдалося перевірити, чи ці операції вже записані. Нічого не додано. Спробуйте пізніше.';
+  try {
+    for (let page = 0; page < 10; page++) {
+      const { data, error } = await sb.from('transactions')
+        .select('id,amount,type,date,account_id,description')
+        .gte('date', shift(dates[0], -3)).lte('date', shift(dates[dates.length - 1], 3))
+        .order('id', { ascending: true }).range(page * 1000, page * 1000 + 999);
+      if (error || !Array.isArray(data)) return failure;
+      for (const existing of data) {
+        if (rows.some((r) => sameReceiptOperation(r, existing))) return duplicate(existing);
+      }
+      if (data.length < 1000) return null;
+    }
+  } catch {
+    return failure;
+  }
+  return failure;
+}
+
+// Перевіряємо весь список до запису: жодної часткової імпортованої суми.
+function receiptBatch(r: any): ReceiptTransaction[] | null {
+  if (!r || r.error || r.kind !== 'transactions' || r.complete !== true || r.readable !== 'good' ||
+    !Array.isArray(r.transactions) || r.transactions.length < 1 || r.transactions.length > 20) return null;
+  const result: ReceiptTransaction[] = [];
+  for (const t of r.transactions) {
+    if (!t || typeof t.amount !== 'number' || !Number.isFinite(t.amount) || posNum(t.amount) === null ||
+      !['expense', 'income'].includes(t.type) || t.currency !== 'UAH' ||
+      typeof t.description !== 'string' || !t.description.trim() || t.description.length > 300 ||
+      !(t.date === null || (typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date) &&
+        !isNaN(Date.parse(t.date)) && new Date(t.date).toISOString().slice(0, 10) === t.date))) return null;
+    // Некоректний номер не використовується для автоматичного вибору банку.
+    const hint = receiptBankHint(t);
+    if (t.card_last4 != null && hint.card_last4 === null) hint.bank = null;
+    result.push({ amount: posNum(t.amount)!, type: t.type, description: t.description.trim(), date: t.date, hint });
+  }
+  return result;
 }
 
 // Каскад: Haiku; підозрілий результат одна спроба Sonnet на тих самих фото; беремо Sonnet, якщо валідний.
@@ -439,6 +550,10 @@ async function recognizeReceipt(b64s: string[]): Promise<any | null> {
   if (!reason) return first;
   console.log('receipt escalate', reason);
   const strong = await askReceipt(b64s, RECEIPT_MODEL_STRONG);
+  // Вже побачений список не можна тихо замінити одним чеком при повторній спробі.
+  if (first && (first.kind === 'transactions' || 'transactions' in first)) {
+    return receiptBatch(strong) ? strong : first;
+  }
   return receiptValid(strong) ? strong : first;
 }
 
@@ -516,16 +631,47 @@ async function addReceipt(
   if (!res) return reply(chatId, '❌ Не вдалося розпізнати: сервіс недоступний, спробуйте пізніше');
   if (res.error) return reply(chatId, '❌ Не вдалося розпізнати: ' + String(res.error));
 
+  if (res.kind === 'transactions' || 'transactions' in res) {
+    const batch = receiptBatch(res);
+    if (wasReceipt) return reply(chatId, 'Зараз збирається один довгий чек. Завершіть його або надішліть /no, а потім скриншот операцій.');
+    if (!batch) return reply(chatId, '❌ Не вдалося надійно прочитати всі операції. Нічого не записано. Надішліть чіткіший скриншот із максимум 20 операціями у гривнях.');
+    const accs = await activeAccounts(true);
+    const cap = caption?.trim() ? pickAccount(caption, accs, true) : null;
+    const rows = batch.map((t, i) => ({
+      amount: t.amount, type: t.type, description: t.description, date: receiptDate(t.date), user_id: userId, source: 'telegram',
+      source_id: i === 0 ? sourceId : `${sourceId}:${i}`,
+      receipt_url: path, receipt_parts: null,
+      account_id: cap?.matched ? cap.acc?.id ?? null : receiptAccount(t.hint, accs)?.id ?? null,
+    }));
+    const duplicate = await receiptDuplicate(rows);
+    if (duplicate) return reply(chatId, duplicate);
+    // Один INSERT — усі рядки разом або жодного; source_id захищає також конкурентний повтор.
+    const { data: inserted, error } = await sb.from('transactions').insert(rows).select('id,source_id');
+    if (error) {
+      if (error.code === '23505') return;
+      console.error('receipt batch insert error:', error);
+      return reply(chatId, 'Не вдалося зберегти операції. Нічого не записано. Спробуйте ще раз.');
+    }
+    await reply(chatId, `✅ Записано операцій: ${rows.length}.`);
+    for (const row of rows) {
+      const tx = inserted?.find((t: any) => t.source_id === row.source_id);
+      if (!tx) continue;
+      categorizeLater(tx.id);
+      await replyTx(chatId, tx.id, row, row.account_id, { accs });
+    }
+    return;
+  }
+
   const description = (typeof res.description === 'string' && res.description.trim()) || 'Чек';
   const total = res.has_total === true ? posNum(res.amount) : null;
 
   // Рахунок: слово-ключ у підписі фото переозначає; інакше рахунок першої частини чи за замовчуванням
-  const accs = await activeAccounts();
+  const accs = await activeAccounts(true);
   const cap = caption && caption.trim() ? pickAccount(caption, accs, true) : null;
   let accountId: number | null;
   if (cap?.matched) accountId = cap.acc?.id ?? null;
   else if (wasReceipt && pending0.account_id !== undefined) accountId = pending0.account_id ?? null;
-  else accountId = null; // чек це витрата: рахунок за замовчуванням не підставляємо
+  else accountId = receiptAccount(res, accs)?.id ?? null;
   const accountName = accs.find((a) => a.id === accountId)?.name ?? (wasReceipt ? pending0.account_name ?? null : null);
 
   if (total === null) {
@@ -570,7 +716,7 @@ async function addReceipt(
       'Надішліть наступне фото з рядком «СУМА», або /yes щоб записати як є, або /no щоб скасувати. Чекаю 10 хв.');
   }
 
-  const { data: ins, error } = await sb.from('transactions').insert({
+  const row = {
     user_id: userId,
     amount: total,
     type: 'expense',
@@ -581,7 +727,10 @@ async function addReceipt(
     receipt_parts: parts.length > 1 ? parts.map((x) => x.path) : null,
     date: receiptDate(res.date),
     account_id: accountId,
-  }).select('id').single();
+  };
+  const duplicate = await receiptDuplicate([row]);
+  if (duplicate) return reply(chatId, duplicate);
+  const { data: ins, error } = await sb.from('transactions').insert(row).select('id').single();
   if (error) {
     if (error.code === '23505') return; // повтор апдейту встиг пройти isDuplicate: мовчимо
     console.error('receipt insert error:', error);
@@ -778,8 +927,13 @@ async function confirmPending(chatId: number, userId: string) {
     if (!rp.items_sum || rp.items_sum <= 0 || !rp.parts?.length) {
       return reply(chatId, 'У цієї частини чека немає суми. Надішліть фото з підсумком або /no.');
     }
-    const accs = await activeAccounts();
+    const accs = await activeAccounts(true);
     const rpAccount = rp.account_id !== undefined ? rp.account_id ?? null : null;
+    const duplicate = await receiptDuplicate([{
+      amount: rp.items_sum!, type: 'expense', description: rp.description || 'Чек',
+      date: receiptDate(rp.date), account_id: rpAccount,
+    }]);
+    if (duplicate) return reply(chatId, duplicate);
     const { data: ins, error: rErr } = await sb.from('transactions').insert({
       user_id: userId,
       amount: rp.items_sum,

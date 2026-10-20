@@ -500,18 +500,32 @@ export function installmentsOn(credits: P[], txs: Tx[], date: string): { name: s
   }).map((c) => ({ name: `${c.name} (розстрочка)`, cents: cents(c.monthly_amount) }));
 }
 
-const dueOn = (pr: P, date: string) => (pr.events || []).filter((e: P) => e.date === date && ['mandatory', 'fee', 'repay'].includes(e.kind))
-  .map((e: P) => ({ name: e.kind === 'repay' ? repayLabel(pr, e) : e.name + (e.certainty === 'conditional' ? ' (умовно)' : ''), cents: -e.cashDeltaCents }));
+// Нагадуємо повну суму зобовʼязання, а не лише частину, покриту власними коштами.
+// Сценарій може розділити одну подію на власне й кредитне фінансування.
+function paymentDues(pr: P, date: string): P[] {
+  const grouped = new Map<string, P>();
+  for (const [i, e] of (pr.events || []).entries()) {
+    if (e.date !== date || !['mandatory', 'fee', 'repay'].includes(e.kind)) continue;
+    const key = e.occurrenceId || e.id || `event:${i}`;
+    const prev = grouped.get(key);
+    if (prev) prev.amountCents += e.amountCents;
+    else grouped.set(key, { ...e });
+  }
+  return [...grouped.values()];
+}
+
+const dueOn = (pr: P, date: string) => paymentDues(pr, date)
+  .map((e: P) => ({ name: e.kind === 'repay' ? repayLabel(pr, e) : e.name + (e.certainty === 'conditional' ? ' (умовно)' : ''), cents: e.amountCents }));
 
 export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string): string {
   const s = pr.snapshot, u = pr.untilPayout, tomorrow = plusDays(today, 1);
   const lines = [`☀️ Доброго ранку! ${day(today)}`, `Баланс: ${money(s.positiveOwnCents - s.creditDebtCents)}`];
   if (u && u.days > 0) lines.push(`Доступно до ${day(u.end)}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : ''));
-  const list = (title: string, rows: { name: string; cents: number }[]) => rows.length
+  const list = (title: string, empty: string, rows: { name: string; cents: number }[]) => rows.length
     ? [`${title}: ${money(rows.reduce((n, r) => n + r.cents, 0))}`, ...rows.map((r) => `· ${r.name}: ${money(r.cents)}`)]
-    : [`${title}: нічого`];
-  lines.push('', ...list('Спишеться сьогодні', [...installmentsOn(credits, txs, today), ...dueOn(pr, today)]));
-  lines.push(...list(`Завтра, ${day(tomorrow)}`, dueOn(pr, tomorrow)));
+    : [empty];
+  lines.push('', ...list('Заплановано на сьогодні', 'На сьогодні запланованих списань немає.', [...installmentsOn(credits, txs, today), ...dueOn(pr, today)]));
+  lines.push(...list(`Заплановано на завтра, ${day(tomorrow)}`, 'На завтра запланованих платежів немає.', dueOn(pr, tomorrow)));
   return lines.join('\n');
 }
 
@@ -521,8 +535,7 @@ export type DueItem = { kind: 'f' | 'c' | 'r'; id: string; name: string; cents: 
 
 export function dueTomorrow(pr: P, fixed: P[], credits: P[], today: string): DueItem[] {
   const tomorrow = plusDays(today, 1), out: DueItem[] = [];
-  for (const e of pr.events || []) {
-    if (e.date !== tomorrow) continue;
+  for (const e of paymentDues(pr, tomorrow)) {
     let kind: DueItem['kind'] | null = null, id = '', bank: string | null = null, name = e.name;
     const fx = /^fixed:(.+?):\d{4}-\d{2}(?:-\d{2})?$/.exec(e.occurrenceId || ''), cr = /^installment:(.+):\d{4}-\d{2}$/.exec(e.occurrenceId || '');
     if (e.kind === 'mandatory' && fx) {
@@ -543,7 +556,7 @@ export function dueTomorrow(pr: P, fixed: P[], credits: P[], today: string): Due
     if (!kind) continue;
     // Кнопки немає для погашення (у застосунку воно вноситься зміною боргу рахунку) і для списань Monobank (операція прийде з банку)
     const button = kind !== 'r' && bank !== 'mono';
-    out.push({ kind, id, name, cents: -e.cashDeltaCents, date: e.date, bank, button, callback: button ? `pd:${kind}:${id}:${e.date}` : null });
+    out.push({ kind, id, name, cents: e.amountCents, date: e.date, bank, button, callback: button ? `pd:${kind}:${id}:${e.date}` : null });
   }
   return out;
 }
