@@ -6,6 +6,7 @@ from datetime import date
 
 from helpers import check, finance_ref, freeze, go_tab, shot
 
+DAY = '2026-10-13'
 MO = ['Січень', 'Лютий', 'Березень', 'Квітень', 'Травень', 'Червень', 'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень']
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
 # найменший кегль тексту в сітці й таблиці (лише елементи з власним текстом)
@@ -15,10 +16,11 @@ h:r.getBoundingClientRect().height,top:r.getBoundingClientRect().top,bot:r.getBo
 
 
 def desktop(page):
+    freeze(page, DAY)
     go_tab(page, 3)
     cal = page.locator('.panel.p-credits.desk')
     check(cal.count() == 1, 'на ПК немає окремого Календаря')
-    t = date.today()
+    t = date.fromisoformat(DAY)
     kpis = cal.locator('.ck-kpis .ck-kpi')
     check(kpis.count() == 3, f'KPI {kpis.count()}, а не 3')
     kt = cal.locator('.ck-kpis').inner_text().lower()
@@ -219,7 +221,7 @@ def _var_rows(page):
     check(len(rows) == len(groups), f'рядків прогнозу {len(rows)}, періодів зі змінними витратами {len(groups)}')
     dm = lambda s: s[8:10] + '.' + s[5:7]
     for r, g in zip(rows, groups.values()):
-        amount = f"{round(g['c'] / 100):,}".replace(',', ' ')
+        amount = f"{(g['c'] + 50) // 100:,}".replace(',', ' ')
         want = f"Щоденні витрати, прогноз: {amount} ₴ ({dm(g['from'])}-{dm(g['to'])})"
         # v153: рядок прогнозу в останньому дні діапазону, після = власні на кінець цього дня (як у рушії)
         vown = next(d for d in p['days'] if d['date'] == g['to'])['closingCashCents'] / 100
@@ -297,15 +299,16 @@ def short_frame(page):
 
 def mobile(page):
     """Одна проєкція: мобільна сітка, відкриття дня і читабельні деталі без горизонтального скролу."""
+    freeze(page, DAY)
     go_tab(page,3)
     check(page.locator('.panel.p-credits .cal-cell').count()>=28, 'немає мобільної сітки')
     check(page.evaluate(NO_HSCROLL), 'мобільний календар ширший за екран')
     projection=finance_ref(page)
-    pays=[e for e in projection['events'] if e['kind']=='payout' and e['date'][:7]==date.today().isoformat()[:7]]
+    pays=[e for e in projection['events'] if e['kind']=='payout' and e['date'][:7]==DAY[:7]]
     check(pays, 'немає майбутніх виплат')
     for e in pays:
         check(page.locator('.cal-cell[data-date="'+e['date']+'"]').count()==1, 'немає дня виплати')
-    t=date.today()
+    t=date.fromisoformat(DAY)
     past=page.locator('.cal-cell.past')
     check(past.count()==t.day-1, 'минулі дні не позначені')
     cell=page.locator('.cal-cell.today')

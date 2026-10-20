@@ -30,6 +30,8 @@ def reference(snap, today, now=None):
 def math(page):
     base = json.loads(FIX.read_text(encoding='utf-8'))
     check(page.evaluate("typeof window.periodBudget==='function'"), 'window.periodBudget не функція')
+    # Історичний CLI не має подій поточного демо-прогнозу застосунку.
+    page.evaluate('setRepayEvents([],[])')
     for today, debt, now in CASES:
         snap = json.loads(json.dumps(base))
         if debt is not None:
@@ -103,10 +105,10 @@ def desktop(page):
     for c in page.evaluate('BCAT'):
         f=sum(round(t['amount']*100) for t in valid if str(t.get('category_id'))==str(c['id']))/100
         row=page.locator('.bud-cat[data-cat="'+str(c['id'])+'"]')
-        check(abs(num(row.locator('.bud-nums b').inner_text())-f)<.01,'category fact')
+        check(abs(num(row.locator('.bud-value[data-label="Факт"]').inner_text())-f)<.01,'category fact')
         check(num(row.locator('.bud-remaining').inner_text())==1000-f,'category remaining')
     check(page.locator('.bud-cat.hot').count()==0,'linear daily expectation returned')
-    check('за місяць' in page.locator('.bud-catcard').inner_text(),'monthly category caption')
+    check(all(label in page.locator('.bud-table-head').inner_text() for label in ('Факт','План','Залишок')),'monthly category columns lack explicit labels')
     for width,height in [(1280,800),(1910,917)]:
         page.set_viewport_size(dict(width=width,height=height))
         page.wait_for_timeout(300)

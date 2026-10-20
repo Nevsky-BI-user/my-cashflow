@@ -7,9 +7,21 @@ const facts=html.slice(html.indexOf('function budgetRangeFacts('),html.indexOf('
 const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const pbDate=s=>new Date(s+'T12:00:00'),pbAdd=(d,n)=>{const q=new Date(d);q.setDate(q.getDate()+n);return q};
 const dependencies=html.split(/\r?\n/).filter(l=>/^const (getDow|wdRange|pbIso)=|^function pbPayouts\(|^function pbObl\(|^function fpWd\(|function fpEnded\(|const crOk=/.test(l)).join('\n');
-const {monthlyMoney,monthlyValidate,monthlyBudgetModel,monthlySalaryEnvelope}=new Function('const fmtM=v=>String(v);\n'+dependencies+'\n'+facts+model+';return{monthlyMoney,monthlyValidate,monthlyBudgetModel,monthlySalaryEnvelope}')();
+const {monthlyMoney,monthlyValidate,monthlyBudgetModel,monthlySalaryEnvelope,monthlyPercentCents}=new Function('const fmtM=v=>String(v);\n'+dependencies+'\n'+facts+model+';return{monthlyMoney,monthlyValidate,monthlyBudgetModel,monthlySalaryEnvelope,monthlyPercentCents}')();
 const cats=[{id:1,name:'Food',limit:1},{id:2,name:'Health',limit:50}];
 const row={month_start:'2026-10-01',total_cents:100001,allocations:{1:30001,2:60000}};
+test('monthly percentage uses net capacity, exact basis points and half-up cents',()=>{
+ assert.equal(monthlyPercentCents('25',75000),18750);
+ assert.equal(monthlyPercentCents('12,50',10004),1251);
+ assert.equal(monthlyPercentCents('50',1),1);
+ assert.equal(monthlyPercentCents('0.01',5000),1);
+ assert.equal(monthlyPercentCents('100',Number.MAX_SAFE_INTEGER),Number.MAX_SAFE_INTEGER);
+ assert.equal(monthlyPercentCents('50',Number.MAX_SAFE_INTEGER),4503599627370496);
+ assert.equal(monthlyPercentCents('0',Number.MAX_SAFE_INTEGER),0);
+ assert.equal(monthlyPercentCents('25',0),0);
+ for(const value of ['',-1,'100.01','0.001','1e2','Infinity','NaN'])assert.throws(()=>monthlyPercentCents(value,75000));
+ for(const capacity of [-1,.5,NaN,Infinity,Number.MAX_SAFE_INTEGER+1])assert.throws(()=>monthlyPercentCents('25',capacity));
+});
 test('monthly money parses cents exactly and rejects invalid/unsafe inputs',()=>{
  assert.equal(monthlyMoney('1 234,56'),123456);assert.equal(monthlyMoney('0'),0);
  for(const x of ['',-1,'1.234','1e3','Infinity','90071992547410'])assert.throws(()=>monthlyMoney(x));

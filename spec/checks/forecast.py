@@ -148,11 +148,14 @@ def chart(page):
 
 
 def calendar(page):
+    from helpers import freeze
+    day = '2026-10-13'
+    freeze(page, day)
     go_tab(page, 3)
     cal = page.locator('.panel.p-credits')
     check(cal.locator('.cal-badge', has_text='А').count() == 1 and cal.locator('.cal-badge', has_text='З').count() == 1,
           'у сітці місяця немає бейджів виплат А і З')
-    t = date.today()
+    t = date.fromisoformat(day)
     projection = finance_ref(page)
     for e in projection['events']:
         if e['kind'] == 'repay' and e['date'][:7] == t.isoformat()[:7]:
