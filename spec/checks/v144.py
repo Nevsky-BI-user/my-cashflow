@@ -91,7 +91,7 @@ def groups(page):
     seed_demo(page, DAY)
     go_tab(page, 1)
     gs = page.evaluate("""[...document.querySelectorAll('.bud-grp')].map(g=>({id:g.dataset.g,open:g.querySelector('.bud-grp-h').getAttribute('aria-expanded')==='true',
-n:g.querySelector('.bud-grp-n').firstChild.textContent,s:g.querySelector('.bud-grp-s').textContent}))""")
+n:g.querySelector('.bud-grp-n').firstChild.textContent}))""")
     order = page.evaluate("BGROUPS.slice().sort((a,b)=>a.sort_order-b.sort_order).map(g=>String(g.id))")
     ids = [g['id'] for g in gs]
     check(ids == [i for i in order if i in ids], f'порядок груп {ids}, очікували за sort_order {order}')
@@ -116,18 +116,18 @@ n:g.querySelector('.bud-grp-n').firstChild.textContent,s:g.querySelector('.bud-g
     go_tab(page, 1)
     check(page.locator('.bud-grp-h').first.get_attribute('aria-expanded') == 'true', 'розгорнута група не запамʼяталась після перезавантаження')
     expand_groups(page)
-    rows = page.evaluate("""[...document.querySelectorAll('.bud-grp')].map(g=>({n:g.querySelector('.bud-grp-n').firstChild.textContent,s:g.querySelector('.bud-grp-s').textContent,
-c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').textContent,v:c.querySelector('.bud-nums').textContent}))}))""")
+    rows = page.evaluate("""[...document.querySelectorAll('.bud-grp')].map(g=>({n:g.querySelector('.bud-grp-n').firstChild.textContent,s:[...g.querySelectorAll('.bud-grp-h .bud-value')].map(e=>e.textContent),
+c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').textContent,v:[...c.querySelectorAll('.bud-value')].map(e=>e.textContent)}))}))""")
     for g in rows:
-        f = sum(num(c['v'].split('/')[0]) for c in g['c'])
-        pl = sum(num(c['v'].split('/')[1]) for c in g['c'])
-        check(abs(num(g['s'].split('/')[0]) - f) <= len(g['c']), f'{g["n"]}: факт групи {g["s"]} проти суми категорій {f}')
-        check(abs(num(g['s'].split('/')[1]) - pl) <= len(g['c']), f'{g["n"]}: план групи {g["s"]} проти суми категорій {pl}')
+        f = sum(num(c['v'][0]) for c in g['c'])
+        pl = sum(num(c['v'][1]) for c in g['c'])
+        check(abs(num(g['s'][0]) - f) <= len(g['c']), f'{g["n"]}: факт групи {g["s"]} проти суми категорій {f}')
+        check(abs(num(g['s'][1]) - pl) <= len(g['c']), f'{g["n"]}: план групи {g["s"]} проти суми категорій {pl}')
     other = next((g for g in rows if g['n'] == 'Інше'), None)
     check(other and any(c['n'] == 'Інше' for c in other['c']), 'категорія без group_id не потрапила в групу «Інше»')
     # Усі змінні факти включно з некатегоризованими: одна вибірка [start,end), до asof.
     st = finance_state(page)
-    fsum = sum(num(c['v'].split('/')[0]) for g in rows for c in g['c'])
+    fsum = sum(num(c['v'][0]) for g in rows for c in g['c'])
     cp = page.evaluate('window.__calendarBudget')
     av = cp['fact'] / 100
     unique = {str(x['id']): x for x in st['data']['transactions']}
@@ -140,7 +140,7 @@ c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').te
     check(abs(fsum - raw) <= 1 and abs(raw - av) <= .01,
           f'факт груп {fsum}, сирі змінні факти {raw}, рушій {av}')
     start = cp['start']
-    food = lambda: num(page.locator('.bud-cat', has_text='Продукти').locator('.bud-nums').inner_text().split('/')[0])
+    food = lambda: num(page.locator('.bud-cat', has_text='Продукти').locator('.bud-value[data-label="Факт"]').inner_text())
     f0 = food()
     # фікстура: дві витрати на Продукти з fixed_id і credit_id не змінюють ні факт категорії, ні actualVariable
     freeze(page, DAY, [("TX_DEMO_ROWS=[", "TX_DEMO_ROWS=[[25,'FIXTEST',777,'out','mono',5411,'food'],[26,'CRTEST',555,'out','mono',5411,'food'],"),

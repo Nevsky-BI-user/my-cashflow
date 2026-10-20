@@ -6,7 +6,7 @@ from checks.monthly_budget import mount
 def draft_survives(page):
     mount(page)
     go_tab(page, 1)
-    page.locator('.bud-alloc').get_by_role('button', name='Розподіл бюджету').click()
+    page.get_by_role('button', name='Розподіл бюджету', exact=True).click()
     sheet = page.get_by_role('dialog', name='Розподіл бюджету місяця')
     field = sheet.get_by_role('textbox', name='Продукти, ₴', exact=True)
     field.fill('432.10')

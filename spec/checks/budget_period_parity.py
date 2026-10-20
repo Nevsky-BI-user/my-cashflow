@@ -14,7 +14,9 @@ def assert_unsaved_salary(page, start='2026-10-01'):
     check(b['start']==start and b['gross']==e['total_cents'] and b['mandatory']==mandatory,'calendar salary or mandatory total differs from raw monthly envelope')
     check(b['plan']==net and b['unallocated']==net and b['remaining']==net-b['fact'],'unsaved calendar capacity must equal salary minus mandatory payments')
     check(num(page.locator('.bud-pool .bud-kpi-v').inner_text())==e['total_cents']/100,'salary KPI differs from calendar payouts')
-    check(num(page.locator('.bud-day .bud-kpi-v').inner_text())==net/100,'category capacity KPI differs from salary minus commitments')
+    check(num(page.locator('.bud-mandatory .bud-kpi-v').inner_text())==mandatory/100,'mandatory payment KPI differs from raw commitments')
+    check(num(page.locator('.bud-avail .bud-kpi-v').inner_text())==(net-b['fact'])/100,'available KPI differs from salary minus commitments and actual category spending')
+    check(page.locator('.bud-day,.bud-alloc').count()==0,'allocation summary belongs only in editor')
     return b
 
 def verify(page):
@@ -100,7 +102,7 @@ def unavailable(page):
     check('/' not in page.locator('.dv-bud-v,.o-bud-v').inner_text(),'unavailable Overview shows a numeric plan')
     go_tab(page,1)
     assert_unsaved_salary(page)
-    check('Обов' in page.locator('.p-budget').inner_text(),'independent monthly Budget lacks mandatory payment explanation')
+    check(page.locator('.bud-mandatory').count()==1,'independent monthly Budget lacks mandatory payment explanation')
 
 
 CHECKS=[('budget_period_parity: all selected ranges desktop','desktop',parity),('budget_period_parity: all selected ranges mobile','mobile',parity),('budget_period_parity: February September crossmonth boundaries and exclusions','desktop',edges)]
