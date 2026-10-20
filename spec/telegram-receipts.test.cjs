@@ -5,6 +5,7 @@ const path=require('node:path');
 const {stripTypeScriptTypes}=require('node:module');
 const source=fs.readFileSync(path.join(__dirname,'../supabase/functions/telegram-webhook/index.ts'),'utf8');
 const isolated=stripTypeScriptTypes(source.slice(source.indexOf('const tgSourceId ='),source.indexOf('type Pending =')));
+const confirmSource=stripTypeScriptTypes(source.slice(source.indexOf('async function confirmPending('),source.indexOf('// Посилання на застосунок під статусом;')));
 const transaction=(overrides={})=>({amount:120.5,type:'expense',currency:'UAH',description:'Магазин',date:'2026-10-19',...overrides});
 const batch=(transactions=[transaction(),transaction({amount:200,type:'income',description:'Повернення',date:'2026-10-20'})])=>
   ({kind:'transactions',complete:true,readable:'good',transactions});
@@ -66,7 +67,7 @@ function harness(responses, options={}) {
     activeAccounts:async(includeMono)=>{state.accountLoads.push(includeMono);return accs},
     pickAccount:()=>({matched:true,acc:options.captionAccount??accs[0]}),fmtMoney:String,
     console:{log(){},error(){}}};
-  const api=new Function(...Object.keys(bindings),isolated+';return {addReceipt,receiptBatch,recognizeReceipt};')(...Object.values(bindings));
+  const api=new Function(...Object.keys(bindings),isolated+confirmSource+';return {addReceipt,receiptBatch,recognizeReceipt,receiptDate,confirmPending};')(...Object.values(bindings));
   return {state,api,run:(update=42,caption)=>api.addReceipt(1,'u',update,[{file_id:'photo'}],undefined,caption)};
 }
 test('one screenshot atomically inserts all operations and maps dates/types/buttons by source id',async()=>{
@@ -129,6 +130,70 @@ test('single receipt remains one expense and supports caption',async()=>{
   const h=harness([single]);await h.run(42,'готівка');
   assert.equal(h.state.rows.length,1);assert.equal(h.state.rows[0].amount,250);
   assert.equal(h.state.rows[0].account_id,7);assert.equal(h.state.rows[0].source_id,'tg:42');
+});
+
+test('historical screenshot dates are retained and never derived from send time',async()=>{
+  const h=harness([batch([transaction({date:'2025-01-12'})])]);await h.run(999999);
+  assert.equal(h.state.rows[0].date,'2025-01-12');
+  for(const raw of [null,undefined,'','2026-02-30','2026-10-21','19.10.2026'])assert.equal(h.api.receiptDate(raw),null);
+  assert.equal(h.api.receiptDate('2024-02-29'),'2024-02-29');
+  const singleOld=harness([{...single,date:'2025-01-12'}]);await singleOld.run();
+  assert.equal(singleOld.state.rows[0].date,'2025-01-12');
+});
+
+test('one missing, invalid, or future screenshot date rejects the whole batch after retry',async()=>{
+  for(const date of [null,undefined,'2026-02-30','2026-10-21']){
+    const h=harness([batch([transaction(),transaction({date})])]);await h.run();
+    assert.equal(h.state.inserts.length,0);
+    assert.equal(h.state.requests.length,2);
+    assert.match(h.state.replies.at(-1)[1],/дату операції.*Нічого не записано/);
+  }
+});
+
+test('strong model may recover the screenshot date but missing single date never inserts',async()=>{
+  const repaired=harness([{...single,date:null},single]);await repaired.run();
+  assert.equal(repaired.state.rows[0].date,'2026-10-19');
+  assert.equal(repaired.state.requests.length,2);
+  for(const date of [null,undefined,'2026-02-30','2026-10-21']){
+    const h=harness([{...single,date}]);await h.run();
+    assert.equal(h.state.inserts.length,0);
+    assert.match(h.state.replies.at(-1)[1],/дату операції/);
+  }
+});
+
+test('multipart retains an earlier screenshot date when the final part omits it',async()=>{
+  const h=harness([{...single,has_total:false,amount:null,date:'2025-01-12'}, {...single,date:null}]);
+  await h.run(41);await h.run(42);
+  assert.equal(h.state.rows.length,1);
+  assert.equal(h.state.rows[0].date,'2025-01-12');
+});
+
+test('/yes cannot confirm a receipt with missing or invalid screenshot date',async()=>{
+  for(const date of [null,'2026-02-30','2026-10-21']){
+    const pending={kind:'receipt',parts:[{path:'u/old.jpg',update_id:40}],expires:'2099-01-01T00:00:00Z',items_sum:250,date};
+    const h=harness([],{pending});await h.api.confirmPending(1,'u');
+    assert.equal(h.state.inserts.length,0);
+    assert.equal(h.state.pending,pending);
+    assert.match(h.state.replies.at(-1)[1],/дату операції/);
+  }
+});
+
+test('/yes keeps historical screenshot date and checks it for duplicates',async()=>{
+  const pending={kind:'receipt',parts:[{path:'u/old.jpg',update_id:40}],expires:'2099-01-01T00:00:00Z',items_sum:250,date:'2025-01-12',description:'Чек'};
+  const h=harness([],{pending});await h.api.confirmPending(1,'u');
+  assert.equal(h.state.rows[0].date,'2025-01-12');
+  const duplicate=harness([],{pending,existing:[{id:1,amount:250,type:'expense',date:'2025-01-12',description:'Чек',account_id:null}]});
+  await duplicate.api.confirmPending(1,'u');
+  assert.equal(duplicate.state.inserts.length,0);
+  assert.match(duplicate.state.replies.at(-1)[1],/Схожа операція вже записана: 12.01.2025/);
+});
+
+test('same historical operation from another update is blocked by screenshot date and amount',async()=>{
+  const h=harness([batch([transaction({date:'2025-01-12'})])]);
+  await h.run(40);await h.run(999999);
+  assert.equal(h.state.rows.length,1);
+  assert.equal(h.state.inserts.length,1);
+  assert.match(h.state.replies.at(-1)[1],/Схожа операція вже записана: 12.01.2025/);
 });
 test('multipart receipt keeps one final total and its original account',async()=>{
   const h=harness([{...single,has_total:false,amount:null},single]);

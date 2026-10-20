@@ -30,6 +30,8 @@ const RECEIPT_SYSTEM =
   'Для одного звичайного чека збережи формат: ' +
   '{"has_total": true або false, "amount": число або null, "items_sum": число або null, ' +
   '"description": назва магазину або 2-3 слова, "date": "YYYY-MM-DD" або null, "readable": "good" або "poor"}. ' +
+  'date — дата проведення саме цієї операції, видима на зображенні, зокрема в заголовку її групи. ' +
+  'Не використовуй дату відправлення повідомлення, завантаження фото чи формування виписки. Не вгадуй дату або рік; якщо дата не видима чи неоднозначна, поверни null. ' +
   'Для кожної незалежної операції (і для одного чека) додай bank: "privat", "mono", "oschad" або null, ' +
   'card_last4: лише останні 4 цифри картки рядком або null, card_network: "visa", "mastercard" або null. ' +
   'Це банк і картка власника операції, НЕ банк отримувача чи термінала. Бери лише явно видимі ознаки; ' +
@@ -337,17 +339,14 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-// Дата з чека: лише валідна YYYY-MM-DD, не в майбутньому і не старша за 45 днів, інакше сьогодні за Києвом
-function receiptDate(raw: unknown): string {
-  const today = todayKyiv();
-  if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return today;
+// Дата операції лише зі зображення: невідому дату не підміняємо сьогоднішньою.
+function receiptDate(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
   const d = new Date(raw + 'T00:00:00Z');
-  if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw) return today;
-  if (raw > today) return today;
-  // Чек старший за 45 днів: найімовірніше модель помилилась у році, беремо сьогодні
-  const ageDays = (Date.parse(today + 'T00:00:00Z') - d.getTime()) / 86400000;
-  return ageDays > 45 ? today : raw;
+  if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw || raw > todayKyiv()) return null;
+  return raw;
 }
+const RECEIPT_DATE_REQUIRED = '❌ Не вдалося визначити дату операції. Нічого не записано. Надішліть скриншот або фото, де видно дату проведення кожної операції.';
 
 // Стійкий розбір відповіді моделі: перший {...} з тексту
 function extractJson(text: string): any | null {
@@ -436,7 +435,7 @@ function receiptSuspect(r: any): string | null {
   if (!r || r.error) return 'error';
   if (r.kind === 'transactions' || 'transactions' in r) {
     if (!receiptBatch(r)) return 'invalid_batch';
-    return r.transactions.some((t: any) => t.date != null && receiptDate(t.date) !== t.date) ? 'date' : null;
+    return null;
   }
   const amount = posNum(r.amount);
   const items = posNum(r.items_sum);
@@ -445,7 +444,7 @@ function receiptSuspect(r: any): string | null {
   if (r.has_total === true && amount !== null && items !== null && Math.abs(items - amount) > Math.max(1, amount * 0.02)) {
     return 'sum_mismatch';
   }
-  if (r.date != null && receiptDate(r.date) !== r.date) return 'date';
+  if (!receiptDate(r.date)) return 'date';
   return null;
 }
 
@@ -483,7 +482,7 @@ function receiptAccount(r: any, accs: Acc[]): Acc | null {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-type ReceiptTransaction = { amount: number; type: 'expense' | 'income'; description: string; date: string | null; hint: ReceiptBankHint };
+type ReceiptTransaction = { amount: number; type: 'expense' | 'income'; description: string; date: string; hint: ReceiptBankHint };
 
 type ReceiptRow = { amount: number | string; type: string; date: string; account_id: number | null; description: string | null };
 const receiptDescription = (v: unknown) => String(v || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -532,8 +531,7 @@ function receiptBatch(r: any): ReceiptTransaction[] | null {
     if (!t || typeof t.amount !== 'number' || !Number.isFinite(t.amount) || posNum(t.amount) === null ||
       !['expense', 'income'].includes(t.type) || t.currency !== 'UAH' ||
       typeof t.description !== 'string' || !t.description.trim() || t.description.length > 300 ||
-      !(t.date === null || (typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date) &&
-        !isNaN(Date.parse(t.date)) && new Date(t.date).toISOString().slice(0, 10) === t.date))) return null;
+      !receiptDate(t.date)) return null;
     // Некоректний номер не використовується для автоматичного вибору банку.
     const hint = receiptBankHint(t);
     if (t.card_last4 != null && hint.card_last4 === null) hint.bank = null;
@@ -634,11 +632,12 @@ async function addReceipt(
   if (res.kind === 'transactions' || 'transactions' in res) {
     const batch = receiptBatch(res);
     if (wasReceipt) return reply(chatId, 'Зараз збирається один довгий чек. Завершіть його або надішліть /no, а потім скриншот операцій.');
+    if (Array.isArray(res.transactions) && res.transactions.some((t: any) => !receiptDate(t?.date))) return reply(chatId, RECEIPT_DATE_REQUIRED);
     if (!batch) return reply(chatId, '❌ Не вдалося надійно прочитати всі операції. Нічого не записано. Надішліть чіткіший скриншот із максимум 20 операціями у гривнях.');
     const accs = await activeAccounts(true);
     const cap = caption?.trim() ? pickAccount(caption, accs, true) : null;
     const rows = batch.map((t, i) => ({
-      amount: t.amount, type: t.type, description: t.description, date: receiptDate(t.date), user_id: userId, source: 'telegram',
+      amount: t.amount, type: t.type, description: t.description, date: t.date, user_id: userId, source: 'telegram',
       source_id: i === 0 ? sourceId : `${sourceId}:${i}`,
       receipt_url: path, receipt_parts: null,
       account_id: cap?.matched ? cap.acc?.id ?? null : receiptAccount(t.hint, accs)?.id ?? null,
@@ -664,6 +663,9 @@ async function addReceipt(
 
   const description = (typeof res.description === 'string' && res.description.trim()) || 'Чек';
   const total = res.has_total === true ? posNum(res.amount) : null;
+  // Попередня частина належить тому самому чеку; зберігаємо її дату, якщо нова частина дати не містить.
+  const operationDate = receiptDate(res.date) ?? (wasReceipt && res.date == null ? receiptDate(pending0.date) : null);
+  if (total !== null && !operationDate) return reply(chatId, RECEIPT_DATE_REQUIRED);
 
   // Рахунок: слово-ключ у підписі фото переозначає; інакше рахунок першої частини чи за замовчуванням
   const accs = await activeAccounts(true);
@@ -682,7 +684,7 @@ async function addReceipt(
       parts,
       ...(mediaGroupId ? { media_group_id: mediaGroupId } : {}),
       description,
-      date: typeof res.date === 'string' ? res.date : null,
+      date: operationDate,
       items_sum: itemsSum,
       expires: new Date(Date.now() + PENDING_TTL_MS).toISOString(),
       account_id: accountId,
@@ -700,6 +702,7 @@ async function addReceipt(
         const cur = await readPending(userId);
         if (isLiveReceipt(cur) && !cur.parts.some((x) => x.update_id === updateId)) {
           state.parts = [...cur.parts, { path, update_id: updateId }];
+          if (res.date == null) state.date = state.date ?? receiptDate(cur.date);
         }
       }
     }
@@ -725,7 +728,7 @@ async function addReceipt(
     source_id: sourceId,
     receipt_url: parts[0].path,
     receipt_parts: parts.length > 1 ? parts.map((x) => x.path) : null,
-    date: receiptDate(res.date),
+    date: operationDate!,
     account_id: accountId,
   };
   const duplicate = await receiptDuplicate([row]);
@@ -927,11 +930,13 @@ async function confirmPending(chatId: number, userId: string) {
     if (!rp.items_sum || rp.items_sum <= 0 || !rp.parts?.length) {
       return reply(chatId, 'У цієї частини чека немає суми. Надішліть фото з підсумком або /no.');
     }
+    const operationDate = receiptDate(rp.date);
+    if (!operationDate) return reply(chatId, RECEIPT_DATE_REQUIRED);
     const accs = await activeAccounts(true);
     const rpAccount = rp.account_id !== undefined ? rp.account_id ?? null : null;
     const duplicate = await receiptDuplicate([{
       amount: rp.items_sum!, type: 'expense', description: rp.description || 'Чек',
-      date: receiptDate(rp.date), account_id: rpAccount,
+      date: operationDate, account_id: rpAccount,
     }]);
     if (duplicate) return reply(chatId, duplicate);
     const { data: ins, error: rErr } = await sb.from('transactions').insert({
@@ -943,7 +948,7 @@ async function confirmPending(chatId: number, userId: string) {
       source_id: tgSourceId(rp.parts[rp.parts.length - 1].update_id),
       receipt_url: rp.parts[0].path,
       receipt_parts: rp.parts.length > 1 ? rp.parts.map((x) => x.path) : null,
-      date: receiptDate(rp.date),
+      date: operationDate,
       account_id: rpAccount,
     }).select('id').single();
     if (rErr && rErr.code !== '23505') {
