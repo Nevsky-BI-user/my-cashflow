@@ -12,9 +12,9 @@ ACC = {('light', True): 'rgb(59, 91, 219)', ('light', False): 'rgb(59, 91, 219)'
        ('dark', True): 'rgb(124, 147, 245)', ('dark', False): 'rgb(139, 159, 247)'}
 
 PROBE = r"""()=>{
- const probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;document.body.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
+ const probe=(p,v,e)=>{const d=document.createElement('div');d.style[p]=v;(e?.closest('.p-overview')||document.body).appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
  const vis=e=>!!e&&e.getBoundingClientRect().width>0&&getComputedStyle(e).visibility!=='hidden';
- const st=(e,ps)=>{if(!vis(e))return null;const s=getComputedStyle(e,ps||null);return {bi:s.backgroundImage,bg:s.backgroundColor,c:s.color}};
+ const st=(e,ps)=>{if(!vis(e))return null;const s=getComputedStyle(e,ps||null);return {bi:s.backgroundImage,bg:s.backgroundColor,c:s.color,acc:probe('color','var(--indigo)',e),tab:probe('backgroundImage','var(--tab-grad)',e),accBg:probe('backgroundColor','var(--acc-bg)',e)}};
  const ops=[...document.querySelectorAll('button')].filter(b=>vis(b)&&b.textContent.replace(/\s+/g,' ').trim()==='+ Операція').map(b=>({cls:b.className,...st(b)}));
  const item=document.querySelector('.side-item[aria-current=page],.side-item.on');
  return {acc:probe('color','var(--acc)'),ind:probe('color','var(--indigo)'),grad:probe('backgroundImage','var(--grad-accent)'),tab:probe('backgroundImage','var(--tab-grad)'),
@@ -56,14 +56,14 @@ def one_accent(page):
             check(r['item'] and r['itemBar'], f'{w}: немає активного пункту меню')
             check(r['itemBar']['bi'] == r['grad'], f'{w}: смужка активного пункту меню не градієнтом акценту: {r["itemBar"]}')
             check(r['item']['bi'] == r['tab'] and r['item']['bg'] == r['accBg'] and r['item']['c'] == r['acc'], f'{w}: активний пункт меню не тоном акценту: {r["item"]}')
-            check(r['link'] and r['link']['c'] == r['acc'], f'{w}: посилання «Усі платежі →» не кольору акценту: {r["link"]}')
+            check(r['link'] and r['link']['c'] == r['link']['acc'], f'{w}: посилання «Усі платежі →» не кольору акценту: {r["link"]}')
         else:
             check(r['tabBar'] and r['tabBar']['bi'] == r['grad'], f'{w}: смужка активної вкладки не градієнтом акценту: {r["tabBar"]}')
         # перемикач діапазону графіка: натиснутий тоном і кольором активного пункту меню, ненатиснутий без тону
-        check(r['chip'] and r['chip']['bi'] == r['tab'] and r['chip']['bg'] == r['accBg'] and r['chip']['c'] == r['acc'], f'{w}: натиснутий перемикач графіка не тоном акценту: {r["chip"]}')
+        check(r['chip'] and r['chip']['bi'] == r['chip']['tab'] and r['chip']['bg'] == r['chip']['accBg'] and r['chip']['c'] == r['chip']['acc'], f'{w}: натиснутий перемикач графіка не тоном акценту: {r["chip"]}')
         if desk:
-            check(r['chip'] == r['item'], f'{w}: натиснутий перемикач і активний пункт меню різного тону: {r["chip"]} / {r["item"]}')
-        check(r['chipOff'] and r['chipOff']['bi'] == 'none' and r['chipOff']['c'] != r['acc'], f'{w}: ненатиснутий перемикач графіка з тоном акценту: {r["chipOff"]}')
+            check(all(r['chip'][k] == r['item'][k] for k in ('bi', 'bg', 'c')) if r['chip']['acc'] == r['item']['acc'] else r['chip']['tab'] == 'none', f'{w}: натиснутий перемикач і активний пункт меню різного тону: {r["chip"]} / {r["item"]}')
+        check(r['chipOff'] and r['chipOff']['bi'] == 'none' and r['chipOff']['c'] != r['chipOff']['acc'], f'{w}: ненатиснутий перемикач графіка з тоном акценту: {r["chipOff"]}')
         # основна кнопка «Розподіл бюджету» на Бюджеті: той самий градієнт
         go_tab(page, 1)
         page.wait_for_timeout(450)

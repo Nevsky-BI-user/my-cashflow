@@ -219,10 +219,10 @@ def list_2000(page):
     _list(page, 2000, 1200)
 
 
-CHIPS = r"""(()=>{const amb=(()=>{const d=document.createElement('div');d.style.background='var(--amber-bg)';document.body.appendChild(d);const c=getComputedStyle(d).backgroundColor;d.remove();return c})();
-return {amb,chips:[...document.querySelectorAll('.chip-due,.o-bank-due')].map(e=>{const card=e.closest('.bcard'),chip=e.closest('.o-bank-card');
+CHIPS = r"""(()=>{const amb=e=>{const d=document.createElement('div');d.style.background='var(--amber-bg)';(e.closest('.p-overview')||document.body).appendChild(d);const c=getComputedStyle(d).backgroundColor;d.remove();return c};
+return {chips:[...document.querySelectorAll('.chip-due,.o-bank-due')].map(e=>{const card=e.closest('.bcard'),chip=e.closest('.o-bank-card');
 const name=chip?.querySelector('.o-bank-name')?.textContent||'';const bank=card?({privat:'Приват',mono:'Mono'})[(card.className.match(/bk-(\w+)/)||[])[1]]||'':/приват/i.test(name)?'Приват':/mono/i.test(name)?'Mono':'';
-return {bank,extra:e.classList.contains('extra'),late:e.classList.contains('late'),bg:getComputedStyle(e).backgroundColor,t:e.textContent}})}})()"""
+return {bank,amb:amb(e),extra:e.classList.contains('extra'),late:e.classList.contains('late'),bg:getComputedStyle(e).backgroundColor,t:e.textContent}})}})()"""
 
 
 def _chips(page):
@@ -235,8 +235,8 @@ def _chips(page):
     check('Приват' in by and 'Mono' in by, f'немає чипів погашення Приват і Mono: {s["chips"]}')
     p, m = by['Приват'], by['Mono']
     check(p['t'].endswith('21.10') and m['t'].endswith('21.10'), f'дати чипів: {p["t"]!r}, {m["t"]!r}')
-    check(not p['extra'] and not p['late'] and p['bg'] == s['amb'], f'Приват (обовʼязкове) не бурштиновий: {p}')
-    check(m['extra'] and m['bg'] != s['amb'], f'Mono (додатково) не нейтральний: {m}, бурштин {s["amb"]}')
+    check(not p['extra'] and not p['late'] and p['bg'] == p['amb'], f'Приват (обовʼязкове) не бурштиновий: {p}')
+    check(m['extra'] and m['bg'] != m['amb'], f'Mono (додатково) не нейтральний: {m}, бурштин {m["amb"]}')
     print(f'      Приват {p["bg"]}, Mono {m["bg"]}')
 
 

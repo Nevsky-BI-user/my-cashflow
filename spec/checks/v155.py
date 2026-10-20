@@ -15,32 +15,39 @@ TABS = [(0, 'Огляд'), (1, 'Бюджет'), (2, 'Потік'), (3, 'Плат
 # «пласкі» градієнти токенів (усі зупинки одного кольору) градієнтом не вважаються.
 SCAN = r"""()=>{
  const root=document.documentElement,cs0=getComputedStyle(root),tok=n=>cs0.getPropertyValue(n).trim();
- const probe=v=>{const d=document.createElement('div');d.style.color=v;document.body.appendChild(d);const c=getComputedStyle(d).color;d.remove();return c};
- const allowedText=new Set(['--acc','--green','--green-t','--red','--red-t','--orange','--orange-t','--warn','--pos','--neg','--yellow','--yellow-t'].map(n=>probe('var('+n+')')));
- const card=(()=>{const d=document.createElement('div');d.style.background='var(--card)';document.body.appendChild(d);const c=getComputedStyle(d).backgroundColor;d.remove();return c})();
+ const palettes=new Map();
+ const palette=e=>{
+  const scope=e.closest('.p-overview')||document.body;
+  if(palettes.has(scope))return palettes.get(scope);
+  const probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;scope.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
+  const p={scope:scope.classList.contains('p-overview')?'overview':'app',
+   allowedText:new Set(['--acc','--green','--green-t','--red','--red-t','--orange','--orange-t','--warn','--pos','--neg','--yellow','--yellow-t'].map(n=>probe('color','var('+n+')'))),
+   chipText:new Set(['--amber-t','--late-t'].map(n=>probe('color','var('+n+')'))),
+   card:probe('backgroundColor','var(--card)'),border:probe('borderTopColor','var(--border)'),accent:probe('borderTopColor','var(--acc)'),
+   accG:new Set(['--grad-accent','--tab-grad'].map(n=>probe('backgroundImage','var('+n+')')))};
+  palettes.set(scope,p);return p;
+ };
  const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'};
  const skip=e=>e.closest('[class*="bk-"],.bcard,.coin');
  const cols=s=>(s.match(/(rgba?|color)\([^)]*\)/g)||[]);
  const flat=bi=>{const c=cols(bi);return c.length>0&&c.every(x=>x===c[0])};
  const sat=c=>{const n=(c.match(/[\d.]+/g)||[]).map(Number);if(c.startsWith('color('))return 0;const [r,g,b,a]=[n[0]/255,n[1]/255,n[2]/255,n.length>3?n[3]:1];const mx=Math.max(r,g,b),mn=Math.min(r,g,b);return a<0.5?0:(mx-mn)};
- const bgi=v=>{const d=document.createElement('div');d.style.backgroundImage=v;document.body.appendChild(d);const c=getComputedStyle(d).backgroundImage;d.remove();return c};
- const accG=new Set([bgi('var(--grad-accent)'),bgi('var(--tab-grad)')]);
  const grads=[],tiles=[],texts={};
  for(const e of document.querySelectorAll('body *')){
   if(!vis(e)||skip(e))continue;
-  const s=getComputedStyle(e),bi=s.backgroundImage;
-  if(bi&&bi.includes('gradient')&&!flat(bi)&&!accG.has(bi)){
+  const s=getComputedStyle(e),bi=s.backgroundImage,p=palette(e);
+  if(bi&&bi.includes('gradient')&&!flat(bi)&&!p.accG.has(bi)){
    const scrim=/^linear-gradient\(rgba\(0, 0, 0, 0\)/.test(bi);/* затемнення фото цілі під підписом */
    if(!scrim)grads.push((e.getAttribute('class')||e.tagName)+' '+bi.slice(0,90));
   }
   if(/^(path|rect|circle|polygon|ellipse)$/.test(e.tagName)&&/url\(/.test(s.fill))grads.push('svg '+(e.getAttribute('class')||e.tagName)+' '+s.fill);
   if(e.classList.contains('kpi-ico')){
    let t=e.parentElement;while(t&&t!==document.body&&getComputedStyle(t).backgroundColor==='rgba(0, 0, 0, 0)')t=t.parentElement;
-   const ts=getComputedStyle(t);tiles.push({cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===card&&ts.backgroundImage==='none'});
+   const ts=getComputedStyle(t),funds=p.scope==='overview'&&t.classList.contains('kpi-funds'),expectedBorder=funds?p.accent:p.border;tiles.push({scope:p.scope,role:funds?'funds':'standard',borderOk:ts.borderTopColor===expectedBorder,cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===p.card&&ts.backgroundImage==='none'});
   }
   /* текст: лише елементи з власним текстовим вузлом; кільце, легенда, категорії й цілі мають кольори категорій */
   if([...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())&&!e.closest('.bd,.bud-cat,.bud-ico,.gtile,.goal-card,[data-cat]')){
-   const c=s.color;if(sat(c)>0.35&&!allowedText.has(c)){const k=c;(texts[k]=texts[k]||[]).push((e.getAttribute('class')||e.tagName).slice(0,30)+': '+e.textContent.trim().slice(0,20))}
+   const c=s.color,chipText=e.matches('.chip-due,.chip-due *,.o-bank-due,.o-bank-due *')&&p.chipText.has(c);if(sat(c)>0.35&&!p.allowedText.has(c)&&!chipText){const k=c;(texts[k]=texts[k]||[]).push((e.getAttribute('class')||e.tagName).slice(0,30)+': '+e.textContent.trim().slice(0,20))}
   }
  }
  return {acc:tok('--acc'),grads:[...new Set(grads)].slice(0,12),tiles,texts:Object.fromEntries(Object.entries(texts).map(([k,v])=>[k,[...new Set(v)].slice(0,4)]))};
@@ -53,7 +60,7 @@ def one_system(page):
     freeze(page, DAY)
     for theme in ('light', 'dark'):
         page.evaluate('t=>document.documentElement.dataset.theme=t', theme)
-        seen_tiles, borders = 0, set()
+        seen_tiles, borders = 0, {}
         # тло сторінки як у v154: дві мʼякі радіальні плями на body::before, видимі
         bg = page.evaluate("()=>{const s=getComputedStyle(document.body,'::before');return {d:s.display,c:s.content,n:(s.backgroundImage.match(/radial-gradient\(/g)||[]).length}}")
         check(bg['d'] != 'none' and bg['c'] != 'none' and bg['n'] == 2, f'{tag}/{theme}: тло сторінки без мʼяких плям v154: {bg}')
@@ -69,11 +76,12 @@ def one_system(page):
             check(all(t['ok'] for t in r['tiles']), f'{w}: KPI-плитка з кольоровою підкладкою або фоном не картки: {[t for t in r["tiles"] if not t["ok"]]}')
             check(not r['texts'], f'{w}: насичений колір тексту без змісту (не акцент, зелений, червоний чи помаранчевий): {r["texts"]}')
             seen_tiles += len(r['tiles'])
-            borders.update(t['bd'] for t in r['tiles'])
-            check(all(t['bdSat'] <= 0.15 for t in r['tiles']), f'{w}: KPI-плитка з кольоровою рамкою: {[t for t in r["tiles"] if t["bdSat"] > 0.15]}')
+            for t in r['tiles']:
+                borders.setdefault((t['scope'], t['role']), set()).add(t['bd'])
+            check(all(t['borderOk'] and (t['role'] == 'funds' or t['bdSat'] <= 0.15) for t in r['tiles']), f'{w}: KPI-плитка з кольоровою рамкою: {[t for t in r["tiles"] if not t["borderOk"] or (t["role"] != "funds" and t["bdSat"] > 0.15)]}')
         print(f'      {tag}/{theme}: KPI-плиток зі значком {seen_tiles}, градієнтів поза банками 0')
         check(seen_tiles >= 6, f'{tag}/{theme}: замало KPI-плиток для перевірки: {seen_tiles}')
-        check(len(borders) == 1, f'{tag}/{theme}: рамки KPI-плиток різні: {borders}')
+        check(all(len(values) == 1 for values in borders.values()), f'{tag}/{theme}: рамки KPI-плиток різні: {borders}')
         _bank_cards(page, f'{tag}/{theme}', desk)
 
 
