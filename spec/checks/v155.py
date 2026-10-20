@@ -19,7 +19,7 @@ SCAN = r"""()=>{
  const allowedText=new Set(['--acc','--green','--green-t','--red','--red-t','--orange','--orange-t','--warn','--pos','--neg','--yellow','--yellow-t'].map(n=>probe('var('+n+')')));
  const card=(()=>{const d=document.createElement('div');d.style.background='var(--card)';document.body.appendChild(d);const c=getComputedStyle(d).backgroundColor;d.remove();return c})();
  const vis=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=='hidden'};
- const skip=e=>e.closest('[class*="bk-"],.bcard,.coin');
+ const skip=e=>e.closest('[class*="bk-"],.bcard,.o-bank-card,.coin');
  const cols=s=>(s.match(/(rgba?|color)\([^)]*\)/g)||[]);
  const flat=bi=>{const c=cols(bi);return c.length>0&&c.every(x=>x===c[0])};
  const sat=c=>{const n=(c.match(/[\d.]+/g)||[]).map(Number);if(c.startsWith('color('))return 0;const [r,g,b,a]=[n[0]/255,n[1]/255,n[2]/255,n.length>3?n[3]:1];const mx=Math.max(r,g,b),mn=Math.min(r,g,b);return a<0.5?0:(mx-mn)};

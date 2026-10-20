@@ -2,7 +2,7 @@
 import re as _re
 from datetime import datetime as _dt
 
-from helpers import check, dialog, shot
+from helpers import check, dialog, shot, touch_drag
 
 SETR = """(el,v)=>{const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;s.call(el,String(v));el.dispatchEvent(new Event('input',{bubbles:true}))}"""
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
@@ -95,24 +95,50 @@ def wide(page):
 
 
 def mobile(page):
-    # Картки накладаються, гортаються вбік і відкривають історію.
+    # Картки гортаються жестом без прокрутки й відкривають історію.
     row = page.locator('.o-account-deck')
     check(row.count() == 1, 'на телефоні немає ряду рахунків')
     check(row.locator('.o-bank-card').count() == 3, 'у ряду не 3 рахунки')
     check(row.get_attribute('data-noswipe') == '1', 'ряд рахунків без data-noswipe')
-    st = row.evaluate("e=>({sw:e.scrollWidth,cw:e.clientWidth,ox:getComputedStyle(e).overflowX,snap:getComputedStyle(e).scrollSnapType})")
-    check(st['ox'] == 'auto', f'ряд рахунків не прокручується горизонтально: {st}')
-    check('x' in st['snap'], f'немає scroll-snap: {st["snap"]}')
-    check(st['sw'] > st['cw'], 'колода не має горизонтальної прокрутки')
     cards = row.locator('.o-bank-card')
-    overlap = cards.nth(1).evaluate('(e)=>e.getBoundingClientRect().left < e.previousElementSibling.getBoundingClientRect().right')
-    check(overlap, 'сусідні картки не накладаються')
-    if st['sw'] > st['cw']:
-        row.evaluate('e=>e.scrollLeft=e.scrollWidth')
-        page.wait_for_timeout(200)
-        check(row.evaluate('e=>e.scrollLeft') > 0, 'ряд рахунків не прокрутився')
-        row.evaluate('e=>e.scrollLeft=0')
-    page.wait_for_timeout(200)
+    check(row.evaluate("e=>getComputedStyle(e).overflowX") == 'hidden', 'Карусель має приховувати прокрутку')
+    check('Гортайте' not in page.locator('.o-account-section').inner_text(), 'Лишилася підказка гортання')
+    check('Операції' not in row.inner_text(), 'На картках лишився підпис операцій')
+    gradients = []
+    for bank, suffix in [('mono', '4388'), ('privat', '0882'), ('oschad', '4366')]:
+        card = row.locator('.bank-' + bank)
+        check(card.locator('.o-bank-number').inner_text() == '**** **** **** ' + suffix, bank + ': невірна маска номера')
+        gradients.append(card.evaluate('e=>getComputedStyle(e).backgroundImage'))
+        check(card.locator('.account-amounts b').first.evaluate('e=>getComputedStyle(e).color') == 'rgb(255, 255, 255)', bank + ': сума не біла')
+    check(len(set(gradients)) == 3 and all('gradient' in g for g in gradients), 'Банки без власних градієнтів')
+    rect = row.bounding_box()
+    first = cards.first.bounding_box()
+    second = cards.nth(1).bounding_box()
+    check(first['x'] >= rect['x'] and first['x'] + first['width'] <= rect['x'] + rect['width'], 'Основна картка обрізана')
+    check(second['x'] < rect['x'] + rect['width'] and second['x'] >= first['x'] + first['width'], 'Немає видимого краю сусідньої картки')
+    x, y = first['x'] + first['width'] * .75, first['y'] + first['height'] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x - 150, y, steps=12)
+    page.mouse.up()
+    page.wait_for_timeout(550)
+    check(cards.nth(1).get_attribute('aria-current') == 'true', 'Жест не перемкнув картку')
+    check(page.locator('.account-history-sheet').count() == 0, 'Жест помилково відкрив історію')
+    check(row.evaluate('e=>e.scrollLeft') == 0, 'Карусель створила прокрутку')
+    touch_drag(page, rect['x'] + 70, y, rect['x'] + 240, y, after=550)
+    check(cards.first.get_attribute('aria-current') == 'true', 'Дотик не повернув першу картку')
+    check(page.locator('.account-history-sheet').count() == 0, 'Дотик помилково відкрив історію')
+    cards.nth(1).focus()
+    page.keyboard.press('ArrowRight')
+    page.wait_for_timeout(550)
+    check(cards.nth(2).get_attribute('aria-current') == 'true', 'Стрілка не перемкнула картку')
+    page.emulate_media(reduced_motion='reduce')
+    check(row.locator('.o-account-track').evaluate('e=>getComputedStyle(e).transitionDuration') in ('0s', '1e-05s'), 'Рух не вимкнений при reduced-motion')
+    page.keyboard.press('ArrowLeft')
+    page.keyboard.press('ArrowLeft')
+    page.wait_for_timeout(100)
+    check(cards.first.get_attribute('aria-current') == 'true', 'Не вдалося повернути першу картку')
+    page.emulate_media(reduced_motion='no-preference')
     cards.first.click()
     history = page.locator('.account-history-sheet')
     history.wait_for(state='visible')
@@ -198,7 +224,7 @@ def cash_mobile(page):
 CHECKS = [
     ('Картки на ПК, форма, баланс, зарплатний один', 'desktop', desktop),
     ('ПК 1920: адаптивна ширина, шрифт 14, без дрібного', 'desktop', wide),
-    ('Ряд карток на телефоні прокручується', 'mobile', mobile),
+    ('Картки на телефоні: жест, номери, градієнти та історія', 'mobile', mobile),
     ('Рахунки на ПК 1280×800 і 1920×1080: ряд видно, «+» додає готівку', 'desktop', cash_desktop),
     ('Рахунки на телефоні 390: ряд видно, «+» додає готівку', 'mobile', cash_mobile),
 ]
