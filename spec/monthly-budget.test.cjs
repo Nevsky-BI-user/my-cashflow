@@ -6,7 +6,8 @@ const model=html.split('/* MONTHLY BUDGET MODEL */')[1].split('/* END MONTHLY BU
 const facts=html.slice(html.indexOf('function budgetRangeFacts('),html.indexOf('/* MONTHLY BUDGET MODEL */'));
 const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const pbDate=s=>new Date(s+'T12:00:00'),pbAdd=(d,n)=>{const q=new Date(d);q.setDate(q.getDate()+n);return q};
-const {monthlyMoney,monthlyValidate,monthlyBudgetModel}=new Function('pbIso','pbDate','pbAdd','pbDm',facts+model+';return{monthlyMoney,monthlyValidate,monthlyBudgetModel}')(iso,pbDate,pbAdd,iso);
+const dependencies=html.split(/\r?\n/).filter(l=>/^const (getDow|wdRange|pbIso)=|^function pbPayouts\(|^function pbObl\(|^function fpWd\(|function fpEnded\(|const crOk=/.test(l)).join('\n');
+const {monthlyMoney,monthlyValidate,monthlyBudgetModel,monthlySalaryEnvelope}=new Function('const fmtM=v=>String(v);\n'+dependencies+'\n'+facts+model+';return{monthlyMoney,monthlyValidate,monthlyBudgetModel,monthlySalaryEnvelope}')();
 const cats=[{id:1,name:'Food',limit:1},{id:2,name:'Health',limit:50}];
 const row={month_start:'2026-10-01',total_cents:100001,allocations:{1:30001,2:60000}};
 test('monthly money parses cents exactly and rejects invalid/unsafe inputs',()=>{
@@ -44,4 +45,66 @@ test('archived category snapshots and uncategorized facts are retained',()=>{
  const b=monthlyBudgetModel(saved,[{id:1,date:'2026-10-01',type:'expense',amount:.5,category_id:3},{id:2,date:'2026-10-01',type:'expense',amount:.25,category_id:999}],cats,2026,9,'2026-10-01');
  assert.equal(b.rows.find(c=>c.id==='3').remainingCents,50);
  assert.equal(b.rows.find(c=>c.id==='unallocated').factCents,25);
+});
+const salary={rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:600,salary_amount:400};
+const obligation={key:'fixed:1:2026-10-15',date:'2026-10-15',name:'Rent',amount_cents:25000,kind:'fixed'};
+test('salary envelope subtracts recurring commitments once even when already paid',()=>{
+ const fixed=[{id:1,name:'Rent',amount:250,type:'payment',day_of_month:15,active:true,paid:{'2026-10':true}},
+  {id:2,name:'Income excluded',amount:200,type:'income',day_of_month:15},
+  {id:3,name:'Inactive excluded',amount:200,type:'payment',day_of_month:15,active:false}];
+ const envelope=monthlySalaryEnvelope(salary,fixed,[],2026,9);
+ assert.equal(envelope.total_cents,100000);
+ assert.equal(envelope.mandatory_items.length,1);
+ assert.equal(envelope.mandatory_items[0].amount_cents,25000);
+ assert.equal(fixed[0].paid['2026-10'],true);
+ const saved={...envelope,allocations:{1:40000}};
+ assert.equal(monthlyValidate(saved),40000);
+ const b=monthlyBudgetModel(saved,[{id:1,date:'2026-10-02',type:'expense',amount:10,category_id:1},{id:2,date:'2026-10-15',type:'expense',amount:250,fixed_id:1}],cats,2026,9,'2026-10-20');
+ assert.equal(b.gross,100000);assert.equal(b.mandatory,25000);assert.equal(b.plan,75000);
+ assert.equal(b.fact,1000);assert.equal(b.remaining,74000);assert.equal(b.unallocated,35000);
+ assert.throws(()=>monthlyValidate({...saved,allocations:{1:75001}}));
+});
+test('mandatory snapshots validate dates, keys, cents and capacity, preserving legacy plans',()=>{
+ const saved={...row,mandatory_items:[obligation],allocations:{1:75001}};
+ assert.equal(monthlyValidate(saved),75001);
+ for(const item of [{...obligation,amount_cents:-1},{...obligation,amount_cents:.5},{...obligation,amount_cents:Number.MAX_SAFE_INTEGER+1},{...obligation,date:'2026-11-15'},{...obligation,date:'2026-10-99'},{...obligation,date:20261015},{...obligation,key:''},{...obligation,estimated:null},{...obligation,unknown:true}]){
+  assert.throws(()=>monthlyValidate({...saved,mandatory_items:[item],allocations:{}}));
+ }
+ assert.throws(()=>monthlyValidate({...saved,mandatory_items:[obligation,obligation],allocations:{}}));
+ const legacy=monthlyBudgetModel(row,[],cats,2026,9,'2026-10-03');
+ assert.equal(legacy.legacy,true);assert.equal(legacy.plan,row.total_cents);
+ const deficit=monthlyBudgetModel({...saved,total_cents:10000,allocations:{}},[],cats,2026,9,'2026-10-03');
+ assert.equal(deficit.plan,0);assert.equal(deficit.deficit,15000);assert.equal(deficit.remaining,0);
+});
+test('weekly commitments, end dates, active installment range and variable estimates',()=>{
+ const fixed=[{id:1,name:'Weekly',amount:10,period:'week',weekday:1,type:'payment',end_date:'2026-10-19',paid:{'W2026-10-05':true}},
+  {id:2,name:'Ended',amount:99,day_of_month:20,type:'payment',end_date:'2026-10-19'},
+  {id:3,name:'Variable',amount:30,day_of_month:8,type:'payment',variable:true}];
+ const credits=[{id:1,name:'Active',monthly_amount:25,payment_day:9,start_year:2026,start_month:9,total_payments:2,paid:{'2026-10':true}},
+  {id:2,name:'Expired',monthly_amount:99,payment_day:9,start_year:2026,start_month:7,total_payments:2}];
+ const env=monthlySalaryEnvelope(salary,fixed,credits,2026,9);
+ const items=env.mandatory_items;
+ assert.equal(items.filter(i=>i.name==='Weekly').length,3);
+ assert.equal(items.reduce((n,i)=>n+i.amount_cents,0),8500);
+ assert.equal(items.find(i=>i.name==='Variable').estimated,true);
+ assert.equal(new Set(items.map(i=>i.key)).size,items.length);
+});
+test('salary calendar includes neighboring shifted payouts and workday prorating',()=>{
+ const cfg={...salary,advance_day:31,salary_day:6};
+ // Sunday 31 Jan shifts into February; a configured Feb 31 is in March.
+ assert.equal(monthlySalaryEnvelope(cfg,[],[],2027,0).total_cents,40000);
+ assert.equal(monthlySalaryEnvelope(cfg,[],[],2027,1).total_cents,100000);
+ // Saturday 1 May 2027 shifts into April: include next month's salary.
+ assert.equal(monthlySalaryEnvelope({...salary,salary_day:1},[],[],2027,3).total_cents,140000);
+ const env=monthlySalaryEnvelope({...salary,rate:23000},[],[],2026,9);
+ // October advance and September remainder are both 11/22 working days.
+ assert.equal(env.total_cents,2300000);
+});
+test('generated labels fit snapshots and unsafe salary is rejected',()=>{
+ const label='Long '.repeat(100);
+ const env=monthlySalaryEnvelope(salary,[{id:1,name:label,amount:10,day_of_month:5,type:'payment'}],[{id:2,name:label,monthly_amount:20,payment_day:6,start_year:2026,start_month:9,total_payments:2}],2026,9);
+ assert.equal(env.mandatory_items.length,2);
+ assert.ok(env.mandatory_items.every(i=>i.name.length===240));
+ assert.equal(monthlyValidate(env),0);
+ assert.throws(()=>monthlySalaryEnvelope({...salary,advance_amount:Number.MAX_SAFE_INTEGER},[],[],2026,9));
 });

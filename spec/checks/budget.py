@@ -139,8 +139,10 @@ def future_period(page):
     page.locator('.side-arr').nth(1).click()
     check(page.locator('.p-budget').get_attribute('data-month')=='2026-11-01','next calendar month')
     check(num(kpi(page,'bud-spent'))==0,'future actual spend')
-    check(kpi(page,'bud-pool')=='Не задано','missing next month plan')
-    check(page.locator('.bud-plan').count()==0,'invented future plan line')
+    from checks.budget_period_parity import assert_unsaved_salary
+    assert_unsaved_salary(page,'2026-11-01')
+    line=page.locator('.bud-plan')
+    check(line.count()==1 and line.get_attribute('y1')==line.get_attribute('y2'),'future salary envelope must show a constant category limit')
 
 
 def mobile(page):

@@ -183,7 +183,8 @@ def month_mode(page):
     check(plan_ui is not None and abs(plan_ui-pool)<=1 and abs(fact_ui-actual/100)<=1, 'місячна картка Огляду не дорівнює факту + майбутнім дням')
     go_tab(page,1)
     check(page.locator('.p-budget').get_attribute('data-month')=='2026-10-01','Бюджет не на календарному місяці')
-    check(page.locator('.bud-pool .bud-kpi-v').inner_text()=='Не задано','прогноз Огляду підставлено замість збереженого місячного плану')
+    from checks.budget_period_parity import assert_unsaved_salary
+    assert_unsaved_salary(page)
     check(abs(num(page.locator('.bud-spent .bud-kpi-v').inner_text())-actual/100)<.01,'Бюджет показує не місячний факт')
     page.click('.side-pname')
     check(page.locator('.per-mode').count()==0,'Бюджет дозволяє перейти на період виплат')

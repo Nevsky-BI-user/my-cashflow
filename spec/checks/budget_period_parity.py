@@ -5,6 +5,18 @@ from checks.v157 import _nav, _snap, _bud_card
 
 DAY='2026-10-13'
 
+def assert_unsaved_salary(page, start='2026-10-01'):
+    """Незбережений місяць: зарплата й сирі зобов'язання, без прогнозних витрат."""
+    raw=page.evaluate("""()=>{const b=window.__calendarBudget,s=window.__cashSnap(),d=b.start.split('-').map(Number);return{budget:b,envelope:monthlySalaryEnvelope(s.salary,s.fixed,s.credits,d[0],d[1]-1)}}""")
+    b,e=raw['budget'],raw['envelope']
+    mandatory=sum(i['amount_cents'] for i in e['mandatory_items'])
+    net=max(0,e['total_cents']-mandatory)
+    check(b['start']==start and b['gross']==e['total_cents'] and b['mandatory']==mandatory,'calendar salary or mandatory total differs from raw monthly envelope')
+    check(b['plan']==net and b['unallocated']==net and b['remaining']==net-b['fact'],'unsaved calendar capacity must equal salary minus mandatory payments')
+    check(num(page.locator('.bud-pool .bud-kpi-v').inner_text())==e['total_cents']/100,'salary KPI differs from calendar payouts')
+    check(num(page.locator('.bud-day .bud-kpi-v').inner_text())==net/100,'category capacity KPI differs from salary minus commitments')
+    return b
+
 def verify(page):
     raw=page.evaluate("()=>({tx:window.__cashSnap().transactions,periods:window.__cashCore.projection.periods,pbs:window.__periodBudget,view:window.__budgetView})")
     v=raw['view']; start,end=v['start'],v['end']
@@ -42,7 +54,7 @@ def verify(page):
     mb=monthly['v']
     actual_month=sum(cents(t) for t in monthly['tx'] if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and '2026-10-01'<=t['date'][:10]<=DAY)
     check(mb['start']=='2026-10-01' and mb['fact']==actual_month,'Budget must use its own current calendar month')
-    check(mb['plan'] is None and page.locator('.bud-pool .bud-kpi-v').inner_text()=='Не задано','unsaved month inherited projection plan')
+    assert_unsaved_salary(page)
     check(abs(num(page.locator('.bud-spent .bud-kpi-v').inner_text())-actual_month/100)<.01,'monthly Budget fact differs from raw rows')
     print(f'      {vp} {start}..{end}: fact {fact/100}, plan {None if plan is None else plan/100}, weekly {total/100}')
     go_tab(page,0)
@@ -87,7 +99,8 @@ def unavailable(page):
     check(page.evaluate('window.__budgetView.plan') is None,'partial future month cannot have complete zero/partial plan')
     check('/' not in page.locator('.dv-bud-v,.o-bud-v').inner_text(),'unavailable Overview shows a numeric plan')
     go_tab(page,1)
-    check('Збереженого плану' in page.locator('.p-budget').inner_text() and page.locator('.p-budget').get_attribute('data-month')=='2026-10-01','independent monthly Budget lacks explanation')
+    assert_unsaved_salary(page)
+    check('Обов' in page.locator('.p-budget').inner_text(),'independent monthly Budget lacks mandatory payment explanation')
 
 
 CHECKS=[('budget_period_parity: all selected ranges desktop','desktop',parity),('budget_period_parity: all selected ranges mobile','mobile',parity),('budget_period_parity: February September crossmonth boundaries and exclusions','desktop',edges)]
