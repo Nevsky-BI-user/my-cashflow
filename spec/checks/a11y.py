@@ -1,4 +1,8 @@
 # Доступність: діалоги (role, aria-modal, Tab-трап, повернення фокуса), видимий фокус, контраст підписів і сум (WCAG ≥ 4.5)
+from io import BytesIO
+import re
+
+from PIL import Image
 from helpers import check, go_tab
 
 OPEN_DLG = "[...document.querySelectorAll('[role=dialog]')].map(d=>({l:d.getAttribute('aria-label'),m:d.getAttribute('aria-modal')}))"
@@ -110,11 +114,39 @@ def contrast_desktop_dark(page):
 
 
 def contrast_mobile(page):
-    page.evaluate("document.documentElement.setAttribute('data-theme','light')")
-    page.wait_for_timeout(150)
-    _pairs(page, [('підпис табки', '.tab-bar .tab-btn:not([aria-current]) span'),
-                  ('баланс картки', '.o-bank-card .account-amounts > span:first-child b'),
-                  ('заборгованість картки', '.o-bank-card .account-amounts > span:last-child b')])
+    # backgroundColor не описує градієнт: перевіряємо справжні пікселі під сумами.
+    # Тимчасово прозорі лише літери; геометрія, фон і підсвітка залишаються.
+    def luminance(rgb):
+        linear = [v / 255 / 12.92 if v / 255 <= .04045 else ((v / 255 + .055) / 1.055) ** 2.4 for v in rgb]
+        return sum(v * w for v, w in zip(linear, (.2126, .7152, .0722)))
+
+    for theme in ('light', 'dark'):
+        page.evaluate('(t)=>document.documentElement.setAttribute("data-theme",t)', theme)
+        page.wait_for_timeout(150)
+        _pairs(page, [('підпис табки', '.tab-bar .tab-btn:not([aria-current]) span')])
+        for bank in ('oschad', 'privat', 'mono'):
+            card = page.locator('.o-bank-card.bank-' + bank)
+            card.focus()
+            page.wait_for_timeout(550)
+            for amount in card.locator('.account-amounts b').all():
+                amount.scroll_into_view_if_needed()
+                fg = amount.evaluate('e=>getComputedStyle(e).color')
+                rgba = [float(v) for v in re.findall(r'[\d.]+', fg)]
+                alpha = rgba[3] if len(rgba) > 3 else 1
+                old = amount.get_attribute('style')
+                amount.evaluate('e=>{e.style.setProperty("color","transparent","important");e.style.setProperty("text-shadow","none","important")}')
+                try:
+                    pixels = Image.open(BytesIO(page.screenshot(clip=amount.bounding_box()))).convert('RGB')
+                finally:
+                    amount.evaluate('(e,s)=>s===null?e.removeAttribute("style"):e.setAttribute("style",s)', old)
+                ratios = []
+                for bg in set(pixels.getdata()):
+                    blended = [f * alpha + b * (1 - alpha) for f, b in zip(rgba[:3], bg)]
+                    a, b = sorted((luminance(blended), luminance(bg)))
+                    ratios.append((b + .05) / (a + .05))
+                minimum = min(ratios)
+                check(minimum >= 4.5, f'{theme}/{bank}/{amount.inner_text()}: мінімальний контраст на градієнті {minimum:.2f} < 4.5')
+                print(f'      {theme}/{bank}: {amount.inner_text()} — контраст на градієнті ≥ {minimum:.2f}')
 
 
 CHECKS = [
@@ -124,5 +156,5 @@ CHECKS = [
     ('Видимий контур фокуса на кнопці панелі', 'desktop', focus_visible),
     ('Контраст 7 пар на ПК (світла тема) ≥ 4.5', 'desktop', contrast_desktop),
     ('Контраст 7 пар на ПК (темна тема) ≥ 4.5', 'desktop', contrast_desktop_dark),
-    ('Контраст табки і сум на телефоні (світла тема) ≥ 4.5', 'mobile', contrast_mobile),
+    ('Контраст табки і сум банків на телефоні (обидві теми) ≥ 4.5', 'mobile', contrast_mobile),
 ]
