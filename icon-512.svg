@@ -1,25 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 64 64" fill="none" role="img" aria-labelledby="brand-title">
+  <title id="brand-title">Сімейний Кешфлоу</title>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#14b8a6"/>
-      <stop offset=".5" stop-color="#4f46e5"/>
-      <stop offset="1" stop-color="#a21caf"/>
+    <linearGradient id="brand-field" x1="10" y1="4" x2="52" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#243A46"/>
+      <stop offset="1" stop-color="#101F2A"/>
     </linearGradient>
-    <radialGradient id="glow" cx=".3" cy=".22" r=".75">
-      <stop offset="0" stop-color="#fff" stop-opacity=".35"/>
-      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="coin" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fff" stop-opacity=".24"/>
-      <stop offset="1" stop-color="#fff" stop-opacity=".06"/>
+    <linearGradient id="brand-flow" x1="18" y1="36" x2="38" y2="16" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#50C9BA"/>
+      <stop offset="1" stop-color="#A4F0D6"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <rect width="512" height="512" rx="112" fill="url(#glow)"/>
-  <circle cx="256" cy="256" r="168" fill="url(#coin)" stroke="#fff" stroke-opacity=".4" stroke-width="6"/>
-  <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M194 172C214 140 298 136 316 184C332 226 262 240 242 254C212 274 178 296 198 338C218 380 298 382 326 346" stroke-width="36"/>
-    <path d="M178 230H334M178 286H334" stroke-width="24"/>
-  </g>
-  <path d="M350 146l38-38m0 0h-32m32 0v32" fill="none" stroke="#fde68a" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="1" y="1" width="62" height="62" rx="17" fill="url(#brand-field)"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="16.5" stroke="#FFFFFF" stroke-opacity=".13"/>
+  <path d="M18 36V28C18 21.373 23.373 16 30 16H38M34 12L38 16L34 20" stroke="url(#brand-flow)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M46 28V36C46 42.627 40.627 48 34 48H26M30 44L26 48L30 52" stroke="#D9B979" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="25" y="34" width="3.5" height="6" rx="1.5" fill="#D9E8E9"/>
+  <rect x="31" y="29" width="3.5" height="11" rx="1.5" fill="#D9E8E9"/>
+  <rect x="37" y="24" width="3.5" height="16" rx="1.5" fill="#D9E8E9"/>
 </svg>

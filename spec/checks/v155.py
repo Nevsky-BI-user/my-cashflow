@@ -7,6 +7,9 @@ v156 (власник 13.10, «Індиго всюди»): акцент знов�
 дозволено рівно два градієнти: градієнт акценту (--grad-accent) і тон акценту (--tab-grad); будь-який інший градієнт, як і раніше, помилка."""
 from helpers import check, freeze, go_tab, settle
 
+# Огляд на ПК: багатошарові поверхні за явними --ov-* токенами.
+# Попередні правила пласких карток лишаються для телефона й інших вкладок.
+
 DAY = '2026-10-13'
 TABS = [(0, 'Огляд'), (1, 'Бюджет'), (2, 'Потік'), (3, 'Платежі'), (4, 'Цілі')]
 
@@ -17,13 +20,14 @@ SCAN = r"""()=>{
  const root=document.documentElement,cs0=getComputedStyle(root),tok=n=>cs0.getPropertyValue(n).trim();
  const palettes=new Map();
  const palette=e=>{
-  const scope=e.closest('.p-overview')||document.body;
+  const scope=e.closest('.p-overview')||e.closest('.shell.overview-active')||document.body;
   if(palettes.has(scope))return palettes.get(scope);
   const probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;scope.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
-  const p={scope:scope.classList.contains('p-overview')?'overview':'app',
+  const desktopOverview=matchMedia('(min-width:1024px)').matches&&!!e.closest('.shell.overview-active');
+  const p={scope:scope.classList.contains('p-overview')||desktopOverview?'overview':'app',desktopOverview,
    allowedText:new Set(['--acc','--green','--green-t','--red','--red-t','--orange','--orange-t','--warn','--pos','--neg','--yellow','--yellow-t'].map(n=>probe('color','var('+n+')'))),
    chipText:new Set(['--amber-t','--late-t'].map(n=>probe('color','var('+n+')'))),
-   card:probe('backgroundColor','var(--card)'),border:probe('borderTopColor','var(--border)'),accent:probe('borderTopColor','var(--acc)'),
+   card:probe('backgroundColor','var(--card)'),raised:probe('backgroundColor','var(--ov-raised)'),surfaceGradient:probe('backgroundImage','var(--ov-surface-gradient)'),border:probe('borderTopColor','var(--border)'),accent:probe('borderTopColor','var(--acc)'),
    accG:new Set(['--grad-accent','--tab-grad'].map(n=>probe('backgroundImage','var('+n+')')))};
   palettes.set(scope,p);return p;
  };
@@ -36,14 +40,15 @@ SCAN = r"""()=>{
  for(const e of document.querySelectorAll('body *')){
   if(!vis(e)||skip(e))continue;
   const s=getComputedStyle(e),bi=s.backgroundImage,p=palette(e);
-  if(bi&&bi.includes('gradient')&&!flat(bi)&&!p.accG.has(bi)){
+  const authoredSurface=p.desktopOverview&&e.matches('.p-overview.desk .surface')&&bi===p.surfaceGradient;
+  if(bi&&bi.includes('gradient')&&!flat(bi)&&!p.accG.has(bi)&&!authoredSurface){
    const scrim=/^linear-gradient\(rgba\(0, 0, 0, 0\)/.test(bi);/* затемнення фото цілі під підписом */
    if(!scrim)grads.push((e.getAttribute('class')||e.tagName)+' '+bi.slice(0,90));
   }
   if(/^(path|rect|circle|polygon|ellipse)$/.test(e.tagName)&&/url\(/.test(s.fill))grads.push('svg '+(e.getAttribute('class')||e.tagName)+' '+s.fill);
   if(e.classList.contains('kpi-ico')){
    let t=e.parentElement;while(t&&t!==document.body&&getComputedStyle(t).backgroundColor==='rgba(0, 0, 0, 0)')t=t.parentElement;
-   const ts=getComputedStyle(t),funds=p.scope==='overview'&&!matchMedia('(min-width:1024px)').matches&&t.classList.contains('kpi-funds'),expectedBorder=funds?p.accent:p.border;tiles.push({scope:p.scope,role:funds?'funds':'standard',borderOk:ts.borderTopColor===expectedBorder,cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===p.card&&ts.backgroundImage==='none'});
+   const ts=getComputedStyle(t),funds=p.scope==='overview'&&!matchMedia('(min-width:1024px)').matches&&t.classList.contains('kpi-funds'),raised=p.desktopOverview&&t.matches('.dv-kpi'),expectedBorder=funds?p.accent:p.border;tiles.push({scope:p.scope,role:funds?'funds':raised?'raised':'standard',borderOk:ts.borderTopColor===expectedBorder,cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===(raised?p.raised:p.card)&&ts.backgroundImage==='none'});
   }
   /* текст: лише елементи з власним текстовим вузлом; кільце, легенда, категорії й цілі мають кольори категорій */
   if([...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())&&!e.closest('.bd,.bud-cat,.bud-ico,.gtile,.goal-card,[data-cat]')){
@@ -66,6 +71,7 @@ def one_system(page):
         check(bg['d'] != 'none' and bg['c'] != 'none' and bg['n'] == 2, f'{tag}/{theme}: тло сторінки без мʼяких плям v154: {bg}')
         for i, name in TABS:
             go_tab(page, i)
+            page.mouse.move(2, 2)
             page.wait_for_timeout(450)
             settle(page)
             r = page.evaluate(SCAN)
@@ -87,7 +93,8 @@ def one_system(page):
 
 # картки банків: один тип градієнта (і кут) для всіх, позиції стопів строго зростають (без жорсткого стопу), без відблиску ::before
 BANKS = r"""()=>[...document.querySelectorAll('.bcard[class*=" bk-"]')].filter(e=>e.offsetParent).map(e=>{const s=getComputedStyle(e),b=getComputedStyle(e,'::before');
- const bi=s.backgroundImage;return {cls:e.className.split(' ').find(c=>c.startsWith('bk-')),bi,head:(bi.match(/^[a-z-]+\([^,]*/)||[''])[0],n:(bi.match(/-gradient\(/g)||[]).length,
+ const probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;e.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
+ const layered=!!e.closest('.shell.overview-active .p-overview.desk'),bi=s.backgroundImage;return {cls:e.className.split(' ').find(c=>c.startsWith('bk-')),layered,tokenOk:!layered||(bi===probe('backgroundImage','var(--ov-bank-gradient)')&&s.backgroundColor===probe('backgroundColor','var(--ov-bank-base)')&&s.borderTopColor===probe('borderTopColor','var(--bank-edge)')),edge:s.borderTopColor,bi,head:(bi.match(/^[a-z-]+\([^,]*/)||[''])[0],n:(bi.match(/-gradient\(/g)||[]).length,
  pos:(bi.match(/\d+(\.\d+)?%/g)||[]).map(parseFloat),glare:b.content!=='none'&&b.backgroundImage!=='none'}})"""
 
 
@@ -107,7 +114,12 @@ def _bank_cards(page, w, desk):
     page.wait_for_timeout(400)
     sm = page.evaluate(BANKS)
     check(len(sm) >= 3, f'{w}: у Налаштуваннях → Рахунки замало карток банків: {len(sm)}')
-    cards += sm
+    layered = [c for c in cards if c['layered']]
+    if desk:
+        check(len(layered) == len(cards) and all(c['tokenOk'] and c['n'] == 2 for c in layered), f'{w}: desktop Overview bank layers differ from authored tokens: {layered}')
+        check(len({c['edge'] for c in layered}) == len({c['cls'] for c in layered}), f'{w}: desktop bank edges do not identify bank roles: {layered}')
+    check(not any(c['layered'] for c in sm), f'{w}: Overview bank layers leaked into Settings')
+    cards = sm
     if desk:
         page.keyboard.press('Escape')
     go_tab(page, 0)

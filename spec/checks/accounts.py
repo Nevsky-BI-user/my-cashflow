@@ -25,18 +25,28 @@ def desktop(page):
     check(page.locator('.dv-acc-head .dv-acc-add').count() == 1, 'немає кнопки «+ Рахунок» у заголовку рахунків')
     for i in range(3):
         w = cards.nth(i).bounding_box()
-        min_height = 88 if page.viewport_size['height'] < 900 else 96
+        min_height = 82 if page.viewport_size['height'] < 800 else 88 if page.viewport_size['height'] < 900 else 96
         check(w['width'] >= 240 and min_height <= w['height'] <= 132, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, поза адаптивним розміром ≥240 × {min_height}-132')
     # monobank: чорна картка, «дебетова», кнопка ↻ «Оновити» без БД не падає й оновлює час
     mono = page.locator('.dv-cards .bcard-mono')
     check(mono.count() == 1, 'немає картки monobank')
     mt = mono.inner_text().lower()
     check('monobank' in mt and 'дебетова' in mt and 'оновлено' in mt, f'картка monobank: {mt!r}')
-    # v144 (вимога власника «кольори як у монобанку»): градієнт за банком, білий текст, тінь; mono чорна з відблиском, не така, як Ощад
-    bg = mono.evaluate("e=>{const s=getComputedStyle(e);return s.backgroundImage+' | '+s.backgroundColor}")
-    bg0 = cards.nth(0).evaluate("e=>{const s=getComputedStyle(e);return s.backgroundImage+' | '+s.backgroundColor}")
-    check('gradient' in bg and 'gradient' in bg0 and bg != bg0, f'картки банків без власних градієнтів: {bg[:60]} / {bg0[:60]}')
-    check(mono.evaluate("e=>getComputedStyle(e).boxShadow") != 'none' and mono.evaluate("e=>getComputedStyle(e.querySelector('.bcard-sum')).color") == 'rgb(255, 255, 255)', 'картка monobank без тіні або не білий текст суми')
+    # Спільне металеве покриття; банк визначають кольоровий край і монограма.
+    materials = cards.evaluate_all("""es=>es.map(e=>{const s=getComputedStyle(e);return {
+      edge:s.getPropertyValue('--bank-edge').trim(),mark:e.querySelector('.bank-mark')?.textContent,
+      gradient:s.backgroundImage
+    }})""")
+    check(all('gradient' in m['gradient'] and m['mark'] for m in materials)
+          and len({m['edge'] for m in materials}) == 3,
+          f'Bank material, monogram or identifying edge missing: {materials}')
+    paint = mono.evaluate("""e=>{const probe=document.createElement('span');
+      probe.style.color='var(--head)';e.appendChild(probe);
+      const expected=getComputedStyle(probe).color;probe.remove();
+      return {expected,actual:getComputedStyle(e.querySelector('.bcard-sum')).color,
+        shadow:getComputedStyle(e).boxShadow};}""")
+    check(paint['shadow'] != 'none' and paint['actual'] == paint['expected'],
+          f'Bank amount differs from its text token or has no shadow: {paint}')
     upd = page.locator('.dv-acc-head .dv-mono-upd')
     check(upd.count() == 1 and 'Оновити' in upd.inner_text(), 'немає кнопки «Оновити» для monobank')
     upd.click()
