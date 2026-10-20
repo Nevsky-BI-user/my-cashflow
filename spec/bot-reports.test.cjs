@@ -258,20 +258,54 @@ test('Ранковий підсумок і нагадування з фікст�
  const {pr,rep,fx}=await setup();
  const t=norm(rep.formatDigest(pr,fx.credits,fx.transactions,fx.today));
  assert.ok(t.startsWith('☀️ Доброго ранку! 12.10\nБаланс: -33 428 ₴\n'),t);
- assert.ok(t.includes('Спишеться сьогодні: 500 ₴\n· Прибирання: 500 ₴'),t);
- assert.ok(t.includes('Завтра, 13.10: 1 800 ₴\n· Інтернет: 300 ₴\n· Телефон (розстрочка): 1 500 ₴'),t);
+ assert.ok(t.includes('Заплановано на сьогодні: 500 ₴\n· Прибирання: 500 ₴'),t);
+ assert.ok(t.includes('Заплановано на завтра, 13.10: 1 800 ₴\n· Інтернет: 300 ₴\n· Телефон (розстрочка): 1 500 ₴'),t);
  assert.ok(!t.includes('Ecoflow'),'сьогоднішня розстрочка вже оплачена операцією');
  const due=rep.dueTomorrow(pr,fx.fixed,fx.credits,fx.today);
  assert.deepEqual(due.map(d=>d.callback),['pd:f:11:2026-10-13','pd:c:22:2026-10-13']);
  assert.ok(due.every(d=>Buffer.byteLength(d.callback)<=64),'callback_data до 64 байт');
 });
 
+test('19 жовтня: платіж Клод 10 800 не зменшується до доступних 1 826 у підсумку та нагадуванні',async()=>{
+ const {rep,E}=await setup();
+ const fixed=[{id:1,name:'Клод',amount:10800,day_of_month:20,period:'month',type:'payment',active:true,credit_ok:false}];
+ for(const balance of [1826,0,20000]){
+  const pr=E.financeProjection({accounts:[{id:1,name:'Готівка',kind:'cash',balance,active:true}],fixed,credits:[],transactions:[],categories:[]},
+   {asof:'2026-10-19',through:'2026-10-20'});
+  const event=pr.events.find(e=>e.occurrenceId==='fixed:1:2026-10');
+  assert.equal(event.amountCents,1080000);
+  assert.equal(event.cashDeltaCents,balance ? -Math.min(balance,10800)*100 : 0);
+  const due=rep.dueTomorrow(pr,fixed,[],'2026-10-19');
+  assert.equal(due.length,1);assert.equal(due[0].cents,1080000);
+  assert.ok(norm(rep.formatReminder(due[0])).includes('Завтра, 20.10: Клод, 10 800 ₴'));
+  const digest=norm(rep.formatDigest(pr,[],[],'2026-10-19'));
+  assert.ok(digest.includes('Заплановано на завтра, 20.10: 10 800 ₴\n· Клод: 10 800 ₴'),digest);
+ }
+});
+
+test('Нагадування обʼєднує власну й кредитну частини одного зобовʼязання',async()=>{
+ const {rep,E}=await setup();
+ const fixed=[{id:1,name:'Клод',amount:10800,day_of_month:20,period:'month',type:'payment',active:true,credit_ok:true}];
+ const pr=E.financeProjection({accounts:[{id:1,name:'Готівка',kind:'cash',balance:1826,active:true},
+  {id:2,name:'Кредитна',kind:'credit',debt:0,credit_limit:20000,active:true}],fixed,credits:[],transactions:[],categories:[]},
+  {asof:'2026-10-19',through:'2026-10-20',scenario:{selections:[{occurrenceId:'fixed:1:2026-10',accountId:2,amountCents:897400}]}});
+ const slices=pr.events.filter(e=>e.occurrenceId==='fixed:1:2026-10');
+ assert.equal(slices.length,2);assert.equal(slices.reduce((n,e)=>n+e.amountCents,0),1080000);
+ const before=JSON.stringify(pr);
+ const due=rep.dueTomorrow(pr,fixed,[],'2026-10-19');
+ assert.equal(due.length,1);assert.equal(due[0].cents,1080000);assert.equal(due[0].callback,'pd:f:1:2026-10-20');
+ const digest=norm(rep.formatDigest(pr,[],[],'2026-10-19'));
+ assert.ok(digest.includes('Заплановано на завтра, 20.10: 10 800 ₴\n· Клод: 10 800 ₴'),digest);
+ assert.equal((digest.match(/· Клод:/g)||[]).length,1);
+ assert.equal(JSON.stringify(pr),before,'форматування не змінює фінансові події');
+});
+
 test('Нагадування: без кнопки для погашення кредитки і списань Monobank',async()=>{
  const {rep}=await setup();
  const pr={events:[
-  {date:'2026-10-25',kind:'mandatory',occurrenceId:'fixed:14:2026-10',name:'Спортзал',cashDeltaCents:-90000},
-  {date:'2026-10-25',kind:'repay',accountId:4,name:'ПриватБанк',plannedRepaymentDate:'2026-10-25',cashDeltaCents:-925655},
-  {date:'2026-10-25',kind:'mandatory',occurrenceId:'fixed:13:2026-10-25',name:'Прибирання',cashDeltaCents:-50000},
+  {date:'2026-10-25',kind:'mandatory',occurrenceId:'fixed:14:2026-10',name:'Спортзал',amountCents:90000,cashDeltaCents:-90000},
+  {date:'2026-10-25',kind:'repay',accountId:4,name:'ПриватБанк',plannedRepaymentDate:'2026-10-25',amountCents:925655,cashDeltaCents:-925655},
+  {date:'2026-10-25',kind:'mandatory',occurrenceId:'fixed:13:2026-10-25',name:'Прибирання',amountCents:50000,cashDeltaCents:-50000},
   {date:'2026-10-25',kind:'variable',name:'Щоденні',cashDeltaCents:-100000},
   {date:'2026-10-26',kind:'mandatory',occurrenceId:'fixed:12:2026-10',name:'Інше число',cashDeltaCents:-1}]};
  const fixed=[{id:14,bank:'mono'},{id:13,bank:'cash',period:'week'}];
