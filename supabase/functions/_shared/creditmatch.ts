@@ -30,6 +30,6 @@ export function matchCredit(credits: CreditRow[], tx: CreditTx, paid: Set<string
 }
 
 // Ключі `${credit_id}|YYYY-MM` уже оплачених фактом місяців
-export function creditPaid(txs: { credit_id?: number | string | null; date?: string | null; type?: string }[]): Set<string> {
-  return new Set(txs.filter((t) => t.credit_id != null && t.type !== 'income').map((t) => String(t.credit_id) + '|' + String(t.date || '').slice(0, 7)));
+export function creditPaid(txs: { credit_id?: number | string | null; payment_due_date?: string | null; created_at?: string | null; date?: string | null; type?: string }[]): Set<string> {
+  return new Set(txs.filter((t) => t.credit_id != null && t.type !== 'income').map((t) => String(t.credit_id) + '|' + String(t.payment_due_date ?? t.date ?? t.created_at ?? '').slice(0, 7)));
 }

@@ -28,7 +28,7 @@ def _pay(page, shot_form=None):
     sel = dlg.locator('select[aria-label="Постійний платіж"]').input_value()
     print(f'      форма: сума {amt!r}, опис {desc!r}, постійний платіж {sel!r}')
     check(float(amt) == 3500 and desc == 'Садочок' and sel == 'f2', f'форма не заповнена: {amt!r} {desc!r} {sel!r}')
-    check(dlg.locator('input[type=date]').input_value() == DAY, 'дата форми не сьогодні')
+    check(dlg.locator('input[aria-label="Дата фактичної оплати"]').input_value() == DAY, 'дата форми не сьогодні')
     dlg.locator('input[placeholder="Сума"]').fill(str(PAID))
     dlg.locator('.acc-seg button[data-acc="l1"]').click()
     page.wait_for_timeout(150)
