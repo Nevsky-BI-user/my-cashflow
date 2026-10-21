@@ -1,3 +1,4 @@
+import { ownCashSeries } from './own-history.ts';
 // Звіти Telegram-бота з тієї самої проєкції, що й застосунок: Графік, Бюджет, Тиждень, Місяць, ранковий підсумок,
 // нагадування про платежі на завтра і запис «Оплачено». Чисті функції без I/O: їх перевіряють node-тести.
 import { financeProjection, lastPayout, payoutBudget, repayDate, type SalaryCfg } from './budget.ts';
@@ -5,7 +6,7 @@ import { day, money } from './finance-message.ts';
 
 type P = Record<string, any>;
 export type Tx = {
-  id?: number | string; account_id?: number | string | null; category_id?: number | string | null; fixed_id?: number | string | null; payment_due_date?: string | null;
+  id?: number | string; account_id?: number | string | null; category_id?: number | string | null; fixed_id?: number | string | null; payment_due_date?: string | null; transfer_id?: string | null;
   credit_id?: number | string | null; type: string; amount?: number | string; date?: string | null; created_at?: string; source?: string | null;
   description?: string | null;
 };
@@ -162,10 +163,10 @@ export function periodBudgetStart(pr: P, fi: P, txs: Tx[], allIds: string[], own
   const s = cp.start, e = cp.end, prev = plusDays(s, -1);
   const sn = pr.snapshot;
   const all = pastSeries(txs, allIds, sn.positiveOwnCents - sn.creditDebtCents, prev, today)[0];
-  const own = pastSeries(txs, ownIds, sn.positiveOwnCents, prev, today)[0].cents, debt = own - all.cents;
+  const own = ownCashSeries(fi.accounts || [], txs, sn.accounts || [], sn.positiveOwnCents, prev, today)[0].cents, debt = own - all.cents;
   const ow = new Set(ownIds.map(String)), al = new Set(allIds.map(String));
   const key = (t: Tx) => t.account_id == null ? '' : String(t.account_id);
-  const inc = (txs || []).reduce((n, t) => String(t.date || '').slice(0, 10) === s && t.type === 'income' && ow.has(key(t)) ? n + cents(t.amount) : n, 0);
+  const inc = (txs || []).reduce((n, t) => String(t.date || '').slice(0, 10) === s && t.transfer_id == null && t.type === 'income' && ow.has(key(t)) ? n + cents(t.amount) : n, 0);
   const at = financeProjection({ ...fi, transactions: (fi.transactions || []).filter((t: Tx) => String(t.date || '').slice(0, 10) < s) } as any, { asof: prev, through: e }) as P;
   // v154: резерв = лише білі (credit_ok=false) обовʼязкові й комісії, як резерв виплати в рушії; обовʼязкові з кредитки не резервуються; без платежів із картки за сценарієм
   const reserved = (x: P) => x.kind === 'fee' || (x.kind === 'mandatory' && x.creditEligible !== true && x.funding !== 'credit');
@@ -180,11 +181,12 @@ export function periodBudgetStart(pr: P, fi: P, txs: Tx[], allIds: string[], own
   }, 0);
   const dbt = Math.max(0, debt), due = repayDay ? Math.max(0, Math.min(dbt, dbt - crNew)) : 0;
   // v153: ручний бюджет періоду з налаштувань виплат (salary_config.budget_manual, гривні; null: авто), той самий, що бере рушій
-  const bm = fi && fi.salary ? fi.salary.budget_manual : null;
+  const monthly=cp.monthlyBudget;
+  const bm = monthly?.covered?monthly.rawTargetCents/100:fi && fi.salary ? fi.salary.budget_manual : null;
   const manual = bm != null && bm !== '' && isFinite(Number(bm)) && Number(bm) >= 0 ? Math.round(Number(bm) * 100) : null;
   // v152: кожна виплата гасить борг максимум (як рушій), належне лише в день погашення; v153: погашення лише після резерву й бюджету
   const plan = payoutBudget(ownAt, reserve, dbt, due, true, manual), budget = plan.targetCents;
-  const days = cp.periodDays || Math.max(1, isoDiff(s, e)), spent = cp.actualVariableCents || 0, avail = budget - spent;
+  const days = cp.periodDays || Math.max(1, isoDiff(s, e)), spent = cp.actualVariableCents || 0, avail = monthly?.covered ? cp.remainingTargetCents : budget - spent;
   return { start: s, end: e, own, income: inc, ownAt, reserve, debt: dbt, due, repayDay, repay: plan.repayCents, dueShort: plan.dueShortCents, manual, A: plan.availableCents, budget, days,
     daily: perDayOf(avail, today, s, e), spent, avail };
 }
@@ -247,13 +249,15 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
   let none = 0;
   for (const t of uniq(txs)) {
     const d = txDate(t);
-    if (t.type !== 'expense' || t.fixed_id != null || t.credit_id != null || d < cp.start || d > today) continue;
+    if (t.type !== 'expense' || t.transfer_id != null || t.fixed_id != null || t.credit_id != null || d < cp.start || d > today) continue;
     const c = t.category_id != null ? exp.find((x) => String(x.id) === String(t.category_id)) : null;
     if (c) fact[String(c.id)] = (fact[String(c.id)] || 0) + cents(t.amount);
     else none += cents(t.amount);
   }
   const plan: Record<string, P> = {};
-  for (const c of planSplit(pb.budget, cats)) plan[String(c.id)] = c;
+  const monthly=cp.monthlyBudget;
+  const planned=monthly?.covered?[...monthly.rawCategories.map((c:any)=>({...c,name:cats.find(x=>String(x.id)===c.id)?.name||'Категорія '+c.id})),{id:'unallocated',name:'Не розподілено',totalCents:monthly.rawUnallocatedCents}]:planSplit(pb.budget,cats);
+  for (const c of planned) plan[String(c.id)] = c;
   const rows: BudgetRow[] = [];
   const add = (id: string, name: string, color: string | null, f: number, p: number, noPlan = false) => {
     if (f <= 0 && p <= 0) return;
@@ -261,6 +265,7 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
     rows.push({ id, name, color, fact: f, plan: p, over, near, ...(noPlan ? { noPlan } : {}) });
   };
   for (const c of exp) add(String(c.id), String(c.name || ''), c.color || null, fact[String(c.id)] || 0, plan[String(c.id)]?.totalCents || 0);
+  for(const id of Object.keys(plan))if(id!=='unallocated'&&!exp.some(c=>String(c.id)===id))add(id,plan[id].name||'Категорія '+id,null,fact[id]||0,plan[id].totalCents||0);
   if (plan.unallocated) add('unallocated', plan.unallocated.name || 'Не розподілено', null, 0, plan.unallocated.totalCents || 0);
   if (none > 0) add('__none', 'Без категорії', null, none, 0, true);
   rows.sort((a, b) => b.fact - a.fact || b.plan - a.plan || (a.id < b.id ? -1 : 1));
@@ -379,7 +384,7 @@ export function monthModel(txs: Tx[], cats: P[], accounts: P[], today: string): 
   const pl = lastDayOf(py, pm), pk = `${py}-${String(pm).padStart(2, '0')}`;
   const curFrom = today.slice(0, 7) + '-01', prevFrom = pk + '-01';
   const prevTo = `${pk}-${String(Math.min(d, pl)).padStart(2, '0')}`, prevFullTo = `${pk}-${String(pl).padStart(2, '0')}`;
-  const list = uniq(txs).filter((t) => txDate(t) >= prevFrom && txDate(t) <= today);
+  const list = uniq(txs).filter((t) => t.transfer_id == null && txDate(t) >= prevFrom && txDate(t) <= today);
   const creditIds = new Set((accounts || []).filter((a) => a.kind === 'credit').map((a) => String(a.id)));
   const skip = new Set<Tx>();
   for (const inc of list.filter((t) => t.type === 'income' && t.account_id != null && creditIds.has(String(t.account_id)))) {
@@ -521,6 +526,7 @@ export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string): str
   const s = pr.snapshot, u = pr.untilPayout, tomorrow = plusDays(today, 1);
   const lines = [`☀️ Доброго ранку! ${day(today)}`, `Баланс: ${money(s.positiveOwnCents - s.creditDebtCents)}`];
   if (u && u.days > 0) lines.push(`Доступно до ${day(u.end)}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : ''));
+  if(pr.currentPeriod?.monthlyBudget?.covered)lines.push('Бюджет періоду: '+money(pr.currentPeriod.targetCents)+' · залишок '+money(pr.currentPeriod.remainingTargetCents)+(pr.currentPeriod.monthlyBudget.estimated?' (прогноз за останнім місячним планом)':''));
   const list = (title: string, empty: string, rows: { name: string; cents: number }[]) => rows.length
     ? [`${title}: ${money(rows.reduce((n, r) => n + r.cents, 0))}`, ...rows.map((r) => `· ${r.name}: ${money(r.cents)}`)]
     : [empty];

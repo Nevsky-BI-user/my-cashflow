@@ -91,8 +91,19 @@ def desktop(page):
     seed_demo(page, DAY, PATCH)
     ref, start, end, spend, ops, hot = expected(page, DAY)
     pb=page.evaluate("window.__periodBudget")
-    check(pb['A']==pb['ownAt']-pb['reserve']-pb['repay'],'legacy payout formula changed')
-    check(pb['budget']==(min(2000000,pb['A']) if pb['A']>1500000 else 1500000),'legacy payout target changed')
+    check(pb['A']==pb['ownAt']-pb['reserve']-pb['repay'],'payout allocation formula changed')
+    # Фікстура має збережений жовтень: план періоду — точні частки категорій
+    # і нерозподіленого залишку, а не старий мінімум 15 000 ₴.
+    saved=page.evaluate("window.__financeInput.monthly_budgets[0]")
+    check(pb['start'][:7]=='2026-10' and pb['end'][:7]=='2026-10','fixture period moved outside October')
+    first=date.fromisoformat(pb['start']).day-1
+    stop=date.fromisoformat(pb['end']).day-1
+    pool=max(0,saved['total_cents']-sum(x['amount_cents'] for x in saved.get('mandatory_items',[])))
+    parts=list(saved['allocations'].values())
+    parts.append(pool-sum(parts))
+    planned=sum(amount*stop//31-amount*first//31 for amount in parts)
+    check(pb['budget']==planned,'period target differs from saved monthly category slices')
+    check(pb['avail']==page.evaluate('window.__financeProjection.currentPeriod.remainingTargetCents'),'spendable ignores remaining monthly caps')
     go_tab(page,1)
     check(page.locator('.bud-kpis .bud-kpi').count()==4,'four monthly KPIs')
     check(num(kpi(page,'bud-pool'))==30000,'saved monthly total')
