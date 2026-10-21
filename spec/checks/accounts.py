@@ -116,7 +116,9 @@ def mobile(page):
     check('Гортайте' not in page.locator('.o-account-section').inner_text(), 'Лишилася підказка гортання')
     check('Операції' not in row.inner_text(), 'На картках лишився підпис операцій')
     gradients = []
-    for bank, suffix in [('mono', '4388'), ('privat', '0882'), ('oschad', '4366')]:
+    # Демореквізити належать рахунку; банк більше не визначає номер картки.
+    for account in page.evaluate('ACCOUNTS_DEMO.map(a=>({bank:a.bank,card_last4:a.card_last4}))'):
+        bank, suffix = account['bank'], account['card_last4']
         card = row.locator('.bank-' + bank)
         check(card.locator('.o-bank-number').inner_text() == '**** **** **** ' + suffix, bank + ': невірна маска номера')
         gradients.append(card.evaluate('e=>getComputedStyle(e).backgroundImage'))

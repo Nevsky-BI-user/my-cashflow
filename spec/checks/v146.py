@@ -25,8 +25,8 @@ def _days(t, r):
 # демо лише з даними поточного місяця: 01.10-12.10, тобто останні два тижні
 ONLY_RECENT = [('if(k>cur||k<cur-1)return[];', 'if(k>cur||k<cur)return[];')]
 # monobank у мінусі: каса (сума балансів) менша за власні кошти (лише додатні баланси)
-NEG_MONO = [("{id:'l3',name:'monobank',bank:'mono',kind:'debit',mono_account_id:'demo-mono',balance:12500,",
-             "{id:'l3',name:'monobank',bank:'mono',kind:'debit',mono_account_id:'demo-mono',balance:-3000,")]
+NEG_MONO = [("{id:'l3',name:'monobank',bank:'mono',card_last4:'4388',kind:'debit',mono_account_id:'demo-mono',balance:12500,",
+             "{id:'l3',name:'monobank',bank:'mono',card_last4:'4388',kind:'debit',mono_account_id:'demo-mono',balance:-3000,")]
 OLD_TX = [("dbTx,dbTxN):(function(){const p=new Date(now.getFullYear(),now.getMonth()-1,1);return demoTx(p.getFullYear(),p.getMonth()).concat(demoTx(now.getFullYear(),now.getMonth()))",
            "dbTx,dbTxN):(function(){const p=new Date(now.getFullYear(),now.getMonth()-1,1);return [{id:'old1',date:'2026-05-04',created_at:'2026-05-04T12:00:00.000Z',account_id:'l1',description:'Стара операція',amount:500,type:'expense',source:'manual'}].concat(demoTx(p.getFullYear(),p.getMonth())).concat(demoTx(now.getFullYear(),now.getMonth()))")]
 INFO = """(()=>{const s=document.querySelector('.dv-fc .fc-svg');const t=e=>e?e.textContent:null;

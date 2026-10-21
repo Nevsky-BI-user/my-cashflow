@@ -16,8 +16,8 @@ return {n:rows.length,bad:bad,sub:document.querySelectorAll('.p-flow.desk .flow-
 # елементи в .content із власною вертикальною прокруткою, яка справді прокручується
 INNER = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getComputedStyle(e).overflowY;return (o==='auto'||o==='scroll')&&e.scrollHeight>e.clientHeight+2}).map(e=>e.tagName+'.'+(e.className||'').toString().slice(0,30)+' '+e.scrollHeight+'>'+e.clientHeight)"""
 # фікстура: другий рахунок із боргом (monobank), дедлайн той самий, що в ПриватБанку
-DEBT2 = ("{id:'l3',name:'monobank',bank:'mono',kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:0,debt_month:null",
-         "{id:'l3',name:'monobank',bank:'mono',kind:'credit',mono_account_id:'demo-mono',balance:12500,debt:4200,debt_month:pbIso(dm)")
+DEBT2 = ("{id:'l3',name:'monobank',bank:'mono',card_last4:'4388',kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:0,debt_month:null",
+         "{id:'l3',name:'monobank',bank:'mono',card_last4:'4388',kind:'credit',mono_account_id:'demo-mono',balance:12500,debt:4200,debt_month:pbIso(dm)")
 CAL = """({sh:document.documentElement.scrollHeight,ih:innerHeight,
 ev:[...document.querySelectorAll('.ck-day .cal-ev')].map(e=>Math.round(e.getBoundingClientRect().height)),
 rep:[...document.querySelectorAll('.ck-day .cal-ev')].filter(e=>/Погашення .+? · /.test(e.innerText)).map(e=>e.dataset.date),more:(document.querySelector('.ck-day .ck-more')||{}).innerText||'',

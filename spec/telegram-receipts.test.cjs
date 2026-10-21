@@ -11,6 +11,64 @@ const transaction=(overrides={})=>({amount:120.5,type:'expense',currency:'UAH',d
 const batch=(transactions=[transaction(),transaction({amount:200,type:'income',description:'Повернення',date:'2026-10-20'})])=>
   ({kind:'transactions',complete:true,readable:'good',transactions});
 const single={has_total:true,amount:250,items_sum:250,description:'Чек',date:'2026-10-19',readable:'good'};
+test('all month forms and weekdays work independently of date format',async()=>{
+  const months=['січень|січня|січ','лютий|лютого|лют','березень|березня|бер','квітень|квітня|квіт','травень|травня|трав','червень|червня|черв','липень|липня|лип','серпень|серпня|серп','вересень|вересня|вер','жовтень|жовтня|жовт','листопад|листопада|лист','грудень|грудня|груд'];
+  const options={today:'2027-01-01',messageDate:Date.parse('2026-12-31T12:00:00Z')/1000};
+  for(let i=0;i<12;i++)for(const name of months[i].split('|')){
+    const h=harness([{...single,date_text:`15 ${name} 2026`}],options);await h.run();
+    assert.equal(h.state.rows[0]?.date,`2026-${String(i+1).padStart(2,'0')}-15`,name);
+  }
+  const weekdays=['нд|неділя','пн|понеділок','вт|вівторок','ср|середа','чт|четвер',"пт|п'ятниця",'сб|субота'];
+  for(let day=1;day<=7;day++)for(const prefix of weekdays[new Date(`2026-06-0${day}T00:00:00Z`).getUTCDay()].split('|')){
+    for(const text of [`2026-06-0${day}`,`${day}.06.2026`,`${day}/06/2026`,`${day} червня 2026`]){
+      const h=harness([{...single,date_text:`${prefix}, ${text}`}],options);await h.run();
+      assert.equal(h.state.rows[0]?.date,`2026-06-0${day}`,`${prefix} ${text}`);
+    }
+  }
+});
+test('calendar centuries and leap years remain bounded by message date',async()=>{
+  const options={today:'2027-02-01',messageDate:Date.parse('2026-10-20T12:00:00Z')/1000};
+  for(const [raw,expected] of [['29.02.24','2024-02-29'],['29 лютого','2024-02-29'],['29.02.2000','2000-02-29'],['31.12','2025-12-31'],['1 січня 00','2000-01-01']]){
+    const h=harness([{...single,date_text:raw}],options);await h.run();assert.equal(h.state.rows[0]?.date,expected,raw);
+  }
+  for(const raw of ['29.02.1900','29.02.2025','31.04.2026','01.01.27','2026-10-21','20/10.2026','03/04/05/06','пн 2026-10-20',null,'']){
+    const h=harness([batch([transaction(),transaction({amount:2,date_text:raw})])],options);await h.run();assert.equal(h.state.inserts.length,0,String(raw));
+  }
+  const h=harness([{...single,date_text:'01.01.00'}],{today:'2100-06-01',messageDate:Date.parse('2100-06-01T00:00:00Z')/1000});
+  await h.run();assert.equal(h.state.rows[0]?.date,'2100-01-01');
+});
+test('arbitrary suffixes match metadata independently of bank and network',async()=>{
+  for(const card_last4 of ['0001','1234','9999'])for(const bank of ['privat','mono','oschad',null]){
+    const h=harness([batch([transaction({bank,card_last4,card_network:'mastercard'})])],{accounts:[
+      {id:1,name:'Покупки',bank:bank??'other',card_last4:'2222'},
+      {id:2,name:'Моя картка',bank:bank??'other',card_last4,kind:'debit',active:true}]});
+    await h.run();assert.equal(h.state.rows[0]?.account_id,2,`${bank} ${card_last4}`);
+  }
+});
+test('collisions, cash, inactive and conflicting metadata remain manual',async()=>{
+  const card={id:1,name:'Картка',bank:'privat',card_last4:'1234',kind:'debit',active:true};
+  const cases=[[card,{...card,id:2}],[{...card,active:false}],[{...card,kind:'cash'}],[{...card,bank:'cash'}],
+    [{...card,name:'1234',card_last4:'9999'}],[{...card,name:'1234 9999',card_last4:null}],
+    [{...card,name:'12345678',card_last4:null}],[{...card,name:'1234',card_last4:'bad'}],[{...card,bank:'mono'}]];
+  for(const accounts of cases){
+    const h=harness([batch([transaction({bank:'privat',card_last4:'1234'})])],{accounts});await h.run();
+    assert.equal(h.state.rows[0]?.account_id,null,JSON.stringify(accounts));
+  }
+  for(const [name,card_last4] of [['Картка 1234','1234'],['Budget2026','2026'],['1234567890121234','1234']]){
+    const legacy=harness([batch([transaction({card_last4})])],{accounts:[{...card,card_last4:null,name}]});
+    await legacy.run();assert.equal(legacy.state.rows[0]?.account_id,null,name);
+  }
+  for(const invalid of ['123',1234,'12345']){
+    const h=harness([batch([transaction({bank:'privat',card_last4:invalid})])],{accounts:[card]});await h.run();assert.equal(h.state.rows[0]?.account_id,null);
+  }
+});
+test('active account query selects card suffix and filters active accounts',async()=>{
+  let columns,active;
+  const q={select(s){columns=s;return q},eq(k,v){if(k==='active')active=v;return q},order(){return q},then(resolve){resolve({data:[]})}};
+  const code=stripTypeScriptTypes(source.slice(source.indexOf('async function activeAccounts('),source.indexOf('// Лише для доходів:')));
+  await new Function('sb',code+';return activeAccounts(true);')({from:()=>q});
+  assert.ok(columns.split(',').includes('card_last4'));assert.equal(active,true);
+});
 function harness(responses, options={}) {
   const state={rows:[...(options.existing??[])],inserts:[],replies:[],txReplies:[],categories:[],requests:[],accountLoads:[],pending:options.pending??null};
   const sb={
@@ -79,7 +137,7 @@ test('visible date groups use Telegram Kyiv date and inherit selected card heade
     transaction({amount:3,date:null,date_text:'пн 19 жовтня'}),
   ]),bank:'privat',card_last4:'0882'};
   const h=harness([response],{today:'2026-10-22',messageDate:Date.parse('2026-10-20T21:30:00Z')/1000,
-    accounts:[{id:88,bank:'privat',name:'Картка 0882'},{id:89,bank:'privat',name:'Інша'}]});
+    accounts:[{id:88,bank:'privat',name:'Картка 0882',card_last4:'0882'},{id:89,bank:'privat',name:'Інша'}]});
   await h.run();
   assert.deepEqual(h.state.rows.map(r=>r.date),['2026-10-21','2026-10-20','2026-10-19']);
   assert.deepEqual(h.state.rows.map(r=>r.account_id),[88,88,88]);
@@ -108,7 +166,7 @@ test('unresolved date or wrong weekday rejects entire batch despite model ISO gu
 
 test('conflicting per-operation card hints do not inherit selected header',async()=>{
   const response={...batch([transaction({bank:'mono',card_network:'visa'}),transaction({amount:2})]),bank:'privat',card_last4:'0882'};
-  const h=harness([response],{accounts:[{id:8,bank:'mono',name:'Visa'},{id:9,bank:'privat',name:'0882'}]});
+  const h=harness([response],{accounts:[{id:8,bank:'mono',name:'Visa'},{id:9,bank:'privat',name:'0882',card_last4:'0882'}]});
   await h.run();assert.deepEqual(h.state.rows.map(r=>r.account_id),[8,9]);
 });
 
@@ -282,7 +340,7 @@ test('independent batch does not erase an existing income confirmation',async()=
 });
 
 const bankAccounts=[
-  {id:11,name:'Особиста 0882',bank:'privat'},
+  {id:11,name:'Особиста 0882',bank:'privat',card_last4:'0882'},
   {id:12,name:'Картка для покупок',bank:'mono'},
   {id:13,name:'Для платежів',bank:'oschad'},
 ];
@@ -302,26 +360,25 @@ test('Privat wrong card, unknown bank, VISA alone and invalid card number leave 
   for(const hint of [
     {bank:'privat',card_last4:'9999'},{bank:'unknown',card_network:'visa'},
     {bank:null,card_network:'visa'},{bank:'privat',card_last4:'1234567890120882'},
-    {bank:'mono',card_network:'mastercard'},
   ]){
     const h=harness([batch([transaction(hint)])],{accounts:bankAccounts});await h.run();
     assert.equal(h.state.rows[0].account_id,null,JSON.stringify(hint));
   }
 });
-test('ambiguous accounts need choices; exact Privat last4 or unique Mono Visa resolves them',async()=>{
+test('ambiguous accounts need choices; configured digits resolve them regardless of network',async()=>{
   const accounts=[...bankAccounts,{id:21,name:'Інша картка',bank:'privat'},{id:22,name:'Visa для витрат',bank:'mono'},{id:23,name:'Другий',bank:'oschad'}];
   const h=harness([batch([
     transaction({bank:'privat'}),transaction({bank:'privat',card_last4:'0882',amount:121}),
     transaction({bank:'mono',card_network:'visa',amount:122}),transaction({bank:'oschad',amount:123}),
   ])],{accounts});await h.run();
-  assert.deepEqual(h.state.rows.map(r=>r.account_id),[null,11,22,null]);
+  assert.deepEqual(h.state.rows.map(r=>r.account_id),[null,11,null,null]);
   const ambiguous=harness([batch([transaction({bank:'mono',card_network:'visa'})])],{
     accounts:[...accounts,{id:24,name:'Ще Visa',bank:'mono'}]});
   await ambiguous.run();assert.equal(ambiguous.state.rows[0].account_id,null);
 });
 test('unique Privat account works without a number in its configured name',async()=>{
   const h=harness([batch([transaction({bank:'privat',card_last4:'0882'})])],{
-    accounts:[{id:1,name:'Моя картка',bank:'privat'}]});
+    accounts:[{id:1,name:'Моя картка',bank:'privat',card_last4:'0882'}]});
   await h.run();assert.equal(h.state.rows[0].account_id,1);
 });
 test('explicit caption overrides conflicting visual bank for entire batch',async()=>{
@@ -397,7 +454,7 @@ test('Karabas Oct18 vs screenshot Oct20 same amount and account blocks whole bat
   for(const source of ['mono','manual','telegram']){
     const existing=[{id:1,amount:786,type:'expense',date:'2026-10-18',account_id:2,description:'Інший опис банку',source}];
     const h=harness([batch([transaction({amount:786,date:'2026-10-20',description:'Карбас',bank:'privat',card_last4:'0882'}),transaction({amount:50})])],
-      {existing,accounts:[{id:2,name:'Моя',bank:'privat'}]});
+      {existing,accounts:[{id:2,name:'Моя',bank:'privat',card_last4:'0882'}]});
     await h.run();
     assert.equal(h.state.inserts.length,0);assert.equal(h.state.rows.length,1);
     assert.match(h.state.replies.at(-1)[1],/18\.10\.2026, 786/);
