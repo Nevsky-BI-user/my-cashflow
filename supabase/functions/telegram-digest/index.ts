@@ -6,7 +6,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { loadFinance } from '../_shared/bot-data.ts';
 import { dueTomorrow, formatDigest, formatReminder, kyivNow } from '../_shared/bot-reports.ts';
-import { MAIN_KB, paidKb } from '../_shared/bot-kb.ts';
+import { paidKb } from '../_shared/bot-kb.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -29,7 +29,7 @@ function sameSecret(a: string, b: string): boolean {
   return diff === 0;
 }
 
-async function send(chatId: number, text: string, markup: unknown): Promise<boolean> {
+async function send(chatId: number, text: string, markup?: unknown): Promise<boolean> {
   try {
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
@@ -85,7 +85,8 @@ Deno.serve(async (req) => {
   const due = dueTomorrow(d.projection, d.fixed, d.credits, d.today);
   let sent = 0;
   for (const chatId of chats) {
-    if (await send(chatId, digest, MAIN_KB)) sent++;
+    // Підсумок не розкриває згорнуту користувачем панель кнопок.
+    if (await send(chatId, digest)) sent++;
     // Кожне нагадування окремим повідомленням: кнопка «Оплачено» редагує саме його
     for (const it of due) if (await send(chatId, formatReminder(it), paidKb(it.callback))) sent++;
   }

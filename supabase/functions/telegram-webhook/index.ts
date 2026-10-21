@@ -78,7 +78,7 @@ function categorizeLater(id: number) {
 }
 
 const HELP =
-  'Оберіть «➕ Дохід» або «➖ Витрата», потім «✍️ Текстом» чи «📷 Зображенням». У текстовому режимі достатньо суми й опису.\n\n' +
+  'Просто надішліть суму й опис або фото. Сума без знака — витрата, з плюсом — дохід. На зображенні напрямок визначається за самою операцією. Кнопки звітів згортаються після вибору; відкрити їх можна стандартною іконкою клавіатури Telegram.\n\n' +
   'Формат: сума і опис, наприклад\n' +
   '250 кава\n' +
   '+51000 зарплата (плюс = дохід)\n' +
@@ -95,12 +95,12 @@ const HELP =
   'дохід іде на рахунок зарплати. Операції Monobank приходять самі.';
 
 // Відповідь у чат; помилки Telegram не валять обробку апдейту
-// Постійна клавіатура під полем вводу: кнопки шлють звичайний текст, який роутер розуміє
+// Клавіатура Telegram згортається після вибору; її кнопки шлють звичайний текст роутеру.
 // Усі головні дії та кроки введення описані в спільному bot-kb.ts.
-const BTN = { ...KB_BTN, no: KB_BTN.cancel };
+const BTN = { ...KB_BTN, no: 'Ні, не додавати' };
 const CONFIRM_KB = { keyboard: [[{ text: BTN.yes }, { text: BTN.no }]], resize_keyboard: true, one_time_keyboard: true };
 
-async function reply(chatId: number, text: string, keyboard: unknown = MAIN_KB, html = false) {
+async function reply(chatId: number, text: string, keyboard: unknown = undefined, html = false) {
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
@@ -158,10 +158,13 @@ function matchWord(word: string, accs: Acc[]): Acc | null {
   if (!w) return null;
   const bank = BANK_WORDS[w];
   if (bank) {
-    const a = accs.find((x) => x.bank === bank || (bank === 'cash' && x.kind === 'cash'));
-    if (a) return a;
+    const matches = accs.filter((x) => x.bank === bank || (bank === 'cash' && x.kind === 'cash'));
+    return matches.length === 1 ? matches[0] : null;
   }
-  if (w.length >= 3) return accs.find((x) => x.name.toLowerCase().startsWith(w)) || null;
+  if (w.length >= 3) {
+    const matches = accs.filter((x) => x.name.toLowerCase().startsWith(w));
+    return matches.length === 1 ? matches[0] : null;
+  }
   return null;
 }
 
@@ -206,17 +209,18 @@ function accKeyboard(txId: number, accs: Acc[], currentId: number | null) {
 // а кнопки рахунків ідуть окремим повідомленням (одне повідомлення несе лише одну клавіатуру)
 async function replyTx(
   chatId: number, txId: number, t: TxView, accountId: number | null,
-  opts: { note?: string; restoreKb?: boolean; accs?: Acc[] } = {},
+  opts: { note?: string; restoreKb?: boolean; accs?: Acc[]; accountResolved?: boolean } = {},
 ) {
   const accs = opts.accs || await activeAccounts();
   const name = accs.find((a) => a.id === accountId)?.name ?? null;
   const text = txText(t, name) + (opts.note ? '\n' + opts.note : '');
-  const kb = accKeyboard(txId, accs, accountId);
-  if (!kb) return reply(chatId, text);
+  const kb = opts.accountResolved && name ? null : accKeyboard(txId, accs, accountId);
   if (opts.restoreKb) {
-    await reply(chatId, text);
-    return reply(chatId, 'Змінити рахунок:', kb);
+    await reply(chatId, text, MAIN_KB);
+    if (kb) await reply(chatId, 'Змінити рахунок:', kb);
+    return;
   }
+  if (!kb) return reply(chatId, text);
   return reply(chatId, text, kb);
 }
 
@@ -319,7 +323,7 @@ async function linkByCode(chatId: number, code: string, silent = false) {
     console.error('link update error:', error);
     return reply(chatId, 'Не вдалося привʼязати. Спробуйте ще раз.');
   }
-  return reply(chatId, 'Привʼязано до акаунту. ' + HELP);
+  return reply(chatId, 'Привʼязано до акаунту. ' + HELP, MAIN_KB);
 }
 
 // Telegram повторює апдейт, якщо не дочекався 200: дедуп по update_id (текст і фото)
@@ -650,6 +654,7 @@ type ReceiptPending = {
   expires: string;
   account_id?: number | null; // рахунок з підпису першої частини або за замовчуванням
   account_name?: string | null;
+  account_resolved?: boolean;
 };
 
 const isLiveReceipt = (p: any): p is ReceiptPending =>
@@ -755,7 +760,7 @@ async function addReceipt(
       const tx = inserted?.find((t: any) => t.source_id === row.source_id);
       if (!tx) continue;
       categorizeLater(tx.id);
-      await replyTx(chatId, tx.id, row, row.account_id, { accs });
+      await replyTx(chatId, tx.id, row, row.account_id, { accs, accountResolved: row.account_id != null });
     }
     return 'saved';
   }
@@ -773,6 +778,7 @@ async function addReceipt(
   if (cap?.matched) accountId = cap.acc?.id ?? null;
   else if (wasReceipt && pending0.account_id !== undefined) accountId = pending0.account_id ?? null;
   else accountId = receiptAccount(res, accs)?.id ?? null;
+  const accountResolved = accountId != null && (cap?.matched ? true : wasReceipt && pending0.account_id !== undefined ? pending0.account_resolved === true : true);
   const accountName = accs.find((a) => a.id === accountId)?.name ?? (wasReceipt ? pending0.account_name ?? null : null);
 
   if (total === null) {
@@ -789,6 +795,7 @@ async function addReceipt(
       expires: new Date(Date.now() + PENDING_TTL_MS).toISOString(),
       account_id: accountId,
       account_name: accountName,
+      account_resolved: accountResolved,
     };
     const saved = await replacePending(userId, pending0, state);
     if (!saved) return reply(chatId, 'Не вдалося зберегти стан або інша дія вже змінила його. Спробуйте ще раз.');
@@ -796,7 +803,7 @@ async function addReceipt(
     await reply(chatId,
       `📄 Частина чека без підсумку${sumPart}. Нічого не записано. ` +
       (itemsSum ? 'Надішліть наступне фото з рядком «СУМА» або натисніть «✅ Так, додати», щоб записати суму позицій. ' : 'Надішліть наступне фото з рядком «СУМА». ') +
-      'Щоб завершити без запису, натисніть «✖ Скасувати». Чекаю 10 хв.', itemsSum ? CONFIRM_KB : ENTRY_INPUT_KB);
+      'Щоб завершити без запису, надішліть /no. Чекаю 10 хв.', itemsSum ? CONFIRM_KB : wasReceipt ? MAIN_KB : undefined);
     return 'pending';
   }
 
@@ -826,7 +833,7 @@ async function addReceipt(
   categorizeLater(ins.id);
   await replyTx(chatId, ins.id, {
     amount: total, type: 'expense', description, receipt_parts: parts.length > 1 ? parts.map((x) => x.path) : null,
-  }, accountId, { accs });
+  }, accountId, { accs, accountResolved, restoreKb: wasReceipt });
   return 'saved';
 }
 
@@ -835,6 +842,7 @@ const PENDING_TTL_MS = 10 * 60 * 1000;
 type Pending = {
   amount: number; type: string; description: string; date: string; source_id: string; expires?: string;
   account_id?: number | null; account_name?: string | null; // рахунок операції (старі записи pending без нього)
+  account_resolved?: boolean;
 };
 
 const ddmm = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)}`;
@@ -957,7 +965,7 @@ async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = 
   const wk = fx && fx.week ? paidRange(true, p.date) : null;
   const note = fx ? `зараховано як оплату: ${fx.name} за ` + (wk ? `тиждень ${wk[0].slice(8, 10)}.${wk[0].slice(5, 7)}-${addDays(wk[1], -1).slice(8, 10)}.${addDays(wk[1], -1).slice(5, 7)}` : MONTH_ACC[Number(p.date.slice(5, 7)) - 1])
     : cr ? `зараховано як платіж розстрочки за ${MONTH_ACC[Number(p.date.slice(5, 7)) - 1]}` : undefined;
-  await replyTx(chatId, ins.id, { amount: p.amount, type: p.type, description: p.description }, accountId, { accs, restoreKb, note });
+  await replyTx(chatId, ins.id, { amount: p.amount, type: p.type, description: p.description }, accountId, { accs, restoreKb, note, accountResolved: p.account_resolved === true });
   return true;
 }
 
@@ -973,6 +981,7 @@ async function addTx(chatId: number, userId: string, updateId: number, type: 'in
   const p: Pending = {
     amount, type, description: r.rest, date: todayKyiv(), source_id: sourceId,
     account_id: acc?.id ?? null, account_name: acc?.name ?? null,
+    account_resolved: r.matched && r.acc != null,
   };
 
   // Дохід міг уже прийти з Monobank: не вставляємо, просимо підтвердження /yes
@@ -1000,12 +1009,12 @@ async function confirmPending(chatId: number, userId: string) {
   const p = data?.telegram_pending as Pending | ReceiptPending | null;
   if ((p as any)?.kind === 'entry') {
     if (liveEntry(p)) await entryHint(chatId, p, 'Тут немає операції для підтвердження. ');
-    else await reply(chatId, 'Час введення минув. Оберіть «Дохід» або «Витрата» знову.');
+    else await reply(chatId, 'Час введення минув. Надішліть суму й опис або фото знову.', MAIN_KB);
     return;
   }
   if (!p || !p.expires || Date.parse(p.expires) < Date.now()) {
     if (p && !await replacePending(userId, p, null)) return reply(chatId, 'Не вдалося очистити стан. Спробуйте ще раз.');
-    return reply(chatId, 'Немає що підтверджувати.');
+    return reply(chatId, 'Немає що підтверджувати.', p ? MAIN_KB : undefined);
   }
   if ((p as any).kind === 'receipt') {
     const rp = p as ReceiptPending;
@@ -1043,7 +1052,7 @@ async function confirmPending(chatId: number, userId: string) {
       return replyTx(chatId, ins.id, {
         amount: rp.items_sum, type: 'expense', description: rp.description || 'Чек',
         receipt_parts: rp.parts.length > 1 ? rp.parts.map((x) => x.path) : null,
-      }, rpAccount, { accs, note: 'Записано за сумою позицій: підсумку на фото не було.' });
+      }, rpAccount, { accs, restoreKb: true, accountResolved: rp.account_resolved === true, note: 'Записано за сумою позицій: підсумку на фото не було.' });
     }
     return;
   }
@@ -1174,7 +1183,6 @@ async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name:
     const fd = new FormData();
     fd.append('chat_id', String(chatId));
     fd.append('caption', caption.slice(0, 1024));
-    fd.append('reply_markup', JSON.stringify(MAIN_KB));
     fd.append('photo', new Blob([png as BlobPart], { type: 'image/png' }), name);
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: 'POST', body: fd });
     if (!r.ok) console.error('sendPhoto failed:', r.status, (await r.text()).slice(0, 200));
@@ -1344,9 +1352,9 @@ Deno.serve(async (req) => {
   const updateId = Number(update.update_id) || 0;
   const pending = prof.telegram_pending ?? null;
   const done = () => new Response('ok');
-  if (/^\/(?:no|cancel)$/i.test(text) || text === BTN.cancel) {
+  if (/^\/(?:no|cancel)$/i.test(text) || text === BTN.cancel || text === BTN.no) {
     if (pending && !await replacePending(prof.id, pending, null)) await reply(chatId, 'Не вдалося скасувати. Спробуйте ще раз.');
-    else await reply(chatId, 'Скасовано. Оберіть наступну дію.');
+    else await reply(chatId, 'Скасовано. Оберіть наступну дію.', pending ? MAIN_KB : undefined);
     return done();
   }
   const navigation = /^\/(?:menu|start|help|app|balance|chart|budget|week|month|last)$/i.test(text) || /^меню$/i.test(text) ||
@@ -1355,9 +1363,10 @@ Deno.serve(async (req) => {
     await reply(chatId, 'Не вдалося завершити введення. Спробуйте ще раз.', liveEntry(pending) ? entryKeyboard(pending) : MAIN_KB);
     return done();
   }
+  if (navigation && pending?.kind === 'entry') await reply(chatId, 'Введення завершено.', MAIN_KB);
   if (!navigation && pending?.kind === 'entry' && !liveEntry(pending)) {
     const cleared = await replacePending(prof.id, pending, null);
-    await reply(chatId, cleared ? 'Час введення минув або стан некоректний. Нічого не записано. Оберіть «Дохід» або «Витрата» знову.' : 'Не вдалося прочитати або очистити стан. Спробуйте ще раз.');
+    await reply(chatId, cleared ? 'Час введення минув або стан некоректний. Нічого не записано. Надішліть суму й опис або фото знову.' : 'Не вдалося прочитати або очистити стан. Спробуйте ще раз.', cleared ? MAIN_KB : undefined);
     return done();
   }
   if (/^\/yes$/i.test(text) || text === BTN.yes) { await confirmPending(chatId, prof.id); return done(); }
@@ -1391,7 +1400,7 @@ Deno.serve(async (req) => {
       outcome = await addTx(chatId, prof.id, updateId, pending.type, input[2], input[3], pending);
     } else { await entryHint(chatId, pending, 'Цей формат не підходить для обраного кроку. '); return done(); }
     if (outcome === 'saved' || outcome === 'duplicate') {
-      if (await replacePending(prof.id, pending, null)) await reply(chatId, outcome === 'duplicate' ? 'Цю операцію вже оброблено. Оберіть наступну дію.' : 'Готово. Оберіть наступну дію.');
+      if (await replacePending(prof.id, pending, null)) await reply(chatId, outcome === 'duplicate' ? 'Цю операцію вже оброблено. Оберіть наступну дію.' : 'Готово. Оберіть наступну дію.', MAIN_KB);
       else await reply(chatId, 'Операцію оброблено. Не додавайте її повторно; стан введення змінився або не очистився.');
     } else if (outcome !== 'pending') await entryHint(chatId, pending, 'Нічого не записано. Спробуйте ще раз. ');
     return done();
@@ -1406,12 +1415,12 @@ Deno.serve(async (req) => {
   if (/^\/balance$/i.test(text) || text === BTN.balance) await balance(chatId);
   else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, chartReport);
   else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, budgetReport);
-  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), MAIN_KB, true));
-  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), MAIN_KB, true));
+  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), undefined, true));
+  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), undefined, true));
   else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId);
-  else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP);
+  else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP, MAIN_KB);
   else if (/^\/app$/i.test(text) || text === BTN.app) await reply(chatId, 'Відкрити застосунок:', APP_KB);
-  else if (/^\/(?:menu|start)$/i.test(text) || /^меню$/i.test(text) || text === BTN.menu) await reply(chatId, 'Вітаю! Оберіть дію кнопками нижче.');
+  else if (/^\/(?:menu|start)$/i.test(text) || /^меню$/i.test(text) || text === BTN.menu) await reply(chatId, 'Вітаю! Оберіть дію кнопками нижче.', MAIN_KB);
   else if ((m = text.match(/^\/(income|дохід)\s+(\d+(?:[.,]\d{1,2})?)\s+(.+)$/is))) {
     await addTx(chatId, prof.id, updateId, 'income', m[2], m[3]);
   } else if ((m = text.match(/^\/expense\s+(\d+(?:[.,]\d{1,2})?)\s+(.+)$/is))) {
