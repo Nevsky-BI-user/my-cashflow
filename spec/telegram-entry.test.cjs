@@ -7,6 +7,8 @@ const root=path.join(__dirname,'../supabase/functions');
 const source=fs.readFileSync(path.join(root,'telegram-webhook/index.ts'),'utf8');
 const kbCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/bot-kb.ts'),'utf8').replace(/^export /gm,''));
 const kb=new Function(kbCode+';return {KB_BTN,MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB,APP_URL};')();
+const fixedCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/fixedmatch.ts'),'utf8').replace(/^export /gm,''));
+const fixedApi=new Function(fixedCode+';return {fixedCandidates,fixedOccurrence,fixedOccurrenceKey};')();
 const code=stripTypeScriptTypes(source.replace(/^import[\s\S]*?from\s+['"][^'"]+['"];\r?\n/gm,''));
 const NOW=Date.parse('2026-10-21T10:00:00Z');
 class Clock extends Date{constructor(...args){super(...(args.length?args:[NOW]))}static now(){return NOW}}
@@ -56,7 +58,7 @@ function harness(options={}){
     if(url.includes('/sendMessage'))state.messages.push(JSON.parse(init.body));
     return {ok:true,json:async()=>({ok:true})};
   };
-  const bindings={...kb,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
+  const bindings={...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
     creditPaid:()=>[],matchCredit:()=>null,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
     formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({})};
   new Function(...Object.keys(bindings),code+`;balance=async()=>{__track('balance')};last=async()=>{__track('last')};withFinance=async()=>{__track('finance')};`)(...Object.values(bindings));

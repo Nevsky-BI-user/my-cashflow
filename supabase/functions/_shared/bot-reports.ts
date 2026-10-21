@@ -5,7 +5,7 @@ import { day, money } from './finance-message.ts';
 
 type P = Record<string, any>;
 export type Tx = {
-  id?: number | string; account_id?: number | string | null; category_id?: number | string | null; fixed_id?: number | string | null;
+  id?: number | string; account_id?: number | string | null; category_id?: number | string | null; fixed_id?: number | string | null; payment_due_date?: string | null;
   credit_id?: number | string | null; type: string; amount?: number | string; date?: string | null; created_at?: string; source?: string | null;
   description?: string | null;
 };
@@ -492,7 +492,7 @@ export function formatMonth(m: MonthModel): string {
 // беремо їх із графіка розстрочок, якщо місяць ще не оплачено фактом.
 export function installmentsOn(credits: P[], txs: Tx[], date: string): { name: string; cents: number }[] {
   const y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7)), k = y * 12 + m - 1, last = lastDayOf(y, m);
-  const paid = new Set(uniq(txs).filter((t) => t.type === 'expense' && t.credit_id != null).map((t) => String(t.credit_id) + '|' + txDate(t).slice(0, 7)));
+  const paid = new Set(uniq(txs).filter((t) => t.type === 'expense' && t.credit_id != null).map((t) => String(t.credit_id) + '|' + String(t.payment_due_date ?? txDate(t)).slice(0, 7)));
   return (credits || []).filter((c) => {
     const first = Number(c.start_year) * 12 + Number(c.start_month);
     return k >= first && k < first + Number(c.total_payments) && Math.min(Number(c.payment_day), last) === Number(date.slice(8, 10)) &&
@@ -614,20 +614,20 @@ export function payCategory(kind: 'f' | 'c', item: P, history: Tx[], cats: P[]):
 // Рішення для кнопки «Оплачено»: період уже закритий будь-якою витратою з привʼязкою, або рядок для вставки
 export type PayRow = {
   amount: number; type: 'expense'; description: string; source: 'telegram'; source_id: string; date: string;
-  fixed_id: number | null; credit_id: number | null; category_id: number | null;
+  fixed_id: number | null; credit_id: number | null; payment_due_date: string; category_id: number | null;
 };
 export type PayPlan = { status: 'already'; date: string } | { status: 'insert'; row: PayRow };
 export function payPlan(o: { kind: 'f' | 'c'; item: P; eventDate: string; today: string; history: Tx[]; cats: P[] }): PayPlan {
   const weekly = o.kind === 'f' && o.item.period === 'week';
   const [a, b] = payRange(weekly, o.eventDate);
   const done = (o.history || []).find((t) => t.type === 'expense' && String(o.kind === 'f' ? t.fixed_id : t.credit_id) === String(o.item.id) &&
-    txDate(t) >= a && txDate(t) < b);
+    String(t.payment_due_date ?? txDate(t)) >= a && String(t.payment_due_date ?? txDate(t)) < b);
   if (done) return { status: 'already', date: txDate(done) };
   const amount = Number(o.kind === 'f' ? o.item.amount : o.item.monthly_amount) || 0;
   return {
     status: 'insert', row: {
       amount, type: 'expense', description: String(o.item.name || ''), source: 'telegram',
-      source_id: paySourceId(o.kind, String(o.item.id), o.eventDate, weekly), date: payDate(o.today, o.eventDate, weekly),
+      source_id: paySourceId(o.kind, String(o.item.id), o.eventDate, weekly), date: o.today, payment_due_date: o.eventDate,
       fixed_id: o.kind === 'f' ? Number(o.item.id) : null, credit_id: o.kind === 'c' ? Number(o.item.id) : null,
       category_id: payCategory(o.kind, o.item, o.history, o.cats),
     },

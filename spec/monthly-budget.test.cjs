@@ -6,7 +6,7 @@ const model=html.split('/* MONTHLY BUDGET MODEL */')[1].split('/* END MONTHLY BU
 const facts=html.slice(html.indexOf('function budgetRangeFacts('),html.indexOf('/* MONTHLY BUDGET MODEL */'));
 const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const pbDate=s=>new Date(s+'T12:00:00'),pbAdd=(d,n)=>{const q=new Date(d);q.setDate(q.getDate()+n);return q};
-const dependencies=html.split(/\r?\n/).filter(l=>/^const (getDow|wdRange|pbIso)=|^function pbPayouts\(|^function pbObl\(|^function fpWd\(|function fpEnded\(|const crOk=/.test(l)).join('\n');
+const dependencies=html.split(/\r?\n/).filter(l=>/^const (getDow|wdRange|pbIso)=|^function pbPayouts\(|^function pbObl\(|^function fpMonth\(|^function fpWd\(|function fpEnded\(|const crOk=/.test(l)).join('\n');
 const {monthlyMoney,monthlyValidate,monthlyBudgetModel,monthlySalaryEnvelope,monthlyPercentCents}=new Function('const fmtM=v=>String(v);\n'+dependencies+'\n'+facts+model+';return{monthlyMoney,monthlyValidate,monthlyBudgetModel,monthlySalaryEnvelope,monthlyPercentCents}')();
 const cats=[{id:1,name:'Food',limit:1},{id:2,name:'Health',limit:50}];
 const row={month_start:'2026-10-01',total_cents:100001,allocations:{1:30001,2:60000}};

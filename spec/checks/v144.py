@@ -258,7 +258,7 @@ def colors(page):
         check(kpi and all(k['bi'] == 'none' and k['ok'] for k in kpi), f'{theme}: KPI з кольоровою підкладкою або фоном не картки: {kpi}')
         action = page.evaluate("()=>{const e=document.querySelector('.overview-active .side-add'),s=getComputedStyle(e),d=document.createElement('div');d.style.background='var(--ov-accent)';e.appendChild(d);const expected=getComputedStyle(d).backgroundColor;d.remove();return {ok:s.backgroundColor===expected&&s.backgroundImage==='none',shadow:s.boxShadow}}")
         check(action['ok'] and action['shadow'] != 'none', f'{theme}: desktop primary action lost its accent surface role: {action}')
-        active = page.evaluate("()=>{const e=document.querySelector('.overview-active .side-item[aria-current=page]'),s=getComputedStyle(e),d=document.createElement('div');d.style.background='var(--acc-bg)';e.appendChild(d);const expected=getComputedStyle(d).backgroundColor;d.remove();return {ok:s.backgroundColor===expected&&s.backgroundImage==='none',shadow:s.boxShadow}}")
+        active = page.evaluate("()=>{const e=document.querySelector('.overview-active .side-item[aria-current=page]'),s=getComputedStyle(e),d=document.createElement('div');d.style.background='var(--ov-accent)';e.appendChild(d);const expected=getComputedStyle(d).backgroundColor;d.remove();return {ok:s.boxShadow.includes(expected)&&s.boxShadow.includes('inset'),shadow:s.boxShadow}}")
         check(active['ok'] and active['shadow'] != 'none', f'{theme}: desktop active navigation lost its inset accent role: {active}')
         page.mouse.move(2, 2)
         shot(page, f'v144-overview-{theme}-1280.jpg', full=False)

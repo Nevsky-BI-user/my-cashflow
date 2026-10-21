@@ -92,6 +92,16 @@ def fixed_ended(f, d):
     return bool(e) and (d if isinstance(d, str) else d.isoformat()) > e
 
 
+def payment_day(t):
+    """Дата зобовʼязання; фактична дата операції для каси залишається незмінною."""
+    return str(t.get('payment_due_date') or t.get('date') or t.get('created_at') or '')[:10]
+
+
+def fixed_in_month(f, month):
+    """Річний платіж виникає лише у вибраному місяці (1..12)."""
+    return f.get('period') != 'year' or str(f.get('month_of_year')) == str(month)
+
+
 def week_key(day):
     """Ключ тижня оплати: 'W' + понеділок тижня дати YYYY-MM-DD; некоректна дата: None."""
     if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day):
@@ -194,20 +204,21 @@ def next_period_plan(data, asof):
     adjustment = cents(sum(float(t['amount'])*(1 if t.get('type')=='income' else -1) for t in txs if t.get('account_id') is None and t.get('source')!='mono' and stamps and parse_ts(t['created_at'])>min(stamps)))
     own = max(0,total([max(0,cents(a.get('balance'))) for a in accounts]+[adjustment]))
     debt = total(max(0,cents(a.get('debt'))) for a in accounts if a.get('kind')=='credit')
-    paid = {(str(t['fixed_id']),str(t.get('date') or t.get('created_at') or '')[:7]) for t in txs if t.get('fixed_id') is not None and t.get('type')=='expense'}
-    paid |= {(str(t['fixed_id']),week_key(str(t.get('date') or t.get('created_at') or '')[:10])) for t in txs if t.get('fixed_id') is not None and t.get('type')=='expense'}
+    paid = {(str(t['fixed_id']),payment_day(t)[:7]) for t in txs if t.get('fixed_id') is not None and t.get('type')=='expense'}
+    paid |= {(str(t['fixed_id']),week_key(payment_day(t))) for t in txs if t.get('fixed_id') is not None and t.get('type')=='expense'}
+    paid_credit = {(str(t['credit_id']),payment_day(t)[:7]) for t in txs if t.get('credit_id') is not None and t.get('type')=='expense'}
     entries = []
     for k in range(start.year*12+start.month-1,end.year*12+end.month):
         y,m0=divmod(k,12); m=m0+1; last=calendar.monthrange(y,m)[1]
         for f in data.get('fixed',[]):
-            if f.get('active') is False or f.get('period')=='week' or (str(f.get('id')),f'{y:04d}-{m:02d}') in paid:
+            if f.get('active') is False or f.get('period')=='week' or not fixed_in_month(f,m) or (str(f.get('id')),f'{y:04d}-{m:02d}') in paid:
                 continue
             d=date(y,m,min(int(f['day_of_month']),last))
             if start<=d<end and not fixed_ended(f,d):
                 entries.append((cents(f['amount'])*(-1 if f['type']=='income' else 1),f.get('credit_ok') is True))
         for c in data.get('credits',[]):
             d=date(y,m,min(int(c['payment_day']),last)); first=int(c['start_year'])*12+int(c['start_month'])
-            if start<=d<end and first<=k<first+int(c['total_payments']):
+            if start<=d<end and first<=k<first+int(c['total_payments']) and (str(c.get('id')),f'{y:04d}-{m:02d}') not in paid_credit:
                 entries.append((cents(c['monthly_amount']),c.get('credit_ok') is True))
     # щотижневі постійні: кожна дата з ISO-днем weekday у [start; end), оплачений тиждень пропускаємо
     for f in data.get('fixed',[]):
@@ -385,17 +396,17 @@ def finance_projection(data, options):
         if asof<p['date']<=end_generation: events.append(make('payout:'+p['kind']+':'+p['date'],p['date'],'Аванс' if p['kind']=='advance' else 'Зарплата','payout',p['amountCents']))
     def iso_day(s): return date.fromisoformat(s).weekday()+1
     def weekly(f): return f.get('period')=='week'
-    # витрата з fixed_id закриває місяць своєї дати і тиждень пн-нд; витрата з credit_id: розстрочку свого місяця
+    # Привʼязана витрата закриває період зобовʼязання; без нього — період фактичної дати.
     paid=set()
     for t in txs:
         if t.get('type')=='expense' and t.get('fixed_id') is not None:
-            paid.add(sid(t['fixed_id'])+'|'+txdate(t)[:7])
-            if week_key(txdate(t)): paid.add(sid(t['fixed_id'])+'|'+week_key(txdate(t)))
-    paid_credit={sid(t['credit_id'])+'|'+txdate(t)[:7] for t in txs if t.get('type')=='expense' and t.get('credit_id') is not None}
+            paid.add(sid(t['fixed_id'])+'|'+payment_day(t)[:7])
+            if week_key(payment_day(t)): paid.add(sid(t['fixed_id'])+'|'+week_key(payment_day(t)))
+    paid_credit={sid(t['credit_id'])+'|'+payment_day(t)[:7] for t in txs if t.get('type')=='expense' and t.get('credit_id') is not None}
     for k in range(mi(asof),mi(end_generation)+1):
         y,m=ym(k); month=dt(y,m,1)[:7]; last=calendar.monthrange(y,m)[1]
         for i,f in enumerate(data.get('fixed',[])):
-            if weekly(f): continue
+            if weekly(f) or not fixed_in_month(f,m): continue
             d=dt(y,m,min(int(f['day_of_month']),last))
             if f.get('active') is False or d<asof or d>end_generation or fixed_ended(f,d) or (f.get('id') is not None and sid(f['id'])+'|'+month in paid): continue
             events.append(make('fixed:'+sid(f.get('id',i))+':'+month,d,f['name'],'income' if f.get('type')=='income' else 'mandatory',max(0,cents(f.get('amount'))),{'creditEligible':f.get('type')!='income' and f.get('credit_ok') is True}))
@@ -801,8 +812,8 @@ def fixed_paid(txs):
     for t in txs or []:
         if t.get('fixed_id') is None or t.get('type') != 'expense':
             continue
-        out.add((str(t['fixed_id']), str(t.get('date') or t.get('created_at') or '')[:7]))
-        wk = week_key(str(t.get('date') or t.get('created_at') or '')[:10])
+        out.add((str(t['fixed_id']), payment_day(t)[:7]))
+        wk = week_key(payment_day(t))
         if wk:
             out.add((str(t['fixed_id']), wk))  # тиждень пн-нд для щотижневих
     return out
@@ -826,7 +837,7 @@ def period_obl(start, end):
     for y, m in months_span(start, end):
         last = calendar.monthrange(y, m)[1]
         for f in snap['fixed'] or []:
-            if f.get('active') is False or f.get('period') == 'week':
+            if f.get('active') is False or f.get('period') == 'week' or not fixed_in_month(f,m):
                 continue
             if f.get('id') is not None and (str(f['id']), f'{y:04d}-{m:02d}') in PAID:
                 continue  # п. 13: оплачено в цьому місяці
@@ -837,6 +848,8 @@ def period_obl(start, end):
         for c in snap['credits'] or []:
             d = date(y, m, min(int(c['payment_day']), last))
             if not (start <= d < end):
+                continue
+            if any(t.get('type') == 'expense' and str(t.get('credit_id')) == str(c.get('id')) and payment_day(t)[:7] == f'{y:04d}-{m:02d}' for t in snap.get('account_tx') or []):
                 continue
             first = c['start_year'] * 12 + c['start_month']
             cur = d.year * 12 + (d.month - 1)

@@ -1,4 +1,4 @@
-const CACHE = 'cashflow-v175';
+const CACHE = 'cashflow-v176';
 
 const ASSETS = [
   './',

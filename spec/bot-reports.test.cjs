@@ -329,7 +329,7 @@ test('«Оплачено»: розбір callback лише з id, повторн
  const history=fx.transactions.filter(t=>t.fixed_id===11);
  const first=rep.payPlan({kind:'f',item,eventDate:'2026-10-13',today:'2026-10-12',history,cats:fx.categories});
  assert.equal(first.status,'insert');
- assert.deepEqual(first.row,{amount:300,type:'expense',description:'Інтернет',source:'telegram',source_id:'tgpaid:f:11:2026-10',date:'2026-10-12',
+ assert.deepEqual(first.row,{amount:300,type:'expense',description:'Інтернет',source:'telegram',source_id:'tgpaid:f:11:2026-10',date:'2026-10-12',payment_due_date:'2026-10-13',
   fixed_id:11,credit_id:null,category_id:7});
  // Друге натискання (або другий член сімʼї): запис уже в історії, вставки немає
  const again=rep.payPlan({kind:'f',item,eventDate:'2026-10-13',today:'2026-10-12',history:[...history,{id:999,...first.row}],cats:fx.categories});
@@ -348,8 +348,8 @@ test('«Оплачено»: розбір callback лише з id, повторн
  // Щотижневий платіж: період пн-нд, ключ за понеділком
  const wk=fx.fixed.find(f=>f.id===13);
  const w=rep.payPlan({kind:'f',item:wk,eventDate:'2026-10-19',today:'2026-10-18',history:[],cats:fx.categories});
- assert.equal(w.row.source_id,'tgpaid:f:13:W2026-10-19');
- assert.equal(w.row.date,'2026-10-19','нагадування в неділю про понеділок: оплата закриває тиждень події');
+ assert.equal(w.row.source_id,'tgpaid:f:13:W2026-10-19');assert.equal(w.row.date,'2026-10-18');
+ assert.equal(w.row.payment_due_date,'2026-10-19','нагадування в неділю про понеділок: оплата закриває тиждень події');
  assert.equal(rep.payPlan({kind:'f',item:wk,eventDate:'2026-10-12',today:'2026-10-12',history:fx.transactions.filter(t=>t.fixed_id===13),cats:fx.categories}).status,'insert');
  assert.equal(rep.payPlan({kind:'f',item:wk,eventDate:'2026-10-11',today:'2026-10-12',history:fx.transactions.filter(t=>t.fixed_id===13),cats:fx.categories}).status,'already');
  // Дата запису на межі місяця: подія 01.11, натиснули 31.10, запис закриває листопад

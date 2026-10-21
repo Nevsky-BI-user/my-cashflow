@@ -27,9 +27,9 @@ const prevMonthStart = (d: string) => {
 async function loadTxs(sb: any, from: string, today: string, since: number): Promise<BotTx[]> {
   const rows: BotTx[] = [];
   for (let page = 0; page < 100; page++) {
-    let q = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,type,amount,created_at,date,source,description')
+    let q = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,payment_due_date,type,amount,created_at,date,source,description')
       .lte('date', today).order('id', { ascending: true }).range(page * 1000, page * 1000 + 999);
-    q = Number.isFinite(since) ? q.or(`created_at.gt."${new Date(since).toISOString()}",date.gte.${from}`) : q.gte('date', from);
+    q = Number.isFinite(since) ? q.or(`created_at.gt."${new Date(since).toISOString()}",date.gte.${from},payment_due_date.gte.${from}`) : q.or(`date.gte.${from},payment_due_date.gte.${from}`);
     const { data, error } = await q;
     if (error) throw new Error('bot transactions lookup failed');
     rows.push(...(data || []));
@@ -42,7 +42,7 @@ export async function loadFinance(sb: any, today: string): Promise<FinanceData> 
   const [acc, fix, cred, sal, cats] = await Promise.all([
     sb.from('accounts').select('id,name,bank,kind,balance,debt,credit_limit,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
-    sb.from('fixed_payments').select('id,name,amount,day_of_month,period,weekday,bank,type,active,credit_ok,variable,end_date').eq('active', true),
+    sb.from('fixed_payments').select('id,name,amount,day_of_month,month_of_year,period,weekday,bank,type,active,credit_ok,variable,end_date').eq('active', true),
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
     // v153: усі колонки, з ними budget_manual (ручний бюджет періоду, міграція 30); до застосування міграції запит не падає
     sb.from('salary_config').select('*').order('id').limit(1).maybeSingle(),

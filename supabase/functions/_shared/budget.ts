@@ -18,7 +18,7 @@ export type Account = {
 export type AccTx = {
   id?: string | number; category_id?: string | number | null;
   account_id: number | string | null; type: string; amount: number | string; created_at: string; source?: string | null; date?: string | null;
-  fixed_id?: number | string | null; credit_id?: number | string | null;
+  fixed_id?: number | string | null; credit_id?: number | string | null; payment_due_date?: string | null;
 };
 // Поріг мінімальних витрат рахунку за календарний місяць (DESIGN.md, п. 11)
 export type MinSpendRow = { accountId: number; month: string; spent: number; min: number; fee: number; left: number; metOn?: string };
@@ -28,7 +28,7 @@ export type MinSpendRow = { accountId: number; month: string; spent: number; min
 export type Fixed = {
   id?: number | string; name: string; amount: number | string; day_of_month: number; type: string; active?: boolean;
   credit_ok?: boolean | null; variable?: boolean | null;
-  period?: string | null; weekday?: number | string | null; bank?: string | null; end_date?: string | null;
+  month_of_year?: number | string | null; period?: string | null; weekday?: number | string | null; bank?: string | null; end_date?: string | null;
 };
 // Подія постійного платежу з датою d (YYYY-MM-DD) після його end_date не генерується; end_date включно
 const fixedEnded = (f: Fixed, d: string): boolean => !!f.end_date && d > String(f.end_date).slice(0, 10);
@@ -38,7 +38,7 @@ export type Credit = {
 };
 export type SalaryCfg = { rate?: number | string | null; advance_amount?: number | string | null; salary_amount?: number | string | null; split_day: number; advance_day: number; salary_day: number; savings_pct?: number | null; budget_manual?: number | string | null };
 // paid: ключі `${fixed_id}|YYYY-MM` і `${fixed_id}|W<понеділок YYYY-MM-DD>` оплачених постійних платежів (п. 13), будує fixedPaid з операцій
-export type Snapshot = { accounts: Account[]; fixed: Fixed[]; credits: Credit[]; salary: SalaryCfg; savings_pct?: number | null; paid?: string[] };
+export type Snapshot = { accounts: Account[]; fixed: Fixed[]; credits: Credit[]; salary: SalaryCfg; savings_pct?: number | null; paid?: string[]; paid_credit?: string[] };
 
 export type Payout = { date: string; kind: 'advance' | 'salary'; amount: number };
 export type Obligation = { date: string; name: string; amount: number; credit_ok: boolean };
@@ -210,11 +210,11 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   // Після end_date (включно) постійний платіж чи дохід подій не дає.
   const ended=(f: Fixed,d: string)=>!!f.end_date&&d>String(f.end_date).slice(0,10);
   // Витрата з fixed_id закриває місяць своєї дати і тиждень пн-нд; витрата з credit_id: розстрочку свого місяця.
-  const paid=new Set(txs.filter(t=>t.type==='expense'&&t.fixed_id!=null).flatMap(t=>{const d=txDate(t);return [String(t.fixed_id)+'|'+d.slice(0,7),...(/^\d{4}-\d{2}-\d{2}$/.test(d)?[String(t.fixed_id)+'|W'+monday(d)]:[])];}));
-  const paidCredit=new Set(txs.filter(t=>t.type==='expense'&&t.credit_id!=null).map(t=>String(t.credit_id)+'|'+txDate(t).slice(0,7)));
+  const paid=new Set(txs.filter(t=>t.type==='expense'&&t.fixed_id!=null).flatMap(t=>{const d=String(t.payment_due_date??txDate(t)).slice(0,10);return [String(t.fixed_id)+'|'+d.slice(0,7),...(/^\d{4}-\d{2}-\d{2}$/.test(d)?[String(t.fixed_id)+'|W'+monday(d)]:[])];}));
+  const paidCredit=new Set(txs.filter(t=>t.type==='expense'&&t.credit_id!=null).map(t=>String(t.credit_id)+'|'+String(t.payment_due_date??txDate(t)).slice(0,7)));
   for(let k=monthIndex(asof);k<=monthIndex(endGeneration);k++){
     const [y,m]=ym(k),month=date(y,m,1).slice(0,7);
-    (data.fixed||[]).forEach((f,i)=>{const d=date(y,m,Math.min(Number(f.day_of_month),last(y,m)));if(weekly(f)||f.active===false||d<asof||d>endGeneration||ended(f,d)||(f.id!=null&&paid.has(String(f.id)+'|'+month)))return;events.push(make('fixed:'+String(f.id??i)+':'+month,d,f.name,f.type==='income'?'income':'mandatory',Math.max(0,cents(f.amount)),{creditEligible:f.type!=='income'&&f.credit_ok===true}));});
+    (data.fixed||[]).forEach((f,i)=>{const d=date(y,m,Math.min(Number(f.day_of_month),last(y,m)));if((f.period==='year'&&Number(f.month_of_year)!==m)||weekly(f)||f.active===false||d<asof||d>endGeneration||ended(f,d)||(f.id!=null&&paid.has(String(f.id)+'|'+month)))return;events.push(make('fixed:'+String(f.id??i)+':'+month,d,f.name,f.type==='income'?'income':'mandatory',Math.max(0,cents(f.amount)),{creditEligible:f.type!=='income'&&f.credit_ok===true}));});
     // Розстрочка з датою <= asof сплачена за планом; витрата з credit_id закриває платіж свого місяця.
     (data.credits||[]).forEach((c,i)=>{const d=date(y,m,Math.min(Number(c.payment_day),last(y,m))),first=Number(c.start_year)*12+Number(c.start_month);if(d<=asof||d>endGeneration||k<first||k>=first+Number(c.total_payments)||(c.id!=null&&paidCredit.has(String(c.id)+'|'+month)))return;events.push(make('installment:'+String((c as any).id??i)+':'+month,d,c.name+' (розстрочка)','mandatory',Math.max(0,cents(c.monthly_amount)),{creditEligible:c.credit_ok===true}));});
   }
@@ -555,7 +555,7 @@ export function fixedPaid(txs: AccTx[]): string[] {
   const out = new Set<string>();
   for (const t of txs || []) {
     if (t.fixed_id == null || t.type !== 'expense') continue;
-    const d = String(t.date || t.created_at || '').slice(0, 10);
+    const d = String(t.payment_due_date ?? t.date ?? t.created_at ?? '').slice(0, 10);
     out.add(String(t.fixed_id) + '|' + d.slice(0, 7));
     if (/^\d{4}-\d{2}-\d{2}$/.test(d)) out.add(String(t.fixed_id) + '|W' + addDays(d, 1 - isoWeekday(d)));
   }
@@ -583,7 +583,7 @@ function obligations(snap: Snapshot, start: string, end: string): Obligation[] {
     const ld = lastDay(y, m);
     const ym = `${y}-${String(m).padStart(2, '0')}`;
     for (const f of snap.fixed || []) {
-      if (f.active === false || f.period === 'week') continue;
+      if (f.active === false || f.period === 'week' || (f.period === 'year' && Number(f.month_of_year) !== m)) continue;
       if (f.id != null && paid.has(String(f.id) + '|' + ym)) continue; // п. 13: оплачено в цьому місяці
       const d = iso(mk(y, m, Math.min(Number(f.day_of_month), ld)));
       if (!(start <= d && d < end) || fixedEnded(f, d)) continue;
@@ -591,6 +591,7 @@ function obligations(snap: Snapshot, start: string, end: string): Obligation[] {
       out.push({ date: d, name: f.name, amount: f.type !== 'income' ? a : -a, credit_ok: f.credit_ok === true });
     }
     for (const c of snap.credits || []) {
+      if ((snap.paid_credit || []).includes(String(c.id) + '|' + ym)) continue;
       const d = iso(mk(y, m, Math.min(Number(c.payment_day), ld)));
       if (!(start <= d && d < end)) continue;
       // Та сама арифметика місяців, що в budget_pool.py і застосунку
@@ -822,7 +823,7 @@ export function nextPeriodPlan(data: NextPeriodInput, asof: string) {
   const adjustment = stamps.length ? cents(unassignedAdj(transactions, Math.min(...stamps))) : 0;
   const positiveOwnCents = Math.max(0, sum([...accounts.map(a => Math.max(0, cents(a.balance))), adjustment]));
   const debtCents = sum(accounts.filter(a => a.kind === 'credit').map(a => Math.max(0, cents(a.debt))));
-  const entries = obligations({ accounts, fixed: data.fixed, credits: (data.credits || []).map(c => ({ ...c, credit_ok: c.credit_ok === true })), salary: cfg, paid: fixedPaid(transactions) }, next.date, after.date);
+  const entries = obligations({ accounts, fixed: data.fixed, credits: (data.credits || []).map(c => ({ ...c, credit_ok: c.credit_ok === true })), salary: cfg, paid: fixedPaid(transactions), paid_credit: transactions.filter(t=>t.type==='expense'&&t.credit_id!=null).map(t=>String(t.credit_id)+'|'+String(t.payment_due_date??t.date??t.created_at??'').slice(0,7)) }, next.date, after.date);
   const mandatoryCents = sum(entries.filter(e => e.amount > 0).map(e => cents(e.amount)));
   const otherIncomeCents = sum(entries.filter(e => e.amount < 0).map(e => cents(-e.amount)));
   const eligibleMandatoryCents = sum(entries.filter(e => e.amount > 0 && e.credit_ok).map(e => cents(e.amount)));
