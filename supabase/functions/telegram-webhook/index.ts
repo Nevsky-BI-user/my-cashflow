@@ -33,7 +33,7 @@ const RECEIPT_SYSTEM =
   'date — дата проведення саме цієї операції, видима на зображенні, зокрема в заголовку її групи. ' +
   'Для кожної операції поверни date_text: точний видимий напис дати, включно з днем тижня, або null. Успадковуй заголовок дати лише в межах його групи. ' +
   'Видимі «сьогодні»/«вчора» та дату без року сервер визначить відносно опорної дати повідомлення за Києвом. Не підміняй відсутню дату опорною; невідома дата — null. Повну історичну дату зберігай. ' +
-  'Спільний заголовок вибраної картки (наприклад ПриватБанк, 0882) стосується всіх операцій, якщо окрема операція не має інших явних ознак. Поверни спільні bank/card_last4/card_network також на верхньому рівні JSON; 0882 — рядок зі збереженим початковим нулем. ' +
+  'Спільний заголовок вибраної картки стосується всіх операцій, якщо окрема операція не має інших явних ознак. Поверни спільні bank/card_last4/card_network також на верхньому рівні JSON; card_last4 — рівно чотири цифри рядком зі збереженими початковими нулями. ' +
   'Для кожної незалежної операції (і для одного чека) додай bank: "privat", "mono", "oschad" або null, ' +
   'card_last4: лише останні 4 цифри картки рядком або null, card_network: "visa", "mastercard" або null. ' +
   'Це банк і картка власника операції, НЕ банк отримувача чи термінала. Бери лише явно видимі ознаки; ' +
@@ -127,7 +127,7 @@ async function tgCall(method: string, body: Record<string, unknown>) {
 // Рахунки операцій. Сімʼя спільна: активні рахунки обох без фільтра user_id.
 // Рахунки Monobank (mono_account_id) для ручних операцій не пропонуються: їхні операції приходять з банку самі,
 // інакше витрата задвоїться. Виняток — фото/скриншоти: банк може визначатися із зображення.
-type Acc = { id: number; name: string; bank: string | null; kind: string; is_salary: boolean | null };
+type Acc = { id: number; name: string; bank: string | null; kind: string; is_salary: boolean | null; card_last4?: string | null; active?: boolean };
 const BANK_WORDS: Record<string, string> = {
   'ощад': 'oschad', 'oschad': 'oschad', 'приват': 'privat', 'privat': 'privat',
   'моно': 'mono', 'mono': 'mono', 'monobank': 'mono', 'готівка': 'cash', 'кеш': 'cash', 'cash': 'cash',
@@ -135,7 +135,7 @@ const BANK_WORDS: Record<string, string> = {
 
 async function activeAccounts(includeMono = false): Promise<Acc[]> {
   let query = sb.from('accounts')
-    .select('id,name,bank,kind,is_salary')
+    .select('id,name,bank,kind,is_salary,card_last4')
     .eq('active', true);
   if (!includeMono) query = query.is('mono_account_id', null);
   const { data, error } = await query
@@ -362,27 +362,39 @@ function receiptReference(timestamp?: number): string | null {
 
 function receiptVisibleDate(raw: unknown, reference: string | null): string | null {
   if (typeof raw !== 'string') return null;
-  const text = raw.trim().toLowerCase().replace(/[,]/g, ' ').replace(/\s+/g, ' ');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return receiptDate(text);
+  let text = raw.trim().toLowerCase().replace(/[,]/g, ' ').replace(/\s+/g, ' ');
+  const cap = reference && reference < todayKyiv() ? reference : todayKyiv();
+  const checked = (date: string) => date <= cap ? receiptDate(date) : null;
+  const weekdays = ['нд|неділя|неділю','пн|понеділок','вт|вівторок','ср|середа|середу','чт|четвер',"пт|п[’ʼ']ятниця|п[’ʼ']ятницю",'сб|субота|суботу'];
+  let weekday = -1;
+  for (let i = 0; i < weekdays.length; i++) {
+    const prefix = new RegExp('^(?:' + weekdays[i] + ')\\.?\\s+');
+    if (prefix.test(text)) { weekday = i; text = text.replace(prefix, ''); break; }
+  }
+  const finish = (date: string | null) => date && (weekday < 0 || new Date(date + 'T00:00:00Z').getUTCDay() === weekday) ? date : null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return finish(checked(text));
   if (text === 'сьогодні' || text === 'вчора') {
     if (!reference) return null;
-    return receiptDate(new Date(Date.parse(reference + 'T00:00:00Z') - (text === 'вчора' ? 86400000 : 0)).toISOString().slice(0, 10));
+    return finish(checked(new Date(Date.parse(reference + 'T00:00:00Z') - (text === 'вчора' ? 86400000 : 0)).toISOString().slice(0, 10)));
   }
-  const months = ['січня','лютого','березня','квітня','травня','червня','липня','серпня','вересня','жовтня','листопада','грудня'];
-  const words = text.match(/^(?:(пн|вт|ср|чт|пт|сб|нд)\.?\s+)?(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?$/);
-  const numeric = text.match(/^(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?$/);
+  const months = ['січень|січня|січ','лютий|лютого|лют','березень|березня|бер','квітень|квітня|квіт','травень|травня|трав','червень|червня|черв','липень|липня|лип','серпень|серпня|серп','вересень|вересня|вер','жовтень|жовтня|жовт','листопад|листопада|лист','грудень|грудня|груд'];
+  const words = text.match(/^(\d{1,2})\s+([а-яіїєґ]+)\.?(?:\s+(\d{4}|\d{2}))?$/);
+  const numeric = text.match(/^(\d{1,2})([./])(\d{1,2})(?:\2(\d{4}|\d{2}))?$/);
   if (!words && !numeric) return null;
-  const day = Number(words ? words[2] : numeric![1]);
-  const month = words ? months.indexOf(words[3]) + 1 : Number(numeric![2]);
-  const explicitYear = words ? words[4] : numeric![3];
-  if (!month || month > 12 || (!explicitYear && !reference)) return null;
-  let year = Number(explicitYear || reference!.slice(0, 4));
-  const iso = () => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  if (!explicitYear && iso() > reference!) year--;
-  const date = receiptDate(iso());
-  if (!date) return null;
-  if (words?.[1] && ['нд','пн','вт','ср','чт','пт','сб'][new Date(date + 'T00:00:00Z').getUTCDay()] !== words[1]) return null;
-  return date;
+  const day = Number(words ? words[1] : numeric![1]);
+  const month = words ? months.findIndex((names) => names.split('|').includes(words[2])) + 1 : Number(numeric![3]);
+  const rawYear = words ? words[3] : numeric![4];
+  if (!month || month > 12 || day < 1 || day > 31 || (!rawYear && !reference)) return null;
+  if (rawYear?.length === 2 && !reference) return null;
+  // Двозначний рік належить століттю опори; майбутнє не переносимо на 100 років назад.
+  const year = rawYear ? Number(rawYear) + (rawYear.length === 2 ? Math.floor(Number(reference!.slice(0, 4)) / 100) * 100 : 0) : Number(reference!.slice(0, 4));
+  for (let offset = 0; offset < (rawYear ? 1 : 9); offset++) {
+    const date = `${String(year - offset).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const valid = checked(date);
+    // Шукаємо календарний рік, а не підганяємо день тижня.
+    if (valid) return finish(valid);
+  }
+  return null;
 }
 
 function normalizeReceipt(r: any, reference: string | null): any {
@@ -519,22 +531,15 @@ function receiptBankHint(r: any): ReceiptBankHint {
   };
 }
 
-// Лише однозначний збіг. Видимий номер іншої картки ПриватБанку не підміняємо своєю.
+// Лише однозначний збіг із налаштованим рахунком; невідому картку не підміняємо іншою.
 function receiptAccount(r: any, accs: Acc[]): Acc | null {
   const hint = receiptBankHint(r);
-  if (!hint.bank || (r?.card_last4 != null && hint.card_last4 === null)) return null;
-  let candidates = accs.filter((a) => a.bank === hint.bank);
-  if (hint.bank === 'privat') {
-    if (hint.card_last4 && hint.card_last4 !== '0882') return null;
-    if (hint.card_last4 === '0882') {
-      const exact = candidates.filter((a) => /(?:^|\D)0882(?:\D|$)/.test(a.name));
-      if (exact.length) candidates = exact;
-    }
-  }
-  if (hint.bank === 'mono') {
-    if (hint.card_network !== 'visa') return null;
-    if (candidates.length > 1) candidates = candidates.filter((a) => /\bvisa\b/i.test(a.name));
-  }
+  if (r?.card_last4 != null && hint.card_last4 === null) return null;
+  let candidates = accs.filter((a) => a.active !== false && a.kind !== 'cash' && a.bank !== 'cash');
+  if (hint.bank) candidates = candidates.filter((a) => a.bank === hint.bank);
+  if (hint.card_last4) {
+    candidates = candidates.filter((a) => a.card_last4 === hint.card_last4);
+  } else if (!hint.bank) return null;
   return candidates.length === 1 ? candidates[0] : null;
 }
 
