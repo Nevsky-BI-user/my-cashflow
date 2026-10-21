@@ -50,15 +50,18 @@ def surface_layers(page):
         page.evaluate('t=>document.documentElement.dataset.theme=t', theme)
         page.wait_for_timeout(1000)
         roles = page.locator('.p-overview.desk').evaluate("""e=>{
-          const s=getComputedStyle(e),names=['--ov-canvas','--ov-surface','--ov-raised','--ov-inset'];
+          const s=getComputedStyle(e),names=['--bg','--card','--card2','--border'];
           return names.map(n=>s.getPropertyValue(n).trim());
         }""")
         check(all(roles) and len(set(roles)) == 4, f'{theme}: material layers are not distinct {roles}')
         panel = page.locator('.dv-fc')
         material = panel.evaluate("""e=>{const s=getComputedStyle(e);return {
-          shadow:s.boxShadow,background:s.backgroundImage,animation:s.animationName,opacity:s.opacity
+          shadow:s.boxShadow,background:s.backgroundColor,animation:s.animationName,opacity:s.opacity,
+          canvas:getComputedStyle(document.body).backgroundImage,
+          glass:getComputedStyle(document.querySelector('.side')).backdropFilter
         }}""")
-        check(material['shadow'] != 'none' and material['background'] != 'none',
+        check(material['shadow'] != 'none' and material['background'] == 'rgb(255, 255, 255)'
+              and 'radial-gradient' in material['canvas'] and 'blur' in material['glass'],
               f'{theme}: missing layered panel material {material}')
         check('overview-arrive' in material['animation'] and material['opacity'] == '1',
               f'{theme}: entrance animation missing or does not finish {material}')

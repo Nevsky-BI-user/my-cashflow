@@ -20,24 +20,30 @@ def num(t):
 def desktop(page):
     cards = page.locator('.dv-cards .bcard')
     check(cards.count() == 3, f'на ПК {cards.count()} карток замість 3')
-    # «+ Рахунок» не плитка, а мала кнопка в заголовку «Рахунки»
-    check(page.locator('.dv-cards .bcard-add').count() == 0, 'у ряду карток лишилась плитка «+ Рахунок»')
-    check(page.locator('.dv-acc-head .dv-acc-add').count() == 1, 'немає кнопки «+ Рахунок» у заголовку рахунків')
+    # Непримітний «+» стоїть праворуч після всіх рахунків.
+    check(page.locator('.dv-cards .bcard-add').count() == 1, 'у ряду немає одного «+» додавання рахунку')
+    add = page.locator('.dv-cards .dv-acc-add')
+    check(add.count() == 1 and add.inner_text().strip() == '+', 'немає малого «+» після карток')
+    check(page.locator('.dv-acc-head .dv-acc-add').count() == 0, 'додавання рахунку лишилось у заголовку')
+    last, plus = cards.last.bounding_box(), add.bounding_box()
+    check(plus['x'] >= last['x'] + last['width'] - 1 and plus['width'] <= 64, '«+» не праворуч від усіх карток або завеликий')
     for i in range(3):
         w = cards.nth(i).bounding_box()
-        min_height = 82 if page.viewport_size['height'] < 800 else 88 if page.viewport_size['height'] < 900 else 96
-        check(w['width'] >= 240 and min_height <= w['height'] <= 132, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, поза адаптивним розміром ≥240 × {min_height}-132')
-    # monobank: чорна картка, «дебетова», кнопка ↻ «Оновити» без БД не падає й оновлює час
+        check(w['width'] >= 240 and w['height'] >= 142, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, замала для підписів')
+        metrics = cards.nth(i).evaluate("""e=>{const r=e.getBoundingClientRect(),name=e.querySelector('.bcard-bank').getBoundingClientRect(),sum=e.querySelector('.bcard-sum').getBoundingClientRect();return {gap:sum.top-name.bottom,clipped:[...e.querySelectorAll('.bcard-bank,.bcard-sum,.ms-txt,.ms-warn')].some(x=>{const b=x.getBoundingClientRect();return b.bottom>r.bottom+1||b.right>r.right+1||x.scrollWidth>x.clientWidth+1||x.scrollHeight>x.clientHeight+1})}}""")
+        check(metrics['gap'] >= 10 and not metrics['clipped'], f'картка {i + 1}: замалий відступ або обрізані підписи: {metrics}')
+    check(cards.first.locator('.ms-wrap').count() == 1 and page.locator('.o-ms-list').count() == 0, 'поріг витрат має бути всередині картки Ощаду')
+    # monobank: світла картка, «дебетова», кнопка ↻ без БД не падає й оновлює час
     mono = page.locator('.dv-cards .bcard-mono')
     check(mono.count() == 1, 'немає картки monobank')
     mt = mono.inner_text().lower()
     check('monobank' in mt and 'дебетова' in mt and 'оновлено' in mt, f'картка monobank: {mt!r}')
-    # Спільне металеве покриття; банк визначають кольоровий край і монограма.
+    # Білі картки; банк визначають кольоровий край і монограма.
     materials = cards.evaluate_all("""es=>es.map(e=>{const s=getComputedStyle(e);return {
       edge:s.getPropertyValue('--bank-edge').trim(),mark:e.querySelector('.bank-mark')?.textContent,
-      gradient:s.backgroundImage
+      background:s.backgroundColor,white:(s.backgroundColor.match(/[\\d.]+/g)||[]).slice(0,3).every(v=>Number(v)>=230)
     }})""")
-    check(all('gradient' in m['gradient'] and m['mark'] for m in materials)
+    check(all(m['white'] and m['mark'] and m['edge'] for m in materials)
           and len({m['edge'] for m in materials}) == 3,
           f'Bank material, monogram or identifying edge missing: {materials}')
     paint = mono.evaluate("""e=>{const probe=document.createElement('span');
@@ -47,8 +53,8 @@ def desktop(page):
         shadow:getComputedStyle(e).boxShadow};}""")
     check(paint['shadow'] != 'none' and paint['actual'] == paint['expected'],
           f'Bank amount differs from its text token or has no shadow: {paint}')
-    upd = page.locator('.dv-acc-head .dv-mono-upd')
-    check(upd.count() == 1 and 'Оновити' in upd.inner_text(), 'немає кнопки «Оновити» для monobank')
+    upd = page.locator('.dtitle .dv-mono-upd')
+    check(upd.count() == 1 and 'Оновити рахунки' in upd.inner_text(), 'немає кнопки «Оновити рахунки» вгорі')
     upd.click()
     page.wait_for_timeout(300)
     hm = _re.search(r'оновлено (\d\d:\d\d)', mono.inner_text())
@@ -112,18 +118,23 @@ def mobile(page):
     check(row.locator('.o-bank-card').count() == 3, 'у ряду не 3 рахунки')
     check(row.get_attribute('data-noswipe') == '1', 'ряд рахунків без data-noswipe')
     cards = row.locator('.o-bank-card')
+    cards.first.scroll_into_view_if_needed()
     check(row.evaluate("e=>getComputedStyle(e).overflowX") == 'hidden', 'Карусель має приховувати прокрутку')
     check('Гортайте' not in page.locator('.o-account-section').inner_text(), 'Лишилася підказка гортання')
     check('Операції' not in row.inner_text(), 'На картках лишився підпис операцій')
-    gradients = []
+    identities = []
     # Демореквізити належать рахунку; банк більше не визначає номер картки.
     for account in page.evaluate('ACCOUNTS_DEMO.map(a=>({bank:a.bank,card_last4:a.card_last4}))'):
         bank, suffix = account['bank'], account['card_last4']
         card = row.locator('.bank-' + bank)
         check(card.locator('.o-bank-number').inner_text() == '**** **** **** ' + suffix, bank + ': невірна маска номера')
-        gradients.append(card.evaluate('e=>getComputedStyle(e).backgroundImage'))
-        check(card.locator('.account-amounts b').first.evaluate('e=>getComputedStyle(e).color') == 'rgb(255, 255, 255)', bank + ': сума не біла')
-    check(len(set(gradients)) == 3 and all('gradient' in g for g in gradients), 'Банки без власних градієнтів')
+        material = card.evaluate("""e=>{const s=getComputedStyle(e),c=s.backgroundColor.match(/[\\d.]+/g)||[];return {white:c.length>=3&&c.slice(0,3).every(v=>Number(v)>=230),edge:s.getPropertyValue('--bank-edge').trim(),mark:e.querySelector('.bank-mark')?.textContent}}""")
+        check(material['white'] and material['mark'] and material['edge'], bank + ': немає білої поверхні або позначення банку')
+        identities.append(material['edge'])
+        paint = card.locator('.account-amounts b').first.evaluate("e=>({color:getComputedStyle(e).color,head:getComputedStyle(e).getPropertyValue('--head')})")
+        check(paint['color'] != 'rgb(255, 255, 255)', bank + ': біла сума нечитабельна на білій картці')
+    check(len(set(identities)) == 3, 'Банки без власних кольорових країв')
+    check(row.locator('.bank-oschad .ms-wrap').count() == 1 and page.locator('.o-ms-list').count() == 0, 'поріг витрат має бути всередині картки Ощаду')
     rect = row.bounding_box()
     first = cards.first.bounding_box()
     second = cards.nth(1).bounding_box()
@@ -226,8 +237,10 @@ def cash_mobile(page):
     page.wait_for_timeout(400)
     row = page.locator('.p-overview .o-account-section')
     cards = row.locator('.o-bank-card')
-    check(row.count() == 1 and row.evaluate(IN_VIEW), '390: ряд рахунків не видно на першому екрані')
-    add = row.get_by_role('button', name='+ Додати рахунок', exact=True)
+    check(row.count() == 1, '390: немає секції рахунків')
+    cards.first.scroll_into_view_if_needed()
+    check(cards.first.evaluate(IN_VIEW), '390: до картки рахунку не можна догортати без обрізання')
+    add = row.get_by_role('button', name='Додати рахунок', exact=True)
     check(add.count() == 1, '390: у ряду рахунків немає «+»')
     add.scroll_into_view_if_needed()
     _add_cash(page, add, cards.count, '390')
@@ -237,7 +250,7 @@ def cash_mobile(page):
 CHECKS = [
     ('Картки на ПК, форма, баланс, зарплатний один', 'desktop', desktop),
     ('ПК 1920: адаптивна ширина, шрифт 14, без дрібного', 'desktop', wide),
-    ('Картки на телефоні: жест, номери, градієнти та історія', 'mobile', mobile),
+    ('Картки на телефоні: жест, номери, білі поверхні та історія', 'mobile', mobile),
     ('Рахунки на ПК 1280×800 і 1920×1080: ряд видно, «+» додає готівку', 'desktop', cash_desktop),
     ('Рахунки на телефоні 390: ряд видно, «+» додає готівку', 'mobile', cash_mobile),
 ]

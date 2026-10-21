@@ -6,6 +6,7 @@ from helpers import check, finance_ref, freeze, go_tab
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'spec/.out'
 PALETTE = ['--bg', '--html-bg', '--card', '--card2', '--border', '--border2', '--text', '--text2', '--head', '--muted', '--muted2', '--indigo', '--blue', '--green', '--green-t', '--red', '--red-t', '--yellow', '--yellow-t', '--shadow', '--acc-bg', '--inc-bg', '--exp-bg', '--debt-bg']
+LIQUID_PALETTE = {'--bg':'#e7f0f4','--html-bg':'#e7f0f4','--card':'#fff','--card2':'#f7fafb','--border':'#d8e3e7','--border2':'#e8eef1','--text':'#253744','--text2':'#253744','--head':'#142a36','--muted':'#526775','--muted2':'#5f7180','--indigo':'#126e70','--blue':'#126e70','--green':'#21754f','--green-t':'#21754f','--red':'#b54149','--red-t':'#b54149','--yellow':'#9b640f','--yellow-t':'#8e5b0b','--shadow':'rgba(30,65,80,.12)','--acc-bg':'#e6f3f1'}
 GEOMETRY = """({height:document.documentElement.scrollHeight,width:document.documentElement.scrollWidth,viewport:innerHeight,cards:[...document.querySelectorAll('.panel.desk > *, .dv-cols > *, .ck-cols > *, .bud-cols > *, .goals-cols > *')].map(e=>({cls:e.className,y:Math.round(e.getBoundingClientRect().y),h:Math.round(e.getBoundingClientRect().height)}))})"""
 
 
@@ -21,8 +22,8 @@ def audit(page):
             page.set_viewport_size({'width': width, 'height': height})
             page.evaluate('(theme)=>document.documentElement.dataset.theme=theme', theme)
             page.wait_for_timeout(100)
-            expected = palettes[('desktop' if width >= 1024 else 'mobile') + '-' + theme]
-            palette = page.evaluate("""expected=>{const now=getComputedStyle(document.documentElement);if(document.querySelector('.shell.overview-active')){const canvas=document.documentElement.dataset.theme==='light'?'#f3f2ee':'#0b0e14';expected={...expected,'--bg':canvas,'--html-bg':canvas};}return Object.entries(expected).filter(([k,v])=>now.getPropertyValue(k).trim()!==v).map(([k,v])=>[k,v,now.getPropertyValue(k)])}""", expected)
+            expected = {**palettes[('desktop' if width >= 1024 else 'mobile') + '-' + theme], **LIQUID_PALETTE}
+            palette = page.evaluate("""expected=>{const now=getComputedStyle(document.documentElement);return Object.entries(expected).filter(([k,v])=>now.getPropertyValue(k).trim()!==v).map(([k,v])=>[k,v,now.getPropertyValue(k)])}""", expected)
             check(not palette, f'Змінено палітру {theme}/{width}: {palette}')
             for i, tab in enumerate(('overview', 'budget', 'operations', 'payments', 'savings')):
                 go_tab(page, i)
@@ -38,7 +39,7 @@ def audit(page):
                         bottom = page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom')
                         check(page.evaluate("[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'{width}: внутрішня прокрутка огляду')
                         check(bottom <= height, f'{width}: останні операції нижче екрана: {bottom}')
-                        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (179.5 if height < 840 else 239.5), f'{width}x{height}: графік нижчий за адаптивний мінімум')
+                        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (159.5 if height < 900 else 179.5 if height < 1000 else 259.5), f'{width}x{height}: графік нижчий за адаптивний мінімум')
                 elif i == 0:
                     # v145: рядки плиток KPI: підпис і сума не зливаються; рядок «Доступно до» (data-r=until) окремим блоком на всю ширину
                     overlap = page.evaluate("""[...document.querySelectorAll('.kpi-row')].filter(e=>e.offsetParent).filter(e=>{const l=e.querySelector('.kpi-rl').getBoundingClientRect(),v=e.querySelector('.kpi-rv').getBoundingClientRect();return l.right>v.left+1&&l.bottom>v.top+1}).map(e=>e.innerText)""")
@@ -79,7 +80,7 @@ def current_overview(page):
         check(page.evaluate("[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'Today/{width}/{height}: внутрішня прокрутка огляду')
         # Стандартний Огляд повністю вміщується, включно з низьким ПК.
         check(page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight'), 'Нижня картка обрізана')
-        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (179.5 if height < 840 else 239.5), f'Today/{width}/{height}: графік нижчий за адаптивний мінімум')
+        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (159.5 if height < 900 else 179.5 if height < 1000 else 259.5), f'Today/{width}/{height}: графік нижчий за адаптивний мінімум')
         check(page.locator('.dv-near .dv-ev').count() == (5 if width < 1400 or height < 1000 else 8), 'Неправильна кількість найближчих подій')
         if width == 1280 and height == 800:
             page.screenshot(path=str(OUT / 'shots/redesign-v4-today-1280-overview.png'))

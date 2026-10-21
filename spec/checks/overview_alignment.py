@@ -18,7 +18,8 @@ GEOMETRY = r"""()=>{
  const inner=cardEls.flatMap(e=>[e,...e.querySelectorAll('*')]).filter(e=>visible(e)&&/auto|scroll/.test(getComputedStyle(e).overflowY)&&e.scrollHeight>e.clientHeight+2).map(e=>e.className);
  const banks=[...document.querySelectorAll('.dv-cards>.bcard')].filter(visible).map(e=>({...box(e),amount:box(e.querySelector('.bcard-sum'))}));
  const titles=[q('.dv-bud>:first-child>:first-child'),q('.ov-grid>.kpi-inst .kpi-head .lbl-ico>span:last-child'),q('.dv-recent>:first-child>button')].map(textBox);
- return {cards,kpis,banks,titles,grid:box(grid),wallet:box(q('.dv-accs')),unas:box(q('.dv-unas')),wide:document.documentElement.scrollWidth,clipped,inner};
+ const inlineAdvice=[...document.querySelectorAll('.dv-cards>.bcard .bank-advice')].some(e=>visible(e)&&e.textContent.trim().length>0);
+ return {cards,kpis,banks,titles,inlineAdvice,bankrow:box(q('.dv-cards')),add:box(q('.dv-cards>.bcard-add')),grid:box(grid),wallet:box(q('.dv-accs')),unas:box(q('.dv-unas')),wide:document.documentElement.scrollWidth,clipped,inner};
 }"""
 
 
@@ -46,16 +47,22 @@ def desktop_grid(page):
                 _equal([x[part]['top'] for x in k], f'{tag}: KPI {part} baseline')
             check(len(g['banks']) == 3, f'{tag}: expected three bank cards {g["banks"]}')
             _equal([bank['amount']['top'] for bank in g['banks']], f'{tag}: bank amount baselines')
-            for bank, kpi in zip(g['banks'], k):
-                for edge in ('left', 'right'):
-                    _equal([bank[edge], kpi[edge]], f'{tag}: bank and KPI {kpi["key"]} {edge}')
+            _equal([g['bankrow']['left'], k[0]['left']], f'{tag}: account row left grid edge')
+            _equal([g['bankrow']['right'], k[-1]['right']], f'{tag}: account row right grid edge')
+            _equal([bank['width'] for bank in g['banks']], f'{tag}: equal bank card widths')
+            _equal([bank['top'] for bank in g['banks']], f'{tag}: bank card top edge')
+            check(g['add'] and 40 <= g['add']['width'] <= 48 and g['add']['right'] <= g['bankrow']['right'] + 1, f'{tag}: add button outside account row {g["add"]}')
+            for left, right in zip(g['banks'], g['banks'][1:] + [g['add']]):
+                check(left['right'] <= right['left'] + 1, f'{tag}: accounts or add button overlap')
             check(all(t and t['height'] > 0 for t in g['titles']), f'{tag}: bottom card titles must be visible {g["titles"]}')
             for edge in ('top', 'bottom'):
                 _equal([t[edge] for t in g['titles']], f'{tag}: bottom card title {edge}')
             c = g['cards']
             check(all(r and r['width'] > 0 and r['height'] > 0 for r in c.values()), f'{tag}: картка відсутня {c}')
             f, n, b, i, r = (c[key] for key in ('forecast', 'near', 'budget', 'inst', 'recent'))
-            check(r['bottom'] <= height + 1, f'{tag}: standard cards exceed viewport {r}')
+            # Повна порада всередині банківської картки може подовжити сторінку;
+            # нижче перевіряємо доступність усіх нижніх карток прокруткою сторінки.
+            check(r['bottom'] <= height + 1 or g['inlineAdvice'], f'{tag}: cards exceed viewport without full inline bank advice {r}')
             for edge in ('top', 'bottom'):
                 _equal([f[edge], n[edge]], f'{tag}: перший ряд {edge}')
                 _equal([b[edge], i[edge], r[edge]], f'{tag}: другий ряд {edge}')
