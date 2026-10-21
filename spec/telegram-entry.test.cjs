@@ -13,7 +13,7 @@ class Clock extends Date{constructor(...args){super(...(args.length?args:[NOW]))
 const entry=(type='income',input='text')=>({kind:'entry',type,input,expires:new Date(NOW+600000).toISOString()});
 const receipt=(transactions=[{amount:150,type:'income',currency:'UAH',description:'Переказ',date:'2026-10-20'}])=>({kind:'transactions',complete:true,readable:'good',transactions});
 function harness(options={}){
-  const state={pending:options.pending??null,rows:[...(options.rows??[])],messages:[],requests:[],reports:[],writes:0};
+  const state={pending:options.pending??null,rows:[...(options.rows??[])],messages:[],photos:[],requests:[],reports:[],writes:0};
   let handler;
   const sb={storage:{from:()=>({upload:async()=>({error:options.uploadError?{message:'synthetic'}:null}),download:async()=>({data:{arrayBuffer:async()=>new Uint8Array([1]).buffer}})})},
     from(table){
@@ -35,7 +35,7 @@ function harness(options={}){
           if(options.profileReadError)return {data:null,error:{message:'synthetic'}};
           return {data:options.unlinked?null:{id:'u',telegram_pending:state.pending},error:null};
         }
-        if(table==='accounts')return {data:[{id:7,name:'Картка',kind:'debit',bank:'privat',is_salary:true,active:true,card_last4:'1234'}],error:null};
+        if(table==='accounts')return {data:options.accounts??[{id:7,name:'Картка',kind:'debit',bank:'privat',is_salary:true,active:true,card_last4:'1234'}],error:null};
         if(table==='transactions'){
           if(q.mode==='insert'){
             if(options.insertError)return {data:null,error:{message:'synthetic'}};
@@ -54,12 +54,14 @@ function harness(options={}){
     if(url.includes('/getFile'))return {json:async()=>({ok:true,result:{file_path:'photo.jpg'}})};
     if(url.includes('/file/'))return {ok:true,arrayBuffer:async()=>new Uint8Array([1]).buffer};
     if(url.includes('/sendMessage'))state.messages.push(JSON.parse(init.body));
+    if(url.includes('/sendPhoto'))state.photos.push(init.body);
     return {ok:true,json:async()=>({ok:true})};
   };
   const bindings={...kb,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
     creditPaid:()=>[],matchCredit:()=>null,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
     formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({})};
-  new Function(...Object.keys(bindings),code+`;balance=async()=>{__track('balance')};last=async()=>{__track('last')};withFinance=async()=>{__track('finance')};`)(...Object.values(bindings));
+  // Підставляємо лише фінансовий вміст: реальні reply/sendPhoto формують Telegram payload.
+  new Function(...Object.keys(bindings),code+`;balance=async(chat)=>reply(chat,'Баланс');last=async(chat)=>reply(chat,'Останні');chartReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Графік','chart.png');budgetReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Бюджет','budget.png');withFinance=async(chat,fn)=>{__track('finance');await fn(chat,{projection:{},today:'2026-10-21',txs:[],cats:[],accounts:[]})};`)(...Object.values(bindings));
   let next=1;
   const send=async(text,extra={})=>{
     const update={update_id:extra.update_id??next++,message:{chat:{id:1,type:'private'},from:{id:1},date:NOW/1000,...(text?{text}:{}),...extra}};
@@ -181,4 +183,72 @@ test('receipt continuation keeps confirmation buttons and supports confirmation 
 test('duplicate image update does not call OCR again or add another row',async()=>{
   const h=harness({pending:entry('income','image')});await h.photo({update_id:99});await h.photo({update_id:99});
   assert.equal(h.state.rows.length,1);assert.equal(h.state.requests.length,1);
+});
+
+const accounts=[{id:7,name:'Основна',kind:'debit',bank:'privat',is_salary:true,active:true,card_last4:'1234'},
+  {id:8,name:'Резерв',kind:'debit',bank:'oschad',active:true,card_last4:'5678'}];
+const accountChoices=h=>h.state.messages.flatMap(m=>m.reply_markup?.inline_keyboard?.flat()??[]).filter(b=>b.callback_data?.startsWith('acc:'));
+test('automatic text keeps choices only for unknown, ambiguous or default-only accounts',async()=>{
+  const explicit=harness({accounts});await explicit.send('150 кава приват');
+  assert.equal(explicit.state.rows[0]?.account_id,7);assert.equal(accountChoices(explicit).length,0);
+  for(const text of ['150 кава','+150 зарплата']){
+    const h=harness({accounts});await h.send(text);assert.ok(accountChoices(h).length>0,text);
+  }
+  const ambiguous=harness({accounts:[...accounts,{...accounts[0],id:9,name:'Друга',card_last4:'9999'}]});
+  await ambiguous.send('150 кава приват');assert.equal(ambiguous.state.rows[0]?.account_id,null);assert.ok(accountChoices(ambiguous).length>0);
+});
+test('automatic images suppress choices for unique OCR and caption accounts only',async()=>{
+  for(const hint of [{bank:'privat'},{card_last4:'1234'},{bank:'privat',card_last4:'1234'}]){
+    const h=harness({accounts,ocr:receipt([{...receipt().transactions[0],...hint}])});await h.photo();
+    assert.equal(h.state.rows[0]?.account_id,7);assert.equal(accountChoices(h).length,0,JSON.stringify(hint));
+  }
+  const caption=harness({accounts});await caption.photo({caption:'ощад'});
+  assert.equal(caption.state.rows[0]?.account_id,8);assert.equal(accountChoices(caption).length,0);
+  const unknown=harness({accounts});await unknown.photo();assert.ok(accountChoices(unknown).length>0);
+  const single=harness({accounts,ocr:{has_total:true,amount:50,items_sum:50,date:'2026-10-20',readable:'good',bank:'privat'}});
+  await single.photo();assert.equal(accountChoices(single).length,0);
+});
+test('financial confirmation keeps resolved account and has contextual decline without removed buttons',async()=>{
+  const h=harness({accounts,rows:[{id:1,source:'mono',amount:150,type:'income',date:'2026-10-21'}]});
+  await h.send('+150 зарплата приват');assert.equal(h.state.pending.account_resolved,true);
+  const labels=h.state.messages.at(-1).reply_markup.keyboard.flat().map(b=>b.text);
+  assert.deepEqual(labels,[kb.KB_BTN.yes,'Ні, не додавати']);
+  await h.send(kb.KB_BTN.yes);assert.equal(accountChoices(h).length,0);
+  const decline=harness({pending:{amount:10,type:'income',expires:new Date(NOW+100000).toISOString()}});
+  await decline.send('Ні, не додавати');assert.equal(decline.state.pending,null);assert.equal(decline.state.rows.length,0);
+});
+test('partial receipt preserves confident account through confirmation',async()=>{
+  const h=harness({accounts,ocr:{has_total:false,amount:null,items_sum:50,date:'2026-10-20',readable:'good',bank:'privat'}});
+  await h.photo();assert.equal(h.state.pending.account_resolved,true);
+  await h.send(kb.KB_BTN.yes);assert.equal(h.state.rows[0]?.account_id,7);assert.equal(accountChoices(h).length,0);
+});
+
+test('automatic messages and reports never reopen the native report keyboard',async()=>{
+  for(const text of ['150 кава','150 кава приват','+150 зарплата','/week','/month',kb.KB_BTN.balance,kb.KB_BTN.last,kb.KB_BTN.app]){
+    const h=harness({accounts});await h.send(text);
+    assert.ok(h.state.messages.length,text);
+    assert.ok(h.state.messages.every(m=>!m.reply_markup?.keyboard),text);
+  }
+  const h=harness({accounts});await h.photo();assert.ok(h.state.messages.every(m=>!m.reply_markup?.keyboard));
+  for(const key of ['chart','budget']){
+    const report=harness();await report.send(kb.KB_BTN[key]);assert.equal(report.state.photos.length,1);
+    assert.equal(report.state.photos[0].has('reply_markup'),false);
+  }
+  for(const text of ['/menu','/start',kb.KB_BTN.help]){
+    const menu=harness();await menu.send(text);assert.deepEqual(menu.state.messages.at(-1).reply_markup,kb.MAIN_KB);
+  }
+  const sendPhotoCode=stripTypeScriptTypes(source.slice(source.indexOf('async function sendPhoto('),source.indexOf('async function withFinance(')));
+  let form;
+  const send=new Function('fetch','BOT_TOKEN',sendPhotoCode+';return sendPhoto;')(async(_,init)=>{form=init.body;return {ok:true}},'test');
+  assert.equal(await send(1,new Uint8Array([1]),'Звіт','report.png'),true);
+  assert.equal(form.has('reply_markup'),false);
+});
+test('confirmation completion restores report keyboard even for a known account',async()=>{
+  const h=harness({accounts,rows:[{id:1,source:'mono',amount:150,type:'income',date:'2026-10-21'}]});
+  await h.send('+150 зарплата приват');h.state.messages.length=0;
+  await h.send(kb.KB_BTN.yes);
+  assert.ok(h.state.messages.some(m=>JSON.stringify(m.reply_markup)===JSON.stringify(kb.MAIN_KB)));
+  assert.equal(accountChoices(h).length,0);
+  const ordinary=harness({accounts});await ordinary.send('150 кава приват');
+  assert.ok(ordinary.state.messages.every(m=>!Object.hasOwn(m,'reply_markup')));
 });
