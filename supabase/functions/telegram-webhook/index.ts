@@ -1,3 +1,4 @@
+import { fixedCandidates, fixedOccurrence, fixedOccurrenceKey } from '../_shared/fixedmatch.ts';
 // Telegram-бот (Фази 4.1, 4.2, 5.1): текстові витрати/доходи, /income з дедупом Monobank і /yes,
 // фото чеків, привʼязка кодом, /balance, /last; звіти Графік, Бюджет, Тиждень, Місяць і кнопка «Оплачено» під нагадуваннями.
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
@@ -214,17 +215,52 @@ async function replyTx(
   const accs = opts.accs || await activeAccounts();
   const name = accs.find((a) => a.id === accountId)?.name ?? null;
   const text = txText(t, name) + (opts.note ? '\n' + opts.note : '');
-  const kb = opts.accountResolved && name ? null : accKeyboard(txId, accs, accountId);
+  const accountKb = opts.accountResolved && name ? null : accKeyboard(txId, accs, accountId);
+  const kb = accountKb || {inline_keyboard:[]};
+  if(t.type==='expense')kb.inline_keyboard.push([{text:'Привʼязати обовʼязковий платіж',callback_data:`flpick:${txId}`}]);
   if (opts.restoreKb) {
     await reply(chatId, text, MAIN_KB);
-    if (kb) await reply(chatId, 'Змінити рахунок:', kb);
+    if (accountKb) await reply(chatId, 'Змінити рахунок:', kb);
     return;
   }
-  if (!kb) return reply(chatId, text);
+  if (!kb.inline_keyboard.length) return reply(chatId, text);
   return reply(chatId, text, kb);
 }
 
 // Натискання кнопки рахунку: whitelist за chat_id, зміна account_id лише в записах із Telegram
+// Привʼязка збереженої витрати без зміни суми, рахунку та фактичної дати.
+async function offerFixedLink(chatId:number,userId:string,txId?:number) {
+  if(txId!=null){
+    const {data:tx,error}=await sb.from('transactions').select('id,date,type,fixed_id,credit_id').eq('id',txId).eq('user_id',userId).maybeSingle();
+    if(error||!tx||tx.type!=='expense'||tx.fixed_id!=null||tx.credit_id!=null)return reply(chatId,'Операцію не знайдено або її вже привʼязано.');
+    const {fixed,paid}=await fixedContext();const buttons:any[]=[];
+    for(const f of fixed){
+      const seen=new Set<string>();let count=0;
+      for(let k=0;k<=370&&count<3;k++){
+        const reference=addDays(String(tx.date||todayKyiv()).slice(0,10),k),due=fixedOccurrence(f,reference);
+        if(!due)continue;const key=fixedOccurrenceKey(f,due);
+        if(seen.has(key)||paid.has(key))continue;seen.add(key);count++;
+        buttons.push([{text:`${f.name} · ${due}`,callback_data:`fl:${txId}:${f.id}:${due}`}]);
+      }
+    }
+    return reply(chatId,buttons.length?'Оберіть платіж і дату зобовʼязання:':'Неоплачених постійних платежів немає.',{inline_keyboard:buttons.slice(0,60)});
+  }
+  const {data,error}=await sb.from('transactions').select('id,date,description,amount').eq('user_id',userId).eq('type','expense').is('fixed_id',null).is('credit_id',null).order('date',{ascending:false}).limit(10);
+  if(error)return reply(chatId,'Не вдалося прочитати операції.');
+  return reply(chatId,'Оберіть витрату для привʼязки:',{inline_keyboard:(data||[]).map(t=>[{text:`${t.date} · ${t.description||'Витрата'} · ${fmtMoney(t.amount)}`,callback_data:`flpick:${t.id}`}])});
+}
+async function confirmFixedLink(chatId:number,userId:string,txId:number,fixedId:number,due:string,answer:(s:string)=>Promise<unknown>){
+  const {data:tx,error}=await sb.from('transactions').select('id,type,fixed_id,credit_id').eq('id',txId).eq('user_id',userId).maybeSingle();
+  if(error||!tx||tx.type!=='expense')return answer('Операцію не знайдено');
+  if(tx.fixed_id!=null||tx.credit_id!=null)return answer('Операцію вже привʼязано');
+  const {fixed,paid}=await fixedContext(),f=fixed.find(f=>Number(f.id)===fixedId);
+  if(!f||fixedOccurrence(f,due)!==due)return answer('Некоректне зобовʼязання');
+  if(paid.has(fixedOccurrenceKey(f,due)))return answer('Цей період уже оплачено');
+  const {data:rows,error:err}=await sb.from('transactions').update({fixed_id:fixedId,payment_due_date:due}).eq('id',txId).eq('user_id',userId).eq('type','expense').is('fixed_id',null).is('credit_id',null).select('id');
+  if(err||!rows?.length)return answer('Не вдалося привʼязати операцію');
+  await answer('Привʼязано');return reply(chatId,`✅ ${f.name}: зараховано оплату за ${due}. Фактична дата витрати збережена.`);
+}
+
 async function onCallback(cq: any) {
   const cbId = String(cq?.id || '');
   if (!cbId) return;
@@ -239,6 +275,10 @@ async function onCallback(cq: any) {
       return answer('Помилка, спробуйте ще раз');
     }
     if (!prof) return answer('Доступ закритий');
+    const pick=String(cq?.data||'').match(/^flpick:(\d+)$/);
+    if(pick){await answer('Оберіть зобовʼязання');return offerFixedLink(chatId,prof.id,Number(pick[1]));}
+    const link=String(cq?.data||'').match(/^fl:(\d+):(\d+):(\d{4}-\d{2}-\d{2})$/);
+    if(link)return confirmFixedLink(chatId,prof.id,Number(link[1]),Number(link[2]),link[3],answer);
     const pd = parsePaidCallback(String(cq?.data || ''));
     if (pd) return await onPaid(cq, chatId, msgId, prof.id, pd, answer);
     const m = String(cq?.data || '').match(/^acc:(\d+):(\d+)$/);
@@ -746,6 +786,7 @@ async function addReceipt(
       receipt_url: path, receipt_parts: null,
       account_id: cap?.matched ? cap.acc?.id ?? null : receiptAccount(t.hint, accs)?.id ?? null,
     }));
+    await linkReceiptRows(rows);
     const duplicate = await receiptDuplicate(rows);
     if (duplicate) return reply(chatId, duplicate);
     // Один INSERT — усі рядки разом або жодного; source_id захищає також конкурентний повтор.
@@ -819,6 +860,7 @@ async function addReceipt(
     date: operationDate!,
     account_id: accountId,
   };
+  await linkReceiptRows([row]);
   const duplicate = await receiptDuplicate([row]);
   if (duplicate) return reply(chatId, duplicate);
   const { data: ins, error } = await sb.from('transactions').insert(row).select('id').single();
@@ -879,33 +921,32 @@ async function findMonoIncome(amount: number, date: string): Promise<{ amount: n
 // від 5 літер; «комуналка», «комунальні» = платіж, що починається з «комунал»), закриває платіж місяця своєї дати
 // (тижневий: тижня пн-нд своєї дати), якщо за цей місяць чи тиждень він ще не оплачений. Кілька різних збігів:
 // не привʼязуємо (неоднозначно).
-async function matchFixed(desc: string, date: string): Promise<{ id: number; name: string; week: boolean } | null> {
-  const d = String(desc || '').toLowerCase();
-  if (!d.trim()) return null;
-  const { data, error } = await sb.from('fixed_payments').select('id,name,type,active,period').eq('active', true);
-  if (error) {
-    console.error('fixed lookup error:', error);
-    return null;
+async function fixedContext() {
+  const items=await sb.from('fixed_payments').select('id,name,type,active,period,weekday,day_of_month,month_of_year,end_date').eq('active',true);
+  if(items.error)throw new Error('Не вдалося перевірити постійні платежі');
+  const fixed=items.data||[],paid=new Set<string>();
+  for(let page=0;page<100;page++){
+    const history=await sb.from('transactions').select('id,fixed_id,type,date,created_at,payment_due_date').not('fixed_id','is',null).eq('type','expense').order('id').range(page*1000,page*1000+999);
+    if(history.error)throw new Error('Не вдалося перевірити оплати');
+    for(const t of history.data||[]){const f=fixed.find(f=>String(f.id)===String(t.fixed_id));if(f)paid.add(fixedOccurrenceKey(f,String(t.payment_due_date??t.date??t.created_at??'').slice(0,10)));}
+    if(!history.data||history.data.length<1000)return {fixed,paid};
   }
-  const hits = (data || []).filter((f) => {
-    if (f.type === 'income') return false;
-    const n = String(f.name || '').toLowerCase().trim();
-    if (!n) return false;
-    if (d.includes(n)) return true;
-    const w = n.split(/\s+/)[0];
-    if ([...w].length >= 5 && d.includes(w)) return true;
-    return /комунал/.test(d) && n.startsWith('комунал');
-  });
-  if (hits.length !== 1) return null;
-  const f = hits[0];
-  const [from, to] = paidRange(f.period === 'week', date);
-  const { data: paid, error: pe } = await sb.from('transactions').select('id').eq('fixed_id', f.id).eq('type', 'expense')
-    .gte('date', from).lt('date', to).limit(1);
-  if (pe) {
-    console.error('fixed paid lookup error:', pe);
-    return null;
+  throw new Error('Перевищено ліміт історії оплат');
+}
+async function matchFixed(desc:string,date:string) {
+  const {fixed,paid}=await fixedContext();
+  const hits=fixedCandidates(fixed,desc,date,paid);
+  if(hits.length!==1)return null;
+  const f=hits[0];return {id:Number(f.id),name:f.name,week:f.period==='week',due:f.due};
+}
+async function linkReceiptRows(rows:any[]) {
+  const {fixed,paid}=await fixedContext();
+  for(const row of rows){
+    if(row.type!=='expense')continue;
+    const hits=fixedCandidates(fixed,row.description,row.date,paid);
+    if(hits.length!==1)continue;
+    const f=hits[0];row.fixed_id=Number(f.id);row.payment_due_date=f.due;paid.add(fixedOccurrenceKey(f,f.due));
   }
-  return paid && paid.length ? null : { id: Number(f.id), name: String(f.name), week: f.period === 'week' };
 }
 
 const addDays = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
@@ -915,7 +956,7 @@ async function linkCredit(p: Pending, bank: string | null): Promise<number | nul
   const [from, to] = paidRange(false, p.date);
   const [crs, linked] = await Promise.all([
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,source'),
-    sb.from('transactions').select('credit_id,date,type').not('credit_id', 'is', null).gte('date', from).lt('date', to),
+    sb.from('transactions').select('credit_id,date,payment_due_date,type').not('credit_id', 'is', null).or(`and(payment_due_date.gte.${from},payment_due_date.lt.${to}),and(payment_due_date.is.null,date.gte.${from},date.lt.${to})`),
   ]);
   if (crs.error || linked.error) {
     console.error('credit match lookup error:', crs.error || linked.error);
@@ -953,6 +994,7 @@ async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = 
     date: p.date,
     account_id: accountId,
     fixed_id: fx ? fx.id : null,
+    payment_due_date: fx ? fx.due : null,
     credit_id: cr,
   }).select('id').single();
   if (error) {
@@ -1030,7 +1072,10 @@ async function confirmPending(chatId: number, userId: string) {
       date: operationDate, account_id: rpAccount,
     }]);
     if (duplicate) return reply(chatId, duplicate);
+    const receiptLink:any={type:'expense',description:rp.description,date:operationDate};
+    await linkReceiptRows([receiptLink]);
     const { data: ins, error: rErr } = await sb.from('transactions').insert({
+      fixed_id:receiptLink.fixed_id??null,payment_due_date:receiptLink.payment_due_date??null,
       user_id: userId,
       amount: rp.items_sum,
       type: 'expense',
@@ -1086,9 +1131,9 @@ const MONTH_ACC = ['січень', 'лютий', 'березень', 'квіте
 async function financeTransactions(from: string, today: string, since: number): Promise<AccTx[]> {
   const rows: AccTx[] = [];
   for (let page = 0; page < 100; page++) {
-    let query = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,type,amount,created_at,date,source')
+    let query = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,payment_due_date,type,amount,created_at,date,source')
       .lte('date', today).order('id', { ascending: true }).range(page * 1000, page * 1000 + 999);
-    query = Number.isFinite(since) ? query.or(`created_at.gt."${new Date(since).toISOString()}",date.gte.${from}`) : query.gte('date', from);
+    query = Number.isFinite(since) ? query.or(`created_at.gt."${new Date(since).toISOString()}",date.gte.${from},payment_due_date.gte.${from}`) : query.or(`date.gte.${from},payment_due_date.gte.${from}`);
     const {data, error} = await query;
     if (error) throw new Error('finance transactions lookup failed');
     rows.push(...(data || []) as AccTx[]);
@@ -1102,7 +1147,7 @@ async function freeBlock(today: string): Promise<string> {
   const [acc, fix, cred, sal, cats] = await Promise.all([
     sb.from('accounts').select('id,name,kind,balance,debt,credit_limit,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
-    sb.from('fixed_payments').select('id,name,amount,day_of_month,period,weekday,bank,type,active,credit_ok,variable,end_date').eq('active', true),
+    sb.from('fixed_payments').select('id,name,amount,day_of_month,month_of_year,period,weekday,bank,type,active,credit_ok,variable,end_date').eq('active', true),
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
     // v153: усі колонки, з ними budget_manual (ручний бюджет періоду, міграція 30); до застосування міграції запит не падає
     sb.from('salary_config').select('*').order('id').limit(1).maybeSingle(),
@@ -1123,7 +1168,7 @@ async function freeBlock(today: string): Promise<string> {
   // Залишок розстрочок: платежі з датою після сьогодні (сплачені за планом не рахуються), крім місяців, уже
   // оплачених фактом (витрата з credit_id у місяці платежу)
   const paidCr = new Set(transactions.filter((t) => t.type === 'expense' && t.credit_id != null)
-    .map((t) => String(t.credit_id) + '|' + String(t.date || t.created_at).slice(0, 7)));
+    .map((t) => String(t.credit_id) + '|' + String(t.payment_due_date ?? t.date ?? t.created_at).slice(0, 7)));
   const installments = (cred.data || []).map((c) => {
     const first = Number(c.start_year) * 12 + Number(c.start_month); // start_month з 0
     let n = 0, lastDate = '';
@@ -1241,18 +1286,24 @@ async function budgetReport(chatId: number, d: FinanceData) {
 async function onPaid(cq: any, chatId: number, msgId: number, userId: string, p: { kind: 'f' | 'c'; id: string; date: string },
   answer: (text: string) => Promise<unknown>) {
   const fixed = p.kind === 'f';
-  const q: any = fixed ? sb.from('fixed_payments').select('id,name,amount,period,bank,active,type') : sb.from('credits').select('id,name,monthly_amount,source');
+  const q: any = fixed ? sb.from('fixed_payments').select('id,name,amount,period,bank,active,type,day_of_month,weekday,month_of_year,end_date') : sb.from('credits').select('id,name,monthly_amount,source,payment_day,start_year,start_month,total_payments');
   const { data: item, error } = await q.eq('id', Number(p.id)).maybeSingle();
   if (error) {
     console.error('paid: item lookup error:', error);
     return answer('Помилка, спробуйте ще раз');
   }
   if (!item || (fixed && (item.active === false || item.type === 'income'))) return answer('Платіж не знайдено');
+  if (fixed && fixedOccurrence(item,p.date)!==p.date) return answer('Некоректна дата зобовʼязання');
+  if(!fixed){
+    const [year,month,day]=p.date.split('-').map(Number),k=year*12+month-1,first=Number(item.start_year)*12+Number(item.start_month);
+    const due=Math.min(Number(item.payment_day),new Date(Date.UTC(year,month,0)).getUTCDate());
+    if(day!==due||k<first||k>=first+Number(item.total_payments))return answer('Некоректна дата зобовʼязання');
+  }
   const col = fixed ? 'fixed_id' : 'credit_id';
   const [from, to] = payRange(fixed && item.period === 'week', p.date);
   const [recent, range, cats] = await Promise.all([
-    sb.from('transactions').select('id,date,type,category_id,fixed_id,credit_id').eq(col, Number(p.id)).order('date', { ascending: false }).limit(50),
-    sb.from('transactions').select('id,date,type,category_id,fixed_id,credit_id').eq(col, Number(p.id)).gte('date', from).lt('date', to),
+    sb.from('transactions').select('id,date,payment_due_date,type,category_id,fixed_id,credit_id').eq(col, Number(p.id)).order('date', { ascending: false }).limit(50),
+    sb.from('transactions').select('id,date,payment_due_date,type,category_id,fixed_id,credit_id').eq(col, Number(p.id)).or(`and(payment_due_date.gte.${from},payment_due_date.lt.${to}),and(payment_due_date.is.null,date.gte.${from},date.lt.${to})`),
     sb.from('categories').select('id,name,is_income'),
   ]);
   if (recent.error || range.error || cats.error) {
@@ -1352,6 +1403,8 @@ Deno.serve(async (req) => {
   const updateId = Number(update.update_id) || 0;
   const pending = prof.telegram_pending ?? null;
   const done = () => new Response('ok');
+  const linkCommand=text.match(/^\/link(?:\s+(\d+))?$/i);
+  if(linkCommand){await offerFixedLink(chatId,prof.id,linkCommand[1]?Number(linkCommand[1]):undefined);return done();}
   if (/^\/(?:no|cancel)$/i.test(text) || text === BTN.cancel || text === BTN.no) {
     if (pending && !await replacePending(prof.id, pending, null)) await reply(chatId, 'Не вдалося скасувати. Спробуйте ще раз.');
     else await reply(chatId, 'Скасовано. Оберіть наступну дію.', pending ? MAIN_KB : undefined);

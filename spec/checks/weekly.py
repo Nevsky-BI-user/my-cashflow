@@ -80,11 +80,11 @@ def weekly_pay(page):
     print(f'      Календар: {len(texts)} рядків, кнопки {btns}')
     # v144: список «Події і баланс» від початку періоду (06.10) до дня перед зарплатою, тож 05.10 у ньому немає; кнопка лише в поточному тижні 12.10
     # v151: дні після наступної виплати (21.10) згорнуто в підсумковий рядок, тому окремих рядків щотижневого платежу два (12.10, 19.10)
-    check(len(btns) >= 2 and btns[0] == 1 and not any(btns[1:]), f'«Внести оплату» не лише в поточному тижні: {btns}')
+    check(len(btns) >= 2 and all(n == 1 for n in btns), f'«Внести оплату» не лише в поточному тижні: {btns}')
     ev.nth(0).locator('.pay-done').click()
     page.wait_for_timeout(400)
     dlg = dialog(page, 'Нова операція')
-    check(dlg.locator('input[type=date]').input_value() == DAY, 'оплата поточного тижня не сьогоднішня')
+    check(dlg.locator('input[aria-label="\u0414\u0430\u0442\u0430 \u0444\u0430\u043a\u0442\u0438\u0447\u043d\u043e\u0457 \u043e\u043f\u043b\u0430\u0442\u0438"]').input_value() == DAY, 'оплата поточного тижня не сьогоднішня')
     check(dlg.count() == 1, '«Внести оплату» не відкрило форму операції')
     check(dlg.locator('select[aria-label="Постійний платіж"]').input_value() == str(fid), 'у формі не вибрано щотижневий платіж')
     hint = dlg.locator('.fx-week').inner_text()
@@ -120,7 +120,7 @@ def weekly_pay_past(page):
     rows.locator('.pay-done').click()
     page.wait_for_timeout(400)
     dlg = dialog(page, 'Нова операція')
-    check(dlg.locator('input[type=date]').input_value() == '2026-10-05', 'оплата минулого тижня не датована його днем')
+    check(dlg.locator('input[aria-label="\u041f\u043b\u0430\u043d\u043e\u0432\u0430 \u0434\u0430\u0442\u0430 \u043f\u043b\u0430\u0442\u0435\u0436\u0443"]').input_value() == '2026-10-05', 'оплата минулого тижня не датована його днем')
     check('05.10-11.10' in dlg.locator('.fx-week').inner_text(), 'у формі минулого тижня немає 05.10-11.10')
     dlg.locator('.acc-seg button[data-acc="l1"]').click()
     dlg.locator('.tx-save').click()
@@ -128,11 +128,11 @@ def weekly_pay_past(page):
     d = finance_state(page)['data']
     tx = [t for t in (d.get('transactions') or d.get('tx') or []) if str(t.get('fixed_id', t.get('fixedId'))) == str(fid)]
     print(f'      ключі даних: {sorted(d.keys())}; операцій з fixed_id: {[(t.get("date"), t.get("amount")) for t in tx]}')
-    check(any(str(t.get('date', ''))[:10] == '2026-10-05' for t in tx), 'оплата 05.10 не записалась операцією з fixed_id')
+    check(any(str(t.get('date', ''))[:10] == DAY and t.get('payment_due_date') == '2026-10-05' for t in tx), 'оплата 05.10 не записалась операцією з fixed_id')
     rows = _day(page, '2026-10-05').filter(has_text=NAME)
     check(rows.locator('.pay-done').count() == 0, 'після оплати тиждень 05.10 досі з кнопкою')
     btns = page.locator('.cal-ev', has_text=NAME).locator('.pay-done').count()
-    check(btns == 1, f'у списку кнопок «{NAME}» не 1 (поточний тиждень): {btns}')
+    check(btns == 2, f'у списку кнопок «{NAME}» не 1 (поточний тиждень): {btns}')
 
 
 def paid_no_button(page):

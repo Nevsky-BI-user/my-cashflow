@@ -5,6 +5,9 @@ const path=require('node:path');
 const {stripTypeScriptTypes}=require('node:module');
 const source=fs.readFileSync(path.join(__dirname,'../supabase/functions/telegram-webhook/index.ts'),'utf8');
 const receiptSystem=new Function(source.slice(source.indexOf('const RECEIPT_SYSTEM ='),source.indexOf('const SUPABASE_URL ='))+';return RECEIPT_SYSTEM;')();
+const fixedPure=stripTypeScriptTypes(fs.readFileSync(path.join(__dirname,'../supabase/functions/_shared/fixedmatch.ts'),'utf8')).replaceAll('export ','');
+const fixedApi=new Function(fixedPure+';return {fixedCandidates,fixedOccurrenceKey};')();
+const receiptLinkCode=stripTypeScriptTypes(source.slice(source.indexOf('async function linkReceiptRows('),source.indexOf('const addDays =',source.indexOf('async function linkReceiptRows('))));
 const isolated=stripTypeScriptTypes(source.slice(source.indexOf('const tgSourceId ='),source.indexOf('type Pending =')));
 const confirmSource=stripTypeScriptTypes(source.slice(source.indexOf('async function confirmPending('),source.indexOf('// Посилання на застосунок під статусом;')));
 const transaction=(overrides={})=>({amount:120.5,type:'expense',currency:'UAH',description:'Магазин',date:'2026-10-19',...overrides});
@@ -120,7 +123,9 @@ function harness(responses, options={}) {
     return {ok:true,arrayBuffer:async()=>new Uint8Array([1,2]).buffer};
   };
   const accs=options.accounts??[{id:7,name:'Готівка'}];
-  const bindings={sb,fetch,BOT_TOKEN:'test',CLAUDE_API_KEY:'test',RECEIPT_MODEL:'fast',RECEIPT_MODEL_STRONG:'strong',RECEIPT_SYSTEM:receiptSystem,CONFIRM_KB:{keyboard:[]},ENTRY_INPUT_KB:{keyboard:[]},
+  const linkReceiptRows=new Function('fixedContext','fixedCandidates','fixedOccurrenceKey',receiptLinkCode+';return linkReceiptRows;')(
+    async()=>({fixed:options.fixed||[],paid:new Set(state.rows.filter(t=>t.fixed_id!=null).map(t=>{const f=(options.fixed||[]).find(f=>f.id===t.fixed_id);return f?fixedApi.fixedOccurrenceKey(f,t.payment_due_date??t.date):''}))}),fixedApi.fixedCandidates,fixedApi.fixedOccurrenceKey);
+  const bindings={linkReceiptRows,sb,fetch,BOT_TOKEN:'test',CLAUDE_API_KEY:'test',RECEIPT_MODEL:'fast',RECEIPT_MODEL_STRONG:'strong',RECEIPT_SYSTEM:receiptSystem,CONFIRM_KB:{keyboard:[]},ENTRY_INPUT_KB:{keyboard:[]},
     todayKyiv:()=> options.today??'2026-10-20',reply:async(...args)=>state.replies.push(args),
     replyTx:async(...args)=>state.txReplies.push(args),categorizeLater:id=>state.categories.push(id),
     activeAccounts:async(includeMono)=>{state.accountLoads.push(includeMono);return accs},
@@ -497,4 +502,15 @@ test('duplicate beyond first page is found before saving',async()=>{
   const existing=Array.from({length:1000},(_,i)=>({id:i+1,amount:9999,type:'income',date:'2026-10-19',description:'x'}));
   existing.push({id:1001,amount:120.5,type:'expense',date:'2026-10-19',description:'Магазин',account_id:null});
   const h=harness([batch()],{existing});await h.run();assert.equal(h.state.inserts.length,0);
+});
+
+test('Claude receipt single, batch and confirmed receipt close the obligation without date rewrite',async()=>{
+ const fixed=[{id:41,name:'Claude',period:'month',day_of_month:19,active:true,type:'payment'}];
+ const one=harness([{...single,description:'Anthropic',date:'2026-10-18'}],{fixed});await one.run();
+ assert.equal(one.state.rows[0].fixed_id,41);assert.equal(one.state.rows[0].payment_due_date,'2026-10-19');assert.equal(one.state.rows[0].date,'2026-10-18');
+ const many=harness([batch([transaction({description:'Клод'}),transaction({description:'Anthropic',amount:20})])],{fixed});await many.run();
+ assert.equal(many.state.rows[0].fixed_id,41);assert.equal(many.state.rows[1].fixed_id,undefined);
+ const pending={kind:'receipt',parts:[{path:'u/a.jpg',update_id:42}],items_sum:250,description:'Claude',date:'2026-10-18',account_id:7,expires:'2099-01-01T00:00:00Z'};
+ const confirmed=harness([],{fixed,pending});await confirmed.api.confirmPending(1,'u');
+ assert.equal(confirmed.state.rows[0]?.fixed_id,41);assert.equal(confirmed.state.rows[0]?.payment_due_date,'2026-10-19');
 });
