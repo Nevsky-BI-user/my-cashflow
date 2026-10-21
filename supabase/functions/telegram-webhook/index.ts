@@ -31,7 +31,9 @@ const RECEIPT_SYSTEM =
   '{"has_total": true або false, "amount": число або null, "items_sum": число або null, ' +
   '"description": назва магазину або 2-3 слова, "date": "YYYY-MM-DD" або null, "readable": "good" або "poor"}. ' +
   'date — дата проведення саме цієї операції, видима на зображенні, зокрема в заголовку її групи. ' +
-  'Не використовуй дату відправлення повідомлення, завантаження фото чи формування виписки. Не вгадуй дату або рік; якщо дата не видима чи неоднозначна, поверни null. ' +
+  'Для кожної операції поверни date_text: точний видимий напис дати, включно з днем тижня, або null. Успадковуй заголовок дати лише в межах його групи. ' +
+  'Видимі «сьогодні»/«вчора» та дату без року сервер визначить відносно опорної дати повідомлення за Києвом. Не підміняй відсутню дату опорною; невідома дата — null. Повну історичну дату зберігай. ' +
+  'Спільний заголовок вибраної картки (наприклад ПриватБанк, 0882) стосується всіх операцій, якщо окрема операція не має інших явних ознак. Поверни спільні bank/card_last4/card_network також на верхньому рівні JSON; 0882 — рядок зі збереженим початковим нулем. ' +
   'Для кожної незалежної операції (і для одного чека) додай bank: "privat", "mono", "oschad" або null, ' +
   'card_last4: лише останні 4 цифри картки рядком або null, card_network: "visa", "mastercard" або null. ' +
   'Це банк і картка власника операції, НЕ банк отримувача чи термінала. Бери лише явно видимі ознаки; ' +
@@ -348,6 +350,60 @@ function receiptDate(raw: unknown): string | null {
 }
 const RECEIPT_DATE_REQUIRED = '❌ Не вдалося визначити дату операції. Нічого не записано. Надішліть скриншот або фото, де видно дату проведення кожної операції.';
 
+// Опора стабільна при повторній доставці Telegram, з урахуванням київської півночі.
+function receiptReference(timestamp?: number): string | null {
+  if (!Number.isFinite(timestamp) || timestamp! <= 0) return null;
+  const d = new Date(timestamp! * 1000);
+  if (isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function receiptVisibleDate(raw: unknown, reference: string | null): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim().toLowerCase().replace(/[,]/g, ' ').replace(/\s+/g, ' ');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return receiptDate(text);
+  if (text === 'сьогодні' || text === 'вчора') {
+    if (!reference) return null;
+    return receiptDate(new Date(Date.parse(reference + 'T00:00:00Z') - (text === 'вчора' ? 86400000 : 0)).toISOString().slice(0, 10));
+  }
+  const months = ['січня','лютого','березня','квітня','травня','червня','липня','серпня','вересня','жовтня','листопада','грудня'];
+  const words = text.match(/^(?:(пн|вт|ср|чт|пт|сб|нд)\.?\s+)?(\d{1,2})\s+([а-яіїєґ]+)(?:\s+(\d{4}))?$/);
+  const numeric = text.match(/^(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?$/);
+  if (!words && !numeric) return null;
+  const day = Number(words ? words[2] : numeric![1]);
+  const month = words ? months.indexOf(words[3]) + 1 : Number(numeric![2]);
+  const explicitYear = words ? words[4] : numeric![3];
+  if (!month || month > 12 || (!explicitYear && !reference)) return null;
+  let year = Number(explicitYear || reference!.slice(0, 4));
+  const iso = () => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  if (!explicitYear && iso() > reference!) year--;
+  const date = receiptDate(iso());
+  if (!date) return null;
+  if (words?.[1] && ['нд','пн','вт','ср','чт','пт','сб'][new Date(date + 'T00:00:00Z').getUTCDay()] !== words[1]) return null;
+  return date;
+}
+
+function normalizeReceipt(r: any, reference: string | null): any {
+  if (!r || typeof r !== 'object') return r;
+  const normalize = (t: any) => {
+    if (!t || typeof t !== 'object') return t;
+    // Видимий напис має пріоритет над припущенням моделі в date.
+    const raw = Object.prototype.hasOwnProperty.call(t, 'date_text') ? t.date_text : t.date;
+    // Відрізняємо відсутню дату від помилкового напису: останній не можна
+    // замінювати датою попередньої частини довгого чека.
+    return { ...t, date: receiptVisibleDate(raw, reference) ?? (raw == null ? null : '') };
+  };
+  if (!Array.isArray(r.transactions)) return normalize(r);
+  return { ...r, transactions: r.transactions.map((t: any) => {
+    if (!t || typeof t !== 'object') return t;
+    const conflict = ['bank','card_last4','card_network'].some((k) => t[k] != null && r[k] != null && t[k] !== r[k]);
+    const inherited = conflict ? t : { ...t, bank: t.bank ?? r.bank, card_last4: t.card_last4 ?? r.card_last4, card_network: t.card_network ?? r.card_network };
+    return normalize(inherited);
+  }) };
+}
+
 // Стійкий розбір відповіді моделі: перший {...} з тексту
 function extractJson(text: string): any | null {
   const start = text.indexOf('{');
@@ -383,7 +439,7 @@ async function downloadTgFile(fileId: string): Promise<Uint8Array | null> {
 }
 
 // Claude vision однією моделлю: повертає розібраний JSON або null при помилці API
-async function askReceipt(b64s: string[], model: string): Promise<any | null> {
+async function askReceipt(b64s: string[], model: string, reference: string | null): Promise<any | null> {
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -395,7 +451,7 @@ async function askReceipt(b64s: string[], model: string): Promise<any | null> {
       body: JSON.stringify({
         model,
         max_tokens: 4096,
-        system: RECEIPT_SYSTEM,
+        system: RECEIPT_SYSTEM + (reference ? ` Опорна дата повідомлення (Europe/Kyiv): ${reference}.` : ' Опорна дата невідома; відносні дати та дати без року не визначай.'),
         messages: [{
           role: 'user',
           content: [
@@ -422,7 +478,7 @@ async function askReceipt(b64s: string[], model: string): Promise<any | null> {
       .join('');
     const parsed = extractJson(text);
     if (!parsed) console.error('claude non-json reply');
-    return parsed ?? { error: 'відповідь не у форматі JSON' };
+    return normalizeReceipt(parsed, reference) ?? { error: 'відповідь не у форматі JSON' };
   } catch (e) {
     console.error('claude fetch error:', e);
     return null;
@@ -542,12 +598,12 @@ function receiptBatch(r: any): ReceiptTransaction[] | null {
 
 // Каскад: Haiku; підозрілий результат одна спроба Sonnet на тих самих фото; беремо Sonnet, якщо валідний.
 // Діє на кожен виклик, зокрема для частин довгого чека
-async function recognizeReceipt(b64s: string[]): Promise<any | null> {
-  const first = await askReceipt(b64s, RECEIPT_MODEL);
+async function recognizeReceipt(b64s: string[], reference: string | null = null): Promise<any | null> {
+  const first = await askReceipt(b64s, RECEIPT_MODEL, reference);
   const reason = receiptSuspect(first);
   if (!reason) return first;
   console.log('receipt escalate', reason);
-  const strong = await askReceipt(b64s, RECEIPT_MODEL_STRONG);
+  const strong = await askReceipt(b64s, RECEIPT_MODEL_STRONG, reference);
   // Вже побачений список не можна тихо замінити одним чеком при повторній спробі.
   if (first && (first.kind === 'transactions' || 'transactions' in first)) {
     return receiptBatch(strong) ? strong : first;
@@ -560,6 +616,7 @@ type ReceiptPart = { path: string; update_id: number };
 type ReceiptPending = {
   kind: 'receipt';
   parts: ReceiptPart[];
+  reference?: string | null;
   media_group_id?: string;
   description: string;
   date: string | null;
@@ -584,7 +641,7 @@ const posNum = (v: unknown): number | null => {
 };
 
 async function addReceipt(
-  chatId: number, userId: string, updateId: number, photos: any[], mediaGroupId?: string, caption?: string,
+  chatId: number, userId: string, updateId: number, photos: any[], mediaGroupId?: string, caption?: string, messageDate?: number,
 ) {
   if (!CLAUDE_API_KEY) return reply(chatId, 'Розпізнавання чеків не налаштовано');
   const sourceId = tgSourceId(updateId);
@@ -625,7 +682,8 @@ async function addReceipt(
     b64s.push(toBase64(new Uint8Array(await blob.arrayBuffer())));
   }
 
-  const res = await recognizeReceipt(b64s);
+  const reference = wasReceipt && pending0.reference !== undefined ? pending0.reference : receiptReference(messageDate);
+  const res = await recognizeReceipt(b64s, reference);
   if (!res) return reply(chatId, '❌ Не вдалося розпізнати: сервіс недоступний, спробуйте пізніше');
   if (res.error) return reply(chatId, '❌ Не вдалося розпізнати: ' + String(res.error));
 
@@ -682,6 +740,7 @@ async function addReceipt(
     const state: ReceiptPending = {
       kind: 'receipt',
       parts,
+      reference,
       ...(mediaGroupId ? { media_group_id: mediaGroupId } : {}),
       description,
       date: operationDate,
@@ -702,6 +761,7 @@ async function addReceipt(
         const cur = await readPending(userId);
         if (isLiveReceipt(cur) && !cur.parts.some((x) => x.update_id === updateId)) {
           state.parts = [...cur.parts, { path, update_id: updateId }];
+          state.reference = cur.reference ?? state.reference;
           if (res.date == null) state.date = state.date ?? receiptDate(cur.date);
         }
       }
@@ -1264,7 +1324,7 @@ Deno.serve(async (req) => {
   if (photos) {
     await addReceipt(chatId, prof.id, Number(update.update_id) || 0, photos,
       msg?.media_group_id ? String(msg.media_group_id) : undefined,
-      typeof msg?.caption === 'string' ? msg.caption : undefined);
+      typeof msg?.caption === 'string' ? msg.caption : undefined, msg.date);
     return new Response('ok');
   }
 

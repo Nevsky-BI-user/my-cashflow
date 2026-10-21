@@ -4,6 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {stripTypeScriptTypes}=require('node:module');
 const source=fs.readFileSync(path.join(__dirname,'../supabase/functions/telegram-webhook/index.ts'),'utf8');
+const receiptSystem=new Function(source.slice(source.indexOf('const RECEIPT_SYSTEM ='),source.indexOf('const SUPABASE_URL ='))+';return RECEIPT_SYSTEM;')();
 const isolated=stripTypeScriptTypes(source.slice(source.indexOf('const tgSourceId ='),source.indexOf('type Pending =')));
 const confirmSource=stripTypeScriptTypes(source.slice(source.indexOf('async function confirmPending('),source.indexOf('// Посилання на застосунок під статусом;')));
 const transaction=(overrides={})=>({amount:120.5,type:'expense',currency:'UAH',description:'Магазин',date:'2026-10-19',...overrides});
@@ -61,15 +62,80 @@ function harness(responses, options={}) {
     return {ok:true,arrayBuffer:async()=>new Uint8Array([1,2]).buffer};
   };
   const accs=options.accounts??[{id:7,name:'Готівка'}];
-  const bindings={sb,fetch,BOT_TOKEN:'test',CLAUDE_API_KEY:'test',RECEIPT_MODEL:'fast',RECEIPT_MODEL_STRONG:'strong',RECEIPT_SYSTEM:'test',
-    todayKyiv:()=> '2026-10-20',reply:async(...args)=>state.replies.push(args),
+  const bindings={sb,fetch,BOT_TOKEN:'test',CLAUDE_API_KEY:'test',RECEIPT_MODEL:'fast',RECEIPT_MODEL_STRONG:'strong',RECEIPT_SYSTEM:receiptSystem,
+    todayKyiv:()=> options.today??'2026-10-20',reply:async(...args)=>state.replies.push(args),
     replyTx:async(...args)=>state.txReplies.push(args),categorizeLater:id=>state.categories.push(id),
     activeAccounts:async(includeMono)=>{state.accountLoads.push(includeMono);return accs},
     pickAccount:()=>({matched:true,acc:options.captionAccount??accs[0]}),fmtMoney:String,
     console:{log(){},error(){}}};
   const api=new Function(...Object.keys(bindings),isolated+confirmSource+';return {addReceipt,receiptBatch,recognizeReceipt,receiptDate,confirmPending};')(...Object.values(bindings));
-  return {state,api,run:(update=42,caption)=>api.addReceipt(1,'u',update,[{file_id:'photo'}],undefined,caption)};
+  return {state,api,run:(update=42,caption)=>api.addReceipt(1,'u',update,[{file_id:'photo'}],undefined,caption,options.messageDate)};
 }
+
+test('visible date groups use Telegram Kyiv date and inherit selected card header',async()=>{
+  const response={...batch([
+    transaction({amount:1,date:null,date_text:'сьогодні'}),
+    transaction({amount:2,date:null,date_text:'вчора'}),
+    transaction({amount:3,date:null,date_text:'пн 19 жовтня'}),
+  ]),bank:'privat',card_last4:'0882'};
+  const h=harness([response],{today:'2026-10-22',messageDate:Date.parse('2026-10-20T21:30:00Z')/1000,
+    accounts:[{id:88,bank:'privat',name:'Картка 0882'},{id:89,bank:'privat',name:'Інша'}]});
+  await h.run();
+  assert.deepEqual(h.state.rows.map(r=>r.date),['2026-10-21','2026-10-20','2026-10-19']);
+  assert.deepEqual(h.state.rows.map(r=>r.account_id),[88,88,88]);
+  assert.match(h.state.requests[0].system,/2026-10-21/);
+});
+
+test('yearless and relative dates roll back at New Year, preserving full historical dates',async()=>{
+  const h=harness([batch([
+    transaction({amount:1,date:'вчора'}),transaction({amount:2,date:'31 грудня'}),
+    transaction({amount:3,date:'31.12'}),transaction({amount:4,date:'12.01.2025'}),
+  ])],{today:'2027-01-03',messageDate:Date.parse('2026-12-31T22:30:00Z')/1000});
+  await h.run();
+  assert.deepEqual(h.state.rows.map(r=>r.date),['2026-12-31','2026-12-31','2026-12-31','2025-01-12']);
+});
+
+test('unresolved date or wrong weekday rejects entire batch despite model ISO guess',async()=>{
+  for(const raw of ['вт 19 жовтня','31 лютого','невідомо',null]){
+    const h=harness([batch([transaction(),transaction({amount:2,date:raw===null?null:'2026-10-19',date_text:raw})])],
+      {messageDate:Date.parse('2026-10-20T12:00:00Z')/1000});
+    await h.run();assert.equal(h.state.inserts.length,0,String(raw));
+  }
+  for(const raw of ['сьогодні','вчора','19 жовтня']){
+    const h=harness([{...single,date:raw}]);await h.run();assert.equal(h.state.inserts.length,0,raw);
+  }
+});
+
+test('conflicting per-operation card hints do not inherit selected header',async()=>{
+  const response={...batch([transaction({bank:'mono',card_network:'visa'}),transaction({amount:2})]),bank:'privat',card_last4:'0882'};
+  const h=harness([response],{accounts:[{id:8,bank:'mono',name:'Visa'},{id:9,bank:'privat',name:'0882'}]});
+  await h.run();assert.deepEqual(h.state.rows.map(r=>r.account_id),[8,9]);
+});
+
+test('invalid visible date cannot borrow an earlier multipart date',async()=>{
+  const h=harness([{...single,has_total:false,amount:null}, {...single,date_text:'31 лютого'}],
+    {messageDate:Date.parse('2026-10-20T12:00:00Z')/1000});
+  await h.run(40);await h.run(41);
+  assert.equal(h.state.inserts.length,0);
+});
+
+test('explicit empty visible date rejects a model ISO guess for whole batch',async()=>{
+  for(const date_text of [null,'','   ']){
+    const h=harness([batch([transaction(),transaction({amount:2,date:'2026-10-19',date_text})])],
+      {messageDate:Date.parse('2026-10-20T12:00:00Z')/1000});
+    await h.run();assert.equal(h.state.inserts.length,0,JSON.stringify(date_text));
+  }
+});
+
+test('multipart relative date retains first message reference across Kyiv midnight',async()=>{
+  const options={today:'2026-10-21',messageDate:Date.parse('2026-10-20T20:59:00Z')/1000};
+  const h=harness([{...single,has_total:false,amount:null,date_text:'сьогодні'},{...single,date_text:'сьогодні'}],options);
+  await h.run(40);
+  options.messageDate=Date.parse('2026-10-20T21:01:00Z')/1000;
+  await h.run(41);
+  assert.equal(h.state.rows[0].date,'2026-10-20');
+  assert.ok(h.state.requests.every(r=>r.system.includes('Europe/Kyiv): 2026-10-20')));
+});
 test('one screenshot atomically inserts all operations and maps dates/types/buttons by source id',async()=>{
   const h=harness([batch()]);await h.run();
   assert.equal(h.state.inserts.length,1);
