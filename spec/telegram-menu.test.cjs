@@ -18,22 +18,34 @@ test('спільний контракт зберігає точні назви �
  assert.equal(new Set(Object.values(KB_BTN)).size,15);
 });
 
-test('головне меню відкриває всі дії та не пропонує підтвердження без операції',async()=>{
+test('головне меню містить вісім кнопок у чотирьох рядках і дозволяє згортання',async()=>{
  const {MAIN_KB}=await keyboard;
  assert.deepEqual(MAIN_KB,{
-  keyboard:rows([['income','expense'],['balance','chart'],['budget','week'],['month','last'],['help','app'],['menu','cancel']]),
-  resize_keyboard:true,is_persistent:true,
+  keyboard:rows([['balance','chart'],['budget','week'],['month','last'],['help','app']]),
+  resize_keyboard:true,is_persistent:false,one_time_keyboard:true,input_field_placeholder:'Сума й опис або фото операції',
  });
  const buttons=MAIN_KB.keyboard.flat().map(button=>button.text);
- assert.equal(new Set(buttons).size,12);
- for(const key of ['income','expense','balance','chart','budget','week','month','last','help','app','menu','cancel'])assert.ok(buttons.includes(labels[key]),key);
- assert.ok(!buttons.includes(labels.yes));
+ assert.equal(new Set(buttons).size,8);
+ for(const key of ['balance','chart','budget','week','month','last','help','app'])assert.ok(buttons.includes(labels[key]),key);
+ for(const key of ['income','expense','menu','cancel','yes'])assert.ok(!buttons.includes(labels[key]),key);
+ assert.notEqual(MAIN_KB.is_persistent,true);
 });
 
-test('клавіатури введення пропонують текст, зображення та вихід із кроку',async()=>{
- const {ENTRY_KB,ENTRY_INPUT_KB}=await keyboard;
- assert.deepEqual(ENTRY_KB,{keyboard:rows([['text','image'],['menu','cancel']]),resize_keyboard:true,is_persistent:true});
- assert.deepEqual(ENTRY_INPUT_KB,{keyboard:rows([['menu','cancel']]),resize_keyboard:true,is_persistent:true});
+test('усі клавіатури згортаються після вибору й не містять прибраних кнопок',async()=>{
+ const {MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB}=await keyboard;
+ assert.deepEqual(ENTRY_KB,{
+  keyboard:rows([['text','image']]),resize_keyboard:true,is_persistent:false,one_time_keyboard:true,
+  input_field_placeholder:'Сума й опис або фото операції',
+ });
+ assert.equal(ENTRY_INPUT_KB,MAIN_KB);
+ for(const kb of [MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB]){
+  assert.equal(kb.resize_keyboard,true);
+  assert.equal(kb.is_persistent,false);
+  assert.equal(kb.one_time_keyboard,true);
+  assert.ok(kb.input_field_placeholder.length>=1&&kb.input_field_placeholder.length<=64);
+  const buttons=kb.keyboard.flat().map(button=>button.text);
+  for(const key of ['income','expense','menu','cancel','yes'])assert.ok(!buttons.includes(labels[key]),key);
+ }
 });
 
 test('каталог містить усі 15 команд з допустимими назвами й українськими описами',async()=>{

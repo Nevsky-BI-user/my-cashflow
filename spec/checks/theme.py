@@ -13,7 +13,7 @@ const loaded=[...document.fonts].some(f=>f.family.replace(/["']/g,'')==='Inter'&
 const link=!!document.querySelector('link[rel=stylesheet][href*="fonts.googleapis.com"][href*="Inter"]');
 return {ff,loaded,link}})()"""
 CARDS = """[...document.querySelectorAll('.dv-cards .bcard')].map(e=>{const s=getComputedStyle(e);
-return {bi:s.backgroundImage,h:Math.round(e.getBoundingClientRect().height),sh:s.boxShadow,deco:e.querySelectorAll(':scope > span[aria-hidden]').length}})"""
+return {bi:s.backgroundImage,bg:s.backgroundColor,h:Math.round(e.getBoundingClientRect().height),sh:s.boxShadow,deco:e.querySelectorAll(':scope > span[aria-hidden]').length}})"""
 BTN = "(sel)=>{const e=document.querySelector(sel);if(!e)return null;const s=getComputedStyle(e);return {bi:s.backgroundImage,bg:s.backgroundColor,fw:s.fontWeight}}"
 
 
@@ -32,8 +32,8 @@ def fonts_cards_buttons(page):
     cards = page.evaluate(CARDS)
     check(len(cards) >= 3, f'карток банків {len(cards)}')
     for c in cards:
-        check('gradient' in c['bi'], f'у картки банку немає світлового шару: {c}')
-        check(96 <= c['h'] <= 132, f'картка банку не компактна: {c["h"]}px')
+        check(c['bg'] == 'rgb(255, 255, 255)' and c['bi'] == 'none', f'картка банку без білої поверхні: {c}')
+        check(c['h'] >= 142, f'картка банку замала для підписів: {c["h"]}px')
         check(c['sh'] != 'none', f'картка банку без тіні: {c}')
     for sel in ('.side-add', '.dact'):
         b = page.evaluate(BTN, sel)
@@ -50,8 +50,8 @@ def fonts_cards_buttons(page):
     shot(page, 'ov-1920.jpg', full=False)
     page.evaluate("document.documentElement.setAttribute('data-theme','dark')")
     page.wait_for_timeout(300)
-    bg = page.evaluate("getComputedStyle(document.body).backgroundColor")
-    check(bg == 'rgb(11, 14, 20)', f'фон ПК-Огляду в темній темі {bg}, а не #0b0e14')
+    bg = page.evaluate("()=>{const s=getComputedStyle(document.body),b=getComputedStyle(document.body,'::before');return {radial:(s.backgroundImage.match(/radial-gradient\\(/g)||[]).length,glass:b.backgroundImage}}")
+    check(bg['radial'] == 3 and 'linear-gradient' in bg['glass'], f'немає градієнтного liquid glass фону: {bg}')
     shot(page, 'ov-dark-1920.jpg', full=False)
 
 
@@ -204,7 +204,7 @@ return {gl:g.left,gr:g.right,l:Math.min(...c.map(x=>x.getBoundingClientRect().le
     check(w['sw'] <= 390, f'горизонтальна прокрутка сторінки: {w["sw"]}')
 
 
-ST = "(e)=>{const s=getComputedStyle(e);return {bg:s.backgroundColor,bl:s.borderLeftWidth+' '+s.borderLeftColor,bt:s.borderTopWidth+' '+s.borderTopColor,sh:s.boxShadow}}"
+ST = "(e)=>{const s=getComputedStyle(e),p=document.createElement('span');p.style.borderColor='var(--border)';e.appendChild(p);const border=getComputedStyle(p).borderTopColor;p.remove();return {bg:s.backgroundColor,bl:s.borderLeftWidth+' '+s.borderLeftColor,bt:s.borderTopWidth+' '+s.borderTopColor,border,sh:s.boxShadow}}"
 
 
 def drawer_sheet(page):
@@ -217,13 +217,13 @@ def drawer_sheet(page):
     page.locator('.p-flow.desk .flow-row.tx').first.click()
     page.wait_for_timeout(400)
     d = page.locator('.drawer').first.evaluate(ST)
-    check(d['bg'] == 'rgb(255, 255, 255)' and d['bl'] == '1px rgb(229, 229, 234)' and d['sh'] != 'none' and 'inset' in d['sh'], f'дровер: {d}')
+    check(d['bg'] == 'rgb(255, 255, 255)' and d['bl'] == '1px ' + d['border'] and d['sh'] != 'none' and 'inset' in d['sh'], f'дровер: {d}')
     page.keyboard.press('Escape')
     page.wait_for_timeout(300)
     page.keyboard.press('n')
     page.wait_for_timeout(500)
     m = page.locator('.sheet').first.evaluate(ST)
-    check(m['bg'] == 'rgb(255, 255, 255)' and m['bt'] == '1px rgb(229, 229, 234)' and m['sh'] != 'none', f'модалка: {m}')
+    check(m['bg'] == 'rgb(255, 255, 255)' and m['bt'] == '1px ' + m['border'] and m['sh'] != 'none', f'модалка: {m}')
     page.keyboard.press('Escape')
 
 

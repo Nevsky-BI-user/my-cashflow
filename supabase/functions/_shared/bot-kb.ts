@@ -1,4 +1,4 @@
-// Постійна клавіатура бота: спільна для відповідей telegram-webhook і ранкового підсумку telegram-digest
+// Клавіатура бота: спільна для відповідей telegram-webhook і ранкового підсумку telegram-digest
 // (кожне повідомлення з нею оновлює кнопки в чаті). Кнопки шлють звичайний текст, який розуміє роутер вебхука.
 export const KB_BTN = {
   balance: '💰 Баланс', chart: '📈 Графік', budget: '📊 Бюджет', week: '📅 Тиждень', month: '🔍 Місяць',
@@ -7,30 +7,27 @@ export const KB_BTN = {
 };
 export const MAIN_KB = {
   keyboard: [
-    [{ text: KB_BTN.income }, { text: KB_BTN.expense }],
     [{ text: KB_BTN.balance }, { text: KB_BTN.chart }],
     [{ text: KB_BTN.budget }, { text: KB_BTN.week }],
     [{ text: KB_BTN.month }, { text: KB_BTN.last }],
     [{ text: KB_BTN.help }, { text: KB_BTN.app }],
-    [{ text: KB_BTN.menu }, { text: KB_BTN.cancel }],
   ],
   resize_keyboard: true,
-  is_persistent: true,
+  is_persistent: false,
+  one_time_keyboard: true,
+  input_field_placeholder: 'Сума й опис або фото операції',
 };
-// Вибір способу введення; під час очікування тексту чи зображення лишаємо вихід із кроку.
+// Вибір способу введення для сумісності з командами попереднього сценарію.
 export const ENTRY_KB = {
   keyboard: [
     [{ text: KB_BTN.text }, { text: KB_BTN.image }],
-    [{ text: KB_BTN.menu }, { text: KB_BTN.cancel }],
   ],
   resize_keyboard: true,
-  is_persistent: true,
+  is_persistent: false,
+  one_time_keyboard: true,
+  input_field_placeholder: 'Сума й опис або фото операції',
 };
-export const ENTRY_INPUT_KB = {
-  keyboard: [[{ text: KB_BTN.menu }, { text: KB_BTN.cancel }]],
-  resize_keyboard: true,
-  is_persistent: true,
-};
+export const ENTRY_INPUT_KB = MAIN_KB;
 // Єдиний каталог команд для реєстрації меню Telegram.
 export const BOT_COMMANDS = [
   { command: 'menu', description: 'Відкрити головне меню' },

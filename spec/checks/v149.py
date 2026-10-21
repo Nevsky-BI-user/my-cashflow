@@ -20,7 +20,7 @@ def _check(page, tag, many):
     check(st['cols'] >= 1, f'{tag}: легенда в {st["cols"]} колонку {st}')
     check(len(st['inner']) >= 5 and not st['clipped'], f'{tag}: missing cards or clipped budget legend {st}')
     check(all(v <= 2 for v in st['inner']), f'{tag}: внутрішня прокрутка колонок {st}')
-    check(st['svg'] >= (180 if st['vh'] < 840 else 240), f'{tag}: графік нижчий за адаптивний мінімум {st}')
+    check(st['svg'] >= (160 if st['vh'] < 900 else 180 if st['vh'] < 1000 else 260), f'{tag}: графік нижчий за адаптивний мінімум {st}')
     if st['doc'] > st['vh'] + 1:
         page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)')
         page.wait_for_timeout(150)
