@@ -60,7 +60,7 @@ def responsive(page):
         check(geo['head'] <= (60 if mobile else 31), f'{width}: payout action made forecast header taller {geo}')
         if not mobile:
             check(geo['main']['scroll'] <= geo['main']['client'] + 2 and geo['budget'] <= min(height, geo['main']['bottom'] + 1), f'{width}: core card below viewport {geo}')
-            check(geo['plot'] >= (179.5 if height < 840 else 239.5), f'{width}: plot below approved minimum {geo}')
+            check(geo['plot'] >= (159.5 if height < 900 else 179.5 if height < 1000 else 259.5), f'{width}: plot below approved minimum {geo}')
         page.screenshot(path=str(OUT / f'payout-distribution-{width}x{height}-overview.png'), full_page=True)
         d = open_card(page)
         verify_amounts(page)

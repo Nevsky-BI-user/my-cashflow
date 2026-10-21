@@ -246,7 +246,7 @@ def cash_account_mobile(page):
     row = page.locator('.p-overview .o-account-section')
     cards = row.locator('.o-bank-card')
     n0 = cards.count()
-    add = row.get_by_role('button', name='+ Додати рахунок', exact=True)
+    add = row.get_by_role('button', name='Додати рахунок', exact=True)
     check(add.count() == 1, '390: у ряду рахунків немає «+»')
     add.scroll_into_view_if_needed()
     add.click()

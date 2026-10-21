@@ -6,10 +6,8 @@ from helpers import check, freeze, go_tab, settle
 
 DAY = '2026-10-13'
 # v154: зупинки градієнта акценту і колір акценту; у темній на ПК акцент #7c93f5, на телефоні #8b9ff7
-STOPS = {'light': ['rgb(59, 91, 219)', 'rgb(103, 65, 217)', 'rgb(156, 54, 181)'],
-         'dark': ['rgb(79, 91, 213)', 'rgb(122, 70, 214)', 'rgb(162, 59, 191)']}
-ACC = {('light', True): 'rgb(59, 91, 219)', ('light', False): 'rgb(59, 91, 219)',
-       ('dark', True): 'rgb(124, 147, 245)', ('dark', False): 'rgb(139, 159, 247)'}
+STOPS = {theme: ['rgb(18, 110, 112)', 'rgb(33, 119, 122)'] for theme in ('light', 'dark')}
+ACC = {(theme, desktop): 'rgb(18, 110, 112)' for theme in ('light', 'dark') for desktop in (True, False)}
 
 PROBE = r"""()=>{
  const probe=(p,v,e)=>{const d=document.createElement('div');d.style[p]=v;(e?.closest('.p-overview')||e?.closest('.shell.overview-active')||document.body).appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
@@ -46,12 +44,12 @@ def one_accent(page):
         # токени: акцент v154, усі псевдоніми однакові, градієнт із трьох різних зупинок v154
         check(r['acc'] == ACC[(theme, desk)] and r['ind'] == r['acc'], f'{w}: акцент {r["acc"]} / --indigo {r["ind"]}, а не індиго v154 {ACC[(theme, desk)]}')
         check(_stops(r['grad']) == STOPS[theme] and r['grad'].startswith('linear-gradient(135deg'), f'{w}: градієнт акценту не v154: {r["grad"]}')
-        check(len(set(_stops(r['tab']))) == 2, f'{w}: тон активного пункту (--tab-grad) не двоколірний: {r["tab"]}')
+        check(r['tab'] == 'none', f'{w}: активний пункт має бути пласким на спільному --acc-bg: {r["tab"]}')
         # «+ Операція»: на ПК бічна і верхня (обидві видимі), одним градієнтом акценту; на телефоні кругла кнопка «+» на Потоці (нижче)
         if desk:
             check(len(r['ops']) >= 2, f'{w}: на Огляді не видно бічної і верхньої «+ Операція»: {r["ops"]}')
         for b in r['ops']:
-            check((b['bi'] == 'none' and b['bg'] == b['acc']) if desk else b['bi'] == r['grad'], f'{w}: operation button differs from its accent role: {b}')
+            check((b['bi'] == r['grad'] if r['grad'] != 'none' else b['bi'] == 'none' and b['bg'] == b['acc']) and b['c'] == b['onAccent'], f'{w}: operation button differs from its accent role: {b}')
         if desk:
             check(r['item'] and r['itemBar'], f'{w}: немає активного пункту меню')
             check(page.locator('.side-item.on').evaluate("e=>getComputedStyle(e).boxShadow.includes('inset')"), f'{w}: active navigation has no inset accent')

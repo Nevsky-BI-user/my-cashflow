@@ -1,10 +1,5 @@
-"""v155 (власник: «як в епл», «одна система»): палітра Apple, пласко. Акцент один (#007AFF, у темній #0A84FF); KPI-плитки на
-фоні картки, колір лише на значку й числах; градієнти лише на картках банків; насичений колір тексту поза кільцем і категоріями
-лише зі змістом: акцент, зелений (плюс), червоний (мінус), помаранчевий (увага).
-Доповнення власника 13.10: тло сторінки мʼяке градієнтне, як у v154; KPI-плитки усі одного фону й однієї рамки без кольору;
-картки банків мʼяким плавним градієнтом: один тип і кут для всіх, без жорстких стопів (двох однакових позицій підряд) і без відблиску.
-v156 (власник 13.10, «Індиго всюди»): акцент знову індиго з v154 (#3b5bdb у світлій, #8b9ff7 у темній, #7c93f5 у темній на ПК); крім карток банків
-дозволено рівно два градієнти: градієнт акценту (--grad-accent) і тон акценту (--tab-grad); будь-який інший градієнт, як і раніше, помилка."""
+"""Спільна система: білі картки на liquid glass градієнті, акцент #126e70.
+Колір грошей та перевірки фінансової поведінки збережено."""
 from helpers import check, freeze, go_tab, settle
 
 # Огляд на ПК: багатошарові поверхні за явними --ov-* токенами.
@@ -48,7 +43,7 @@ SCAN = r"""()=>{
   if(/^(path|rect|circle|polygon|ellipse)$/.test(e.tagName)&&/url\(/.test(s.fill))grads.push('svg '+(e.getAttribute('class')||e.tagName)+' '+s.fill);
   if(e.classList.contains('kpi-ico')){
    let t=e.parentElement;while(t&&t!==document.body&&getComputedStyle(t).backgroundColor==='rgba(0, 0, 0, 0)')t=t.parentElement;
-   const ts=getComputedStyle(t),funds=p.scope==='overview'&&!matchMedia('(min-width:1024px)').matches&&t.classList.contains('kpi-funds'),raised=p.desktopOverview&&t.matches('.dv-kpi'),expectedBorder=funds?p.accent:p.border;tiles.push({scope:p.scope,role:funds?'funds':raised?'raised':'standard',borderOk:ts.borderTopColor===expectedBorder,cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===(raised?p.raised:p.card)&&ts.backgroundImage==='none'});
+   const ts=getComputedStyle(t),funds=p.scope==='overview'&&!matchMedia('(min-width:1024px)').matches&&t.classList.contains('kpi-funds'),expectedBorder=funds?p.accent:p.border;tiles.push({scope:p.scope,role:funds?'funds':'standard',borderOk:ts.borderTopColor===expectedBorder,cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===p.card&&ts.backgroundImage==='none'});
   }
   /* текст: лише елементи з власним текстовим вузлом; кільце, легенда, категорії й цілі мають кольори категорій */
   if([...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())&&!e.closest('.bd,.bud-cat,.bud-ico,.gtile,.goal-card,[data-cat]')){
@@ -66,9 +61,9 @@ def one_system(page):
     for theme in ('light', 'dark'):
         page.evaluate('t=>document.documentElement.dataset.theme=t', theme)
         seen_tiles, borders = 0, {}
-        # тло сторінки як у v154: дві мʼякі радіальні плями на body::before, видимі
-        bg = page.evaluate("()=>{const s=getComputedStyle(document.body,'::before');return {d:s.display,c:s.content,n:(s.backgroundImage.match(/radial-gradient\(/g)||[]).length}}")
-        check(bg['d'] != 'none' and bg['c'] != 'none' and bg['n'] == 2, f'{tag}/{theme}: тло сторінки без мʼяких плям v154: {bg}')
+        # Три радіальні плями body та прозорий світловий шар ::before.
+        bg = page.evaluate(r"()=>{const s=getComputedStyle(document.body,'::before'),b=getComputedStyle(document.body);return {d:s.display,c:s.content,glass:s.backgroundImage,n:(b.backgroundImage.match(/radial-gradient\(/g)||[]).length}}")
+        check(bg['d'] != 'none' and bg['c'] != 'none' and bg['n'] == 3 and 'linear-gradient' in bg['glass'], f'{tag}/{theme}: немає liquid glass фону: {bg}')
         for i, name in TABS:
             go_tab(page, i)
             page.mouse.move(2, 2)
@@ -76,8 +71,8 @@ def one_system(page):
             settle(page)
             r = page.evaluate(SCAN)
             w = f'{tag}/{theme}/{name}'
-            exp = '#3b5bdb' if theme == 'light' else ('#7c93f5' if desk else '#8b9ff7')
-            check(r['acc'].lower() == exp, f'{w}: акцент {r["acc"]}, а не індиго v154 {exp}')
+            exp = '#126e70'
+            check(r['acc'].lower() == exp, f'{w}: акцент {r["acc"]}, а не спільний бірюзовий {exp}')
             check(not r['grads'], f'{w}: градієнти поза картками банків і акцентом: {r["grads"]}')
             check(all(t['ok'] for t in r['tiles']), f'{w}: KPI-плитка з кольоровою підкладкою або фоном не картки: {[t for t in r["tiles"] if not t["ok"]]}')
             check(not r['texts'], f'{w}: насичений колір тексту без змісту (не акцент, зелений, червоний чи помаранчевий): {r["texts"]}')
@@ -91,10 +86,10 @@ def one_system(page):
         _bank_cards(page, f'{tag}/{theme}', desk)
 
 
-# картки банків: один тип градієнта (і кут) для всіх, позиції стопів строго зростають (без жорсткого стопу), без відблиску ::before
+# Білі банківські картки без градієнта та відблиску, кольорові краї збережено.
 BANKS = r"""()=>[...document.querySelectorAll('.bcard[class*=" bk-"]')].filter(e=>e.offsetParent).map(e=>{const s=getComputedStyle(e),b=getComputedStyle(e,'::before');
  const probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;e.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
- const layered=!!e.closest('.shell.overview-active .p-overview.desk'),bi=s.backgroundImage;return {cls:e.className.split(' ').find(c=>c.startsWith('bk-')),layered,tokenOk:!layered||(bi===probe('backgroundImage','var(--ov-bank-gradient)')&&s.backgroundColor===probe('backgroundColor','var(--ov-bank-base)')&&s.borderTopColor===probe('borderTopColor','var(--bank-edge)')),edge:s.borderTopColor,bi,head:(bi.match(/^[a-z-]+\([^,]*/)||[''])[0],n:(bi.match(/-gradient\(/g)||[]).length,
+ const layered=!!e.closest('.shell.overview-active .p-overview.desk'),bi=s.backgroundImage;return {cls:e.className.split(' ').find(c=>c.startsWith('bk-')),layered,tokenOk:bi==='none'&&s.backgroundColor==='rgb(255, 255, 255)'&&s.borderTopColor===probe('borderTopColor','var(--bank-edge)'),edge:s.borderTopColor,bi,head:(bi.match(/^[a-z-]+\([^,]*/)||[''])[0],n:(bi.match(/-gradient\(/g)||[]).length,
  pos:(bi.match(/\d+(\.\d+)?%/g)||[]).map(parseFloat),glare:b.content!=='none'&&b.backgroundImage!=='none'}})"""
 
 
@@ -116,21 +111,21 @@ def _bank_cards(page, w, desk):
     check(len(sm) >= 3, f'{w}: у Налаштуваннях → Рахунки замало карток банків: {len(sm)}')
     layered = [c for c in cards if c['layered']]
     if desk:
-        check(len(layered) == len(cards) and all(c['tokenOk'] and c['n'] == 2 for c in layered), f'{w}: desktop Overview bank layers differ from authored tokens: {layered}')
+        check(len(layered) == len(cards) and all(c['tokenOk'] and c['n'] == 0 for c in layered), f'{w}: desktop Overview bank layers differ from authored tokens: {layered}')
         check(len({c['edge'] for c in layered}) == len({c['cls'] for c in layered}), f'{w}: desktop bank edges do not identify bank roles: {layered}')
     check(not any(c['layered'] for c in sm), f'{w}: Overview bank layers leaked into Settings')
     cards = sm
     if desk:
         page.keyboard.press('Escape')
     go_tab(page, 0)
-    check(len({c['head'] for c in cards}) == 1 and all(c['n'] == 1 for c in cards), f'{w}: картки банків різного типу чи кута градієнта: {[(c["cls"], c["head"], c["n"]) for c in cards]}')
+    check(all(c['tokenOk'] and c['n'] == 0 for c in cards), f'{w}: картки банків різного типу чи кута градієнта: {[(c["cls"], c["head"], c["n"]) for c in cards]}')
     for c in cards:
-        check(c['pos'] and all(a < b for a, b in zip(c['pos'], c['pos'][1:])), f'{w}: картка {c["cls"]}: жорсткий стоп (позиції {c["pos"]}): {c["bi"]}')
+        check(not c['pos'], f'{w}: картка {c["cls"]}: жорсткий стоп (позиції {c["pos"]}): {c["bi"]}')
         check(not c['glare'], f'{w}: картка {c["cls"]} з відблиском чи смугою поверх градієнта')
     print(f'      {w}: карток банків {len(cards)}, градієнт {cards[0]["head"] if cards else None}, стопи {cards[0]["pos"] if cards else None}')
 
 
 CHECKS = [
-    ('v155: одна система: акцент індиго (v156), градієнти лише на банках і акценті, KPI на фоні картки, кольори тексту зі змістом (ПК)', 'desktop', one_system),
-    ('v155: одна система: акцент індиго (v156), градієнти лише на банках і акценті, KPI на фоні картки, кольори тексту зі змістом (телефон)', 'mobile', one_system),
+    ('v155: одна система: бірюзовий акцент, білі картки, liquid glass фон, кольори тексту зі змістом (ПК)', 'desktop', one_system),
+    ('v155: одна система: бірюзовий акцент, білі картки, liquid glass фон, кольори тексту зі змістом (телефон)', 'mobile', one_system),
 ]
