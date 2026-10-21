@@ -124,10 +124,14 @@ def contrast_mobile(page):
         page.evaluate('(t)=>document.documentElement.setAttribute("data-theme",t)', theme)
         page.wait_for_timeout(150)
         _pairs(page, [('підпис табки', '.tab-bar .tab-btn:not([aria-current]) span')])
-        for bank in ('oschad', 'privat', 'mono'):
+        for index, bank in enumerate(('oschad', 'privat', 'mono')):
             card = page.locator('.o-bank-card.bank-' + bank)
-            card.focus()
+            page.locator('.o-bank-card[aria-current=true]').focus()
+            page.keyboard.press('Home')
+            for _ in range(index):
+                page.keyboard.press('ArrowRight')
             page.wait_for_timeout(550)
+            check(card.get_attribute('aria-current') == 'true', f'{bank}: contrast target is not the active card')
             for amount in card.locator('.account-amounts b').all():
                 amount.scroll_into_view_if_needed()
                 fg = amount.evaluate('e=>getComputedStyle(e).color')

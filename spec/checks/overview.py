@@ -8,7 +8,7 @@ from helpers import check, dialog, finance_ref, current_ref, demo_snapshot, free
 TODAY = '2026-10-08'
 # Поріг мінімальних витрат рахунку показано всередині картки Ощаду.
 # v145: блок «Баланс» (o-bal) прибрано, баланс у плитці KPI
-ORDER = ['projection-summary', 'o-account-section', 'o-next', 'dv-fc', 'o-budget', 'o-recent', 'o-weeks']
+ORDER = ['projection-summary', 'o-account-section', 'o-next', 'dv-fc', 'o-budget', 'o-recent']
 
 
 def _spent(page, start, today):
@@ -37,7 +37,7 @@ def mobile_today(page):
         check(labels == ['Баланс', 'Заборгованість'], f'картка {i}: підписи {labels}')
         check(len(values) == 2 and abs(num(values[0]) - a['b']) <= 1 and abs(num(values[1]) - a['d']) <= 1,
               f'картка {i}: суми {values}, рахунок {a}')
-    add = page.locator('.o-account-section').get_by_role('button', name='Додати рахунок', exact=True)
+    add = page.locator('.o-account-section .o-stack-add button')
     check(add.count() == 1 and add.inner_text().strip() == '+', 'після колоди немає малого «+» додавання рахунку')
     check(page.locator('.o-ms-list').count() == 0 and page.locator('.o-bank-card.bank-oschad .ms-wrap').count() == 1, 'мінімальні витрати Ощаду мають бути в його картці')
     ref = finance_ref(page)
