@@ -167,7 +167,7 @@ def _ring(page, scope, tag):
 
 def ring_v152(page):
     desk = page.viewport_size['width'] >= 1024
-    scope = '.dv-main' if desk else '.p-overview'
+    scope = '.dv-bud' if desk else '.p-overview'
     for theme in ('dark', 'light'):
         freeze(page, DAY)
         page.evaluate('t=>document.documentElement.dataset.theme=t', theme)

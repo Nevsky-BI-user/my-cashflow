@@ -51,7 +51,7 @@ def fonts_cards_buttons(page):
     page.evaluate("document.documentElement.setAttribute('data-theme','dark')")
     page.wait_for_timeout(300)
     bg = page.evaluate("getComputedStyle(document.body).backgroundColor")
-    check(bg == 'rgb(15, 17, 21)', f'фон ПК у темній темі {bg}, а не #0f1115')
+    check(bg == 'rgb(11, 14, 20)', f'фон ПК-Огляду в темній темі {bg}, а не #0b0e14')
     shot(page, 'ov-dark-1920.jpg', full=False)
 
 
@@ -68,7 +68,10 @@ def period_header(page):
         hb, pb = page.locator('.dtitle h1').bounding_box(), per.bounding_box()
         check(pb['x'] > hb['x'] + hb['width'] and abs((pb['y'] + pb['height'] / 2) - (hb['y'] + hb['height'] / 2)) < 8, f'{nm}: період не праворуч від заголовка: {hb} {pb}')
         check(pb['y'] + pb['height'] < 80, f'{nm}: період не у верхньому рядку: {pb}')
-        check(page.locator('.dtitle .side-arr').count() == 2 and 'зарплата' in page.inner_text('.dtitle .dtitle-sub'), f'{nm}: стрілки або підпис періоду')
+        caption='календарний місяць' if i==1 else 'зарплата'
+        check(page.locator('.dtitle .side-arr').count() == 2 and caption in page.inner_text('.dtitle .dtitle-sub'), f'{nm}: стрілки або підпис періоду')
+        if i==1:
+            check(page.locator('.p-budget').get_attribute('data-month')==DAY[:7]+'-01','місяць Бюджету не відповідає його шапці')
     # стрілки клавіатури і кнопка › міняють період
     go_tab(page, 0)
     p0 = page.inner_text('.dtitle .side-pname')

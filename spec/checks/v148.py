@@ -10,10 +10,15 @@ HEALTH_ABS = [("{id:'health',groupId:4,name:'Здоровʼя',limit:2000,", "{i
 
 
 def _open(page):
-    """ПК: кнопка «Розподіл бюджету» на вкладці Бюджет (аркуш); телефон: вкладка «Налаштування» (v149), рядок «Розподіл бюджету»."""
+    """Налаштування → Розподіл бюджету: ліміти прогнозу між виплатами, окремі від місячного плану."""
     if page.viewport_size['width'] >= 1024:
-        go_tab(page, 1)
-        page.click('.dact')
+        page.keyboard.press('s')
+        page.wait_for_timeout(400)
+        page.locator('.set-page nav button', has_text='Розподіл бюджету').first.click()
+        page.wait_for_timeout(500)
+        sh = page.locator('.set-page')
+        check(sh.locator('.bud-cat-row').count() > 0, 'розділ лімітів прогнозу без категорій')
+        return sh
     else:
         page.locator('.tab-bar .tab-btn').nth(5).click()
         page.wait_for_timeout(400)
@@ -23,10 +28,6 @@ def _open(page):
         sh = page.locator('.set-mpage .set-msec[data-sec=budget]')
         check(sh.count() == 1 and dialog(page, 'Розподіл бюджету').count() == 0, 'сторінка «Розподіл бюджету» не відкрилась (або відкрився аркуш)')
         return sh
-    page.wait_for_timeout(500)
-    sh = dialog(page, 'Розподіл бюджету')
-    check(sh.count() == 1, 'аркуш «Розподіл бюджету» не відкрився')
-    return sh
 
 
 def _total(sh):
@@ -138,7 +139,7 @@ def ring_readable(page):
     import math
     desk = page.viewport_size['width'] >= 1024
     sizes = ((1920, 1080), (1280, 800), (1280, 860)) if desk else ((375, 812), (390, 844))
-    scope = '.dv-main' if desk else '.p-overview'
+    scope = '.dv-bud' if desk else '.p-overview'
     for theme in ('dark', 'light'):
         for w, hgt in sizes:
             page.set_viewport_size({'width': w, 'height': hgt})

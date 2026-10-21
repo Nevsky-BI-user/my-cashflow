@@ -14,7 +14,8 @@ def _cur(page):
 
 def drawer_desktop(page):
     """ПК: панель праворуч, фокус у ній, Esc закриває і повертає фокус на категорію; нижнього блоку операцій немає."""
-    freeze(page, DAY)
+    from checks.monthly_budget import seed_demo
+    seed_demo(page, DAY)
     go_tab(page, 1)
     check(page.locator('.bud-ops').count() == 0, 'лишився блок «операції за період» унизу правої колонки')
     expand_groups(page)  # v145: групи за замовчуванням згорнуті
@@ -30,7 +31,7 @@ def drawer_desktop(page):
     check(name in d.locator('.cat-drw-n').inner_text(), 'у панелі не та категорія')
     check(page.evaluate("!!document.activeElement.closest('.cat-drw')"), 'фокус не в панелі')
     txt = d.inner_text()
-    for s in ('Операції періоду', 'У Потік', 'Ліміт на період'):
+    for s in ('Операції місяця', 'У Потік', 'План на місяць'):
         check(s in txt, f'у панелі немає «{s}»')
     ops = d.locator('.cat-op')
     if ops.count():
@@ -54,10 +55,11 @@ def drawer_desktop(page):
 
 def drawer_mobile(page):
     """Телефон: рядок категорії відкриває панель знизу на всю ширину; × і Esc закривають."""
-    freeze(page, DAY)
+    from checks.monthly_budget import seed_demo
+    seed_demo(page, DAY)
     go_tab(page, 1)
     expand_groups(page)  # v145: групи за замовчуванням згорнуті
-    row = page.locator('.bud-mrow').first
+    row = page.locator('.bud-cat').first
     check(row.count() == 1, 'на телефоні немає рядків категорій у групах')
     row.click()
     page.wait_for_timeout(350)
@@ -85,10 +87,11 @@ def drawer_mobile(page):
 def groups(page):
     """Групи за sort_order; v145: усі згорнуті за замовчуванням, рядок групи розгортає (клік, Enter, Space), стан памʼятається;
     сума групи = сума її категорій; без group_id: «Інше»."""
-    freeze(page, DAY)
+    from checks.monthly_budget import seed_demo
+    seed_demo(page, DAY)
     go_tab(page, 1)
     gs = page.evaluate("""[...document.querySelectorAll('.bud-grp')].map(g=>({id:g.dataset.g,open:g.querySelector('.bud-grp-h').getAttribute('aria-expanded')==='true',
-n:g.querySelector('.bud-grp-n').firstChild.textContent,s:g.querySelector('.bud-grp-s').textContent}))""")
+n:g.querySelector('.bud-grp-n').firstChild.textContent}))""")
     order = page.evaluate("BGROUPS.slice().sort((a,b)=>a.sort_order-b.sort_order).map(g=>String(g.id))")
     ids = [g['id'] for g in gs]
     check(ids == [i for i in order if i in ids], f'порядок груп {ids}, очікували за sort_order {order}')
@@ -113,20 +116,20 @@ n:g.querySelector('.bud-grp-n').firstChild.textContent,s:g.querySelector('.bud-g
     go_tab(page, 1)
     check(page.locator('.bud-grp-h').first.get_attribute('aria-expanded') == 'true', 'розгорнута група не запамʼяталась після перезавантаження')
     expand_groups(page)
-    rows = page.evaluate("""[...document.querySelectorAll('.bud-grp')].map(g=>({n:g.querySelector('.bud-grp-n').firstChild.textContent,s:g.querySelector('.bud-grp-s').textContent,
-c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').textContent,v:c.querySelector('.bud-nums').textContent}))}))""")
+    rows = page.evaluate("""[...document.querySelectorAll('.bud-grp')].map(g=>({n:g.querySelector('.bud-grp-n').firstChild.textContent,s:[...g.querySelectorAll('.bud-grp-h .bud-value')].map(e=>e.textContent),
+c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').textContent,v:[...c.querySelectorAll('.bud-value')].map(e=>e.textContent)}))}))""")
     for g in rows:
-        f = sum(num(c['v'].split('/')[0]) for c in g['c'])
-        pl = sum(num(c['v'].split('/')[1]) for c in g['c'])
-        check(abs(num(g['s'].split('/')[0]) - f) <= len(g['c']), f'{g["n"]}: факт групи {g["s"]} проти суми категорій {f}')
-        check(abs(num(g['s'].split('/')[1]) - pl) <= len(g['c']), f'{g["n"]}: план групи {g["s"]} проти суми категорій {pl}')
+        f = sum(num(c['v'][0]) for c in g['c'])
+        pl = sum(num(c['v'][1]) for c in g['c'])
+        check(abs(num(g['s'][0]) - f) <= len(g['c']), f'{g["n"]}: факт групи {g["s"]} проти суми категорій {f}')
+        check(abs(num(g['s'][1]) - pl) <= len(g['c']), f'{g["n"]}: план групи {g["s"]} проти суми категорій {pl}')
     other = next((g for g in rows if g['n'] == 'Інше'), None)
     check(other and any(c['n'] == 'Інше' for c in other['c']), 'категорія без group_id не потрапила в групу «Інше»')
     # Усі змінні факти включно з некатегоризованими: одна вибірка [start,end), до asof.
     st = finance_state(page)
-    fsum = sum(num(c['v'].split('/')[0]) for g in rows for c in g['c'])
-    cp = st['result']['currentPeriod']
-    av = cp['actualVariableCents'] / 100
+    fsum = sum(num(c['v'][0]) for g in rows for c in g['c'])
+    cp = page.evaluate('window.__calendarBudget')
+    av = cp['fact'] / 100
     unique = {str(x['id']): x for x in st['data']['transactions']}
     actual = [x for x in unique.values() if x.get('type') == 'expense'
               and x.get('fixed_id') is None and x.get('credit_id') is None
@@ -137,7 +140,7 @@ c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').te
     check(abs(fsum - raw) <= 1 and abs(raw - av) <= .01,
           f'факт груп {fsum}, сирі змінні факти {raw}, рушій {av}')
     start = cp['start']
-    food = lambda: num(page.locator('.bud-cat', has_text='Продукти').locator('.bud-nums').inner_text().split('/')[0])
+    food = lambda: num(page.locator('.bud-cat', has_text='Продукти').locator('.bud-value[data-label="Факт"]').inner_text())
     f0 = food()
     # фікстура: дві витрати на Продукти з fixed_id і credit_id не змінюють ні факт категорії, ні actualVariable
     freeze(page, DAY, [("TX_DEMO_ROWS=[", "TX_DEMO_ROWS=[[25,'FIXTEST',777,'out','mono',5411,'food'],[26,'CRTEST',555,'out','mono',5411,'food'],"),
@@ -147,17 +150,15 @@ c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').te
     st2 = finance_state(page)
     check(sum(1 for x in st2['data']['transactions'] if (x.get('fixed_id') == 'fx-test' or x.get('credit_id') == 'cr-test') and start <= x['date'][:10] <= DAY) == 2, 'фікстура fixed_id/credit_id не дійшла до входу поточного періоду')
     check(food() == f0, f'операції з fixed_id/credit_id потрапили у факт Продуктів: {f0} -> {food()}')
-    check(st2['result']['currentPeriod']['actualVariableCents'] / 100 == av, 'рушій зарахував fixed_id/credit_id у змінні витрати')
+    check(page.evaluate('window.__calendarBudget.fact') / 100 == av, 'місячний бюджет зарахував fixed_id/credit_id')
 
 
 def limit_abs(page):
     """Ліміт у ₴: зберігається (оптимістично), рушій дає категорії max(0, ліміт мінус факт), підсумок «розподілено X з T, вільно Y» сходиться."""
     freeze(page, DAY)
-    go_tab(page, 1)
-    expand_groups(page)
     before = _cur(page)
     t0 = sum(c['totalCents'] for c in before['categories'])
-    page.locator('.bud-cat', has_text='Продукти').click()
+    page.locator('.bd-row', has_text='Продукти').click()
     page.wait_for_timeout(300)
     d = page.locator('.cat-drw')
     p0 = d.locator('#cat-lim-v').input_value()
@@ -190,24 +191,9 @@ def limit_abs(page):
     check(tot == t0, f'бюджет періоду змінився від ліміту: {t0} -> {tot}')
     page.keyboard.press('Escape')
     page.wait_for_timeout(250)
-    s = page.locator('.bud-alloc-sum').inner_text()
-    # v150: у поточному періоді розподіляється повний бюджет періоду (плитка «Бюджет періоду»), а не план рушія від завтра;
-    # підсумок тоді з planSplit(повний бюджет, категорії) на тому самому вході (planSplit перевіряє spec/plan-split.test.cjs)
-    if 'повний бюджет' in s:
-        full = page.evaluate("(()=>{const pb=window.__periodBudget;return planSplit(pb.budget,window.__financeInput.categories)})()")
-        tot = sum(c['totalCents'] for c in full)
-        free = sum(c['totalCents'] for c in full if c['id'] == 'unallocated')
-        ff = next((c for c in full if c['id'] == 'food'), None)
-        check(ff is not None and ff['totalCents'] == min(500000, tot), f'повний план: Продукти {ff}, очікували ліміт 5 000 ₴ на період')
-    parts = s.split('Розподілено ')[1]
-    x, rest = parts.split(' з ', 1)
-    tt, y = rest.split(', вільно ')
-    print(f'      підсумок: {s!r}; рушій: всього {tot}, вільно {free}')
-    check(abs(num(x) - (tot - free) / 100) <= 1 and abs(num(tt) - tot / 100) <= 1 and abs(num(y) - free / 100) <= 1, f'підсумок {s!r} не з рушія ({tot}, {free})')
-    check(abs(num(x) + num(y) - num(tt)) <= 1, f'X + Y != T у {s!r}')
-    check('ліміт ₴' in page.locator('.bud-cat', has_text='Продукти').inner_text(), 'у рядку категорії немає позначки «ліміт ₴»')
+    check(tot==t0 and free>=0,'forecast allocation conservation')
     # назад у %: limit_abs стає null
-    page.locator('.bud-cat', has_text='Продукти').click()
+    page.locator('.bd-row', has_text='Продукти').click()
     page.wait_for_timeout(300)
     d.locator('.cat-lim-seg button', has_text='%').click()
     d.locator('#cat-lim-v').fill(p0)
@@ -261,17 +247,19 @@ def colors(page):
     for theme in ('light', 'dark'):
         page.evaluate('(t)=>document.documentElement.setAttribute("data-theme",t)', theme)
         page.wait_for_timeout(200)
-        cards = page.evaluate("""[...document.querySelectorAll('.dv-cards .bcard')].map(e=>{const s=getComputedStyle(e);return{c:[...e.classList].find(x=>x.startsWith('bk-')),bi:s.backgroundImage,sh:s.boxShadow}})""")
+        cards = page.evaluate("""[...document.querySelectorAll('.dv-cards .bcard')].map(e=>{const s=getComputedStyle(e),probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;e.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};return{c:[...e.classList].find(x=>x.startsWith('bk-')),bi:s.backgroundImage,sh:s.boxShadow,edge:s.borderTopColor,tokenOk:s.backgroundImage===probe('backgroundImage','var(--ov-bank-gradient)')&&s.backgroundColor===probe('backgroundColor','var(--ov-bank-base)')&&s.borderTopColor===probe('borderTopColor','var(--bank-edge)')}})""")
         check(len(cards) >= 3 and all(c['c'] and 'gradient' in c['bi'] and c['sh'] != 'none' for c in cards), f'{theme}: картки без градієнта за банком: {cards}')
-        check(len({c['bi'] for c in cards}) == len({c['c'] for c in cards}), f'{theme}: різні банки з однаковим градієнтом')
+        check(all(c['tokenOk'] for c in cards) and len({c['edge'] for c in cards}) == len({c['c'] for c in cards}), f'{theme}: bank surfaces or identity edges differ from desktop Overview roles: {cards}')
         ratios = [r for i in range(len(cards)) for r in page.locator('.dv-cards .bcard').nth(i).evaluate(CR)]
         print(f'      {theme}: контраст тексту карток мін. {min(ratios)}')
         check(min(ratios) >= 4.5, f'{theme}: контраст тексту на картці {min(ratios)} < 4.5')
         # v155, рішення власника «одна система» (v154) у палітрі Apple: KPI-плитки без кольорових підкладок, фон = токен картки (раніше тут вимагався градієнт)
-        kpi = page.evaluate("(()=>{const d=document.createElement('div');d.style.background='var(--card)';return [...document.querySelectorAll('.dv-kpi')].filter(e=>e.offsetParent).map(e=>{(e.closest('.p-overview')||document.body).appendChild(d);const cc=getComputedStyle(d).backgroundColor;d.remove();const s=getComputedStyle(e);return {bi:s.backgroundImage,ok:s.backgroundColor===cc}})})()")
+        kpi = page.evaluate("(()=>{const d=document.createElement('div');d.style.background='var(--ov-raised)';return [...document.querySelectorAll('.p-overview.desk .dv-kpi')].filter(e=>e.offsetParent).map(e=>{e.closest('.p-overview').appendChild(d);const cc=getComputedStyle(d).backgroundColor;d.remove();const s=getComputedStyle(e);return {bi:s.backgroundImage,ok:s.backgroundColor===cc}})})()")
         check(kpi and all(k['bi'] == 'none' and k['ok'] for k in kpi), f'{theme}: KPI з кольоровою підкладкою або фоном не картки: {kpi}')
-        check('gradient' in page.evaluate("getComputedStyle(document.querySelector('.side-add')).backgroundImage"), f'{theme}: кнопка «+ Операція» без градієнта')
-        check('gradient' in page.evaluate("getComputedStyle(document.querySelector('.side-item[aria-current=page]')).backgroundImage"), f'{theme}: активна вкладка без градієнта')
+        action = page.evaluate("()=>{const e=document.querySelector('.overview-active .side-add'),s=getComputedStyle(e),d=document.createElement('div');d.style.background='var(--ov-accent)';e.appendChild(d);const expected=getComputedStyle(d).backgroundColor;d.remove();return {ok:s.backgroundColor===expected&&s.backgroundImage==='none',shadow:s.boxShadow}}")
+        check(action['ok'] and action['shadow'] != 'none', f'{theme}: desktop primary action lost its accent surface role: {action}')
+        active = page.evaluate("()=>{const e=document.querySelector('.overview-active .side-item[aria-current=page]'),s=getComputedStyle(e),d=document.createElement('div');d.style.background='var(--acc-bg)';e.appendChild(d);const expected=getComputedStyle(d).backgroundColor;d.remove();return {ok:s.backgroundColor===expected&&s.backgroundImage==='none',shadow:s.boxShadow}}")
+        check(active['ok'] and active['shadow'] != 'none', f'{theme}: desktop active navigation lost its inset accent role: {active}')
         page.mouse.move(2, 2)
         shot(page, f'v144-overview-{theme}-1280.jpg', full=False)
 

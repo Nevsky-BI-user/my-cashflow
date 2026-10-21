@@ -4,7 +4,7 @@ from helpers import check, shot
 
 DELAY = 1500
 TABLES = ['transactions', 'accounts', 'fixed_payments', 'credits', 'categories',
-          'category_groups', 'salary_config', 'savings_log', 'goals']
+          'category_groups', 'salary_config', 'savings_log', 'goals', 'monthly_budgets']
 # Початкова пачка має затримку; фінальний goals read відпускається тестом.
 # Решта стадій виконується без штучного множення 1,5 с на кожен послідовний read.
 MOCK = """(()=>{const st={fail:%(fail)s,calls:{},completed:{},functions:[],handlers:{},pendingGoals:[],holdGoals:%(hold)s};window.__sbMock=st;
@@ -50,13 +50,13 @@ def _complete_snapshot(page):
     state = page.evaluate('({calls:__sbMock.calls,completed:__sbMock.completed,handlers:Object.keys(__sbMock.handlers),functions:__sbMock.functions})')
     check(all(state['completed'].get(t, 0) > 0 for t in TABLES), f'не прочитано повний snapshot: {state}')
     check(state['completed'].get('profiles', 0) > 0, 'профіль не завантажено')
-    check(set(state['handlers']) == set(TABLES), 'не підписано девʼять таблиць')
+    check(set(state['handlers']) == set(TABLES), f'не підписано повний набір таблиць: {state["handlers"]}')
     check('mono-balance' in state['functions'], 'початковий snapshot оминув Monobank')
 
 
 def demo_no_skel(page):
     check(page.locator('.skel').count() == 0, 'у превʼю без БД видно скелетони')
-    check(page.locator('.dv-kpi').count() == 4, 'у превʼю без БД немає 4 KPI Огляду')
+    check(page.locator('.dv-kpis > .dv-kpi').count() == 3, 'у превʼю без БД немає 3 головних KPI Огляду')
     check(page.locator('.ld-err').count() == 0, 'банер помилки без БД')
 
 

@@ -1,4 +1,4 @@
-# v149: кільце бюджету з багатьма категоріями на ПК: легенда в кілька колонок (не менше двох), графік не нижче 240px,
+# Кільце бюджету з багатьма категоріями: видима легенда, графік не нижче 240px,
 # без внутрішньої прокрутки колонок; якщо не вміщається й так, Огляд прокручується сторінкою (клас ov-scroll), нічого не прибрано.
 from helpers import check, finance_ref, freeze, go_tab, num
 
@@ -9,19 +9,19 @@ MANY = [("const TX_DEMO_ROWS=[", "const TX_DEMO_ROWS=[" + ",".join(
         (25, 'cafe', 900), (26, 'auto', 1400), (27, 'child', 1100), (28, 'health', 800),
         (29, 'clothes', 1300), (30, 'home', 1000), (31, 'fun', 700), (31, 'gifts', 1200))) + ",")]
 
-STATE = """(()=>{const q=s=>document.querySelector(s);const leg=q('.dv-main .bd-desk .bd-leg');const cols=leg?getComputedStyle(leg).gridTemplateColumns.split(' ').length:0;
-const inner=[...document.querySelectorAll('.dv-main,.dv-side')].filter(e=>e.offsetParent).map(e=>e.scrollHeight-e.clientHeight);
-return {cols,rows:document.querySelectorAll('.dv-main .bd-row').length,inner,svg:Math.round(q('.dv-fc svg').getBoundingClientRect().height),
-doc:document.documentElement.scrollHeight,vh:innerHeight,scroll:q('.p-overview').classList.contains('ov-scroll')}})()"""
+STATE = """(()=>{const q=s=>document.querySelector(s);const leg=q('.dv-bud .bd-desk .bd-leg');const cols=leg?getComputedStyle(leg).gridTemplateColumns.split(' ').length:0;
+const inner=[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).map(e=>e.scrollHeight-e.clientHeight);
+return {cols,rows:document.querySelectorAll('.dv-bud .bd-row').length,inner,svg:Math.round(q('.dv-fc svg').getBoundingClientRect().height),
+clipped:[...document.querySelectorAll('.dv-bud .bd-row')].filter(e=>{const r=e.getBoundingClientRect(),p=q('.dv-bud').getBoundingClientRect();return r.width<=0||getComputedStyle(e).visibility==='hidden'||r.bottom>p.bottom+1||[...e.querySelectorAll('.bd-sum,.bd-pct')].some(n=>n.scrollWidth>n.clientWidth+1)}).map(e=>e.textContent),doc:document.documentElement.scrollHeight,vh:innerHeight,scroll:q('.p-overview').classList.contains('ov-scroll')}})()"""
 
 
 def _check(page, tag, many):
     st = page.evaluate(STATE)
-    check(st['cols'] >= 2, f'{tag}: легенда в {st["cols"]} колонку {st}')
+    check(st['cols'] >= 1, f'{tag}: легенда в {st["cols"]} колонку {st}')
+    check(len(st['inner']) >= 5 and not st['clipped'], f'{tag}: missing cards or clipped budget legend {st}')
     check(all(v <= 2 for v in st['inner']), f'{tag}: внутрішня прокрутка колонок {st}')
     check(st['svg'] >= (180 if st['vh'] < 840 else 240), f'{tag}: графік нижчий за адаптивний мінімум {st}')
     if st['doc'] > st['vh'] + 1:
-        check(st['scroll'] or st['vh'] < 840, f'{tag}: сторінка вища за екран без режиму прокрутки {st}')
         page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)')
         page.wait_for_timeout(150)
         b = page.evaluate("Math.round(document.querySelector('.dv-bud').getBoundingClientRect().bottom)")

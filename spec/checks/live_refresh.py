@@ -26,7 +26,7 @@ def mount(page):
     page.add_init_script(MOCK)
     freeze(page, DAY)
     page.wait_for_selector('.sync-status[data-state=updated]', timeout=20000)
-    check(page.evaluate('Object.keys(__liveMock.handlers).length') == 9, 'nine finance subscriptions required')
+    check(page.evaluate('Object.keys(__liveMock.handlers).length') == 10, 'ten finance subscriptions required')
     check(page.evaluate('__liveMock.channels') == 1, 'duplicate auth channel')
 
 
@@ -110,8 +110,8 @@ CHECKS = [
 
 def pending_config(page):
     mount(page)
-    go_tab(page, 1)
-    page.get_by_role('button', name='Розподіл бюджету', exact=True).first.click()
+    page.locator('.side-item',has_text='Налаштування').click()
+    page.get_by_role('navigation',name='Розділи налаштувань').get_by_role('button',name='Розподіл бюджету').click()
     field = page.locator('.bud-man-in')
     field.fill('25000')
     field.blur()

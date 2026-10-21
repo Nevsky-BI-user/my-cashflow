@@ -22,7 +22,7 @@ def audit(page):
             page.evaluate('(theme)=>document.documentElement.dataset.theme=theme', theme)
             page.wait_for_timeout(100)
             expected = palettes[('desktop' if width >= 1024 else 'mobile') + '-' + theme]
-            palette = page.evaluate("""expected=>{const now=getComputedStyle(document.documentElement);return Object.entries(expected).filter(([k,v])=>now.getPropertyValue(k).trim()!==v).map(([k,v])=>[k,v,now.getPropertyValue(k)])}""", expected)
+            palette = page.evaluate("""expected=>{const now=getComputedStyle(document.documentElement);if(document.querySelector('.shell.overview-active')){const canvas=document.documentElement.dataset.theme==='light'?'#f3f2ee':'#0b0e14';expected={...expected,'--bg':canvas,'--html-bg':canvas};}return Object.entries(expected).filter(([k,v])=>now.getPropertyValue(k).trim()!==v).map(([k,v])=>[k,v,now.getPropertyValue(k)])}""", expected)
             check(not palette, f'Змінено палітру {theme}/{width}: {palette}')
             for i, tab in enumerate(('overview', 'budget', 'operations', 'payments', 'savings')):
                 go_tab(page, i)
@@ -36,7 +36,7 @@ def audit(page):
                     check(not clipped, f'{theme}/{width}/{tab}: обрізані суми {clipped[:3]}')
                     if i == 0:
                         bottom = page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom')
-                        check(page.evaluate("[...document.querySelectorAll('.dv-main,.dv-side')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'{width}: внутрішня прокрутка огляду')
+                        check(page.evaluate("[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'{width}: внутрішня прокрутка огляду')
                         check(bottom <= height, f'{width}: останні операції нижче екрана: {bottom}')
                         check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (179.5 if height < 840 else 239.5), f'{width}x{height}: графік нижчий за адаптивний мінімум')
                 elif i == 0:
@@ -76,7 +76,7 @@ def current_overview(page):
         page.set_viewport_size({'width': width, 'height': height})
         go_tab(page, 0)
         page.wait_for_timeout(150)
-        check(page.evaluate("[...document.querySelectorAll('.dv-main,.dv-side')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'Today/{width}/{height}: внутрішня прокрутка огляду')
+        check(page.evaluate("[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'Today/{width}/{height}: внутрішня прокрутка огляду')
         # Стандартний Огляд повністю вміщується, включно з низьким ПК.
         check(page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight'), 'Нижня картка обрізана')
         check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (179.5 if height < 840 else 239.5), f'Today/{width}/{height}: графік нижчий за адаптивний мінімум')
@@ -133,17 +133,16 @@ def calendar_geometry(page):
         page.locator('.ck-arr[aria-label="Попередній місяць"]').click()
 
 
-# Стан колонок ПК-Огляду: переповнення, причина, з якою його допускає контракт, досяжність останньої картки після прокрутки
-COLS = """(()=>{const col=s=>{const e=document.querySelector(s);const ov=e.scrollHeight-e.clientHeight;e.scrollTop=e.scrollHeight;const last=e.lastElementChild.getBoundingClientRect().bottom<=e.getBoundingClientRect().bottom+1;e.scrollTop=0;return{ov:ov,auto:/auto|scroll/.test(getComputedStyle(e).overflowY),last:last}};
-const cats=document.querySelector('.dv-main .bd-desk .bd-leg')||document.querySelector('.dv-main .bd-empty');
-return{main:col('.dv-main'),side:col('.dv-side'),unas:!!document.querySelector('.dv-side .unas-card'),dayEv:0,
-cats:cats?[getComputedStyle(cats).display,cats.classList.contains('bd-empty')?1:cats.children.length,Math.round(cats.getBoundingClientRect().bottom-document.querySelector('.dv-main').getBoundingClientRect().bottom)]:null}})()"""
+# Всі картки доступні прокруткою сторінки; всередині карток немає окремих скролів.
+COLS = r"""()=>{const cards=[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')];
+const bud=document.querySelector('.dv-bud'),cats=bud.querySelector('.bd-desk .bd-leg,.bd-empty');
+return {cards:cards.map(e=>({cls:e.className,ov:e.scrollHeight-e.clientHeight,bottom:e.getBoundingClientRect().bottom+scrollY})),
+cats:cats?{display:getComputedStyle(cats).display,count:cats.classList.contains('bd-empty')?1:cats.children.length,over:cats.getBoundingClientRect().bottom-bud.getBoundingClientRect().bottom}:null,
+wide:document.documentElement.scrollWidth,doc:document.documentElement.scrollHeight,vh:innerHeight}}"""
 
 
 def overview_days(page):
-    # звичайні дні: Огляд на 1280×800 і 1280×860 без внутрішньої прокрутки, кільце категорій бюджету з легендою видно (не ховаємо, вміщаємо розмірами);
-    # прокрутка колонки дозволена лише з причиною: картка «Без рахунку» в правій (1-ше число); панелі дня прогнозу з v145 немає, тож ліва без прокрутки
-    seen = {'normal': 0, 'unas': 0, 'dayEv': 0}
+    seen = 0
     for iso in ('2026-10-08', '2026-10-12', '2026-10-23', '2026-11-15', '2026-11-01', '2026-10-24'):
         freeze(page, iso)
         go_tab(page, 0)
@@ -152,20 +151,16 @@ def overview_days(page):
             page.wait_for_timeout(200)
             st = page.evaluate(COLS)
             tag = f'{iso}/{width}x{height}'
-            check(st['cats'] and st['cats'][0] != 'none' and st['cats'][1] > 0, f'{tag}: категорії бюджету приховані {st["cats"]}')
-            for name, why in (('side', 'unas'), ('main', 'dayEv')):
-                c = st[name]
-                if c['ov'] <= 2:
-                    continue
-                allowed = st['unas'] if why == 'unas' else st['dayEv'] >= 2
-                check(allowed, f'{tag}: колонка {name} прокручується на {c["ov"]}px без причини {st}')
-                check(c['auto'] and c['last'], f'{tag}: у колонці {name} остання картка недосяжна прокруткою {c}')
-                seen[why] += 1
-            if st['main']['ov'] <= 2 and st['side']['ov'] <= 2:
-                seen['normal'] += 1
-                check(st['cats'][2] <= 1, f'{tag}: категорії бюджету нижче колонки на {st["cats"][2]}px')
-    check(seen['normal'] >= 8, f'звичайних станів без прокрутки лише {seen["normal"]} із 8')
-    print(f'      станів без прокрутки {seen["normal"]}, з карткою «Без рахунку» {seen["unas"]}, з подіями дня прогнозу {seen["dayEv"]}')
+            check(len(st['cards']) >= 5, f'{tag}: основні картки відсутні {st}')
+            check(st['cats'] and st['cats']['display'] != 'none' and st['cats']['count'] > 0, f'{tag}: категорії бюджету приховані {st}')
+            check(st['cats']['over'] <= 1, f'{tag}: категорії виходять за картку бюджету {st}')
+            check(all(c['ov'] <= 2 for c in st['cards']), f'{tag}: внутрішнє переповнення карток {st}')
+            check(st['wide'] <= width, f'{tag}: горизонтальне переповнення {st}')
+            page.evaluate('window.scrollTo(0,document.documentElement.scrollHeight)')
+            check(page.evaluate("[...document.querySelectorAll('.dv-cols .dv-bud,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].every(e=>e.getBoundingClientRect().bottom<=innerHeight+1)"), f'{tag}: нижні картки недоступні прокруткою сторінки')
+            page.evaluate('window.scrollTo(0,0)')
+            seen += 1
+    check(seen == 12, f'перевірено станів {seen} замість 12')
 
 
 CHECKS = [('visual_layout geometry', 'desktop', audit), ('visual_layout current overview', 'desktop', current_overview), ('visual_layout overview days', 'desktop', overview_days), ('visual_layout calendar geometry', 'desktop', calendar_geometry)]

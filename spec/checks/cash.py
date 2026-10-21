@@ -57,7 +57,9 @@ def overview(page):
     ref = _ref(page)
     go_tab(page, 0)
     tiles = page.evaluate("[...document.querySelectorAll('.dv-kpis .kpi-t')].map(e=>e.dataset.k)")
-    check(tiles == ['funds', 'budget', 'balance', 'inst'], f'плитки KPI: {tiles}')
+    check(tiles == ['funds', 'budget', 'balance'], f'головні плитки KPI: {tiles}')
+    installments = page.locator('.ov-grid > .kpi-t.kpi-inst')
+    check(installments.count() == 1 and installments.is_visible(), 'окрема картка розстрочок відсутня або прихована')
     _kpi_balance(page, ref)
     check(page.locator('.dv-bal,.o-bal').count() == 0, 'лишився прибраний блок «Баланс»')
     sh = page.evaluate('document.documentElement.scrollHeight')
@@ -154,11 +156,11 @@ def no_25(page):
 
 def month_mode(page):
     """Режим «Календарний місяць»: перемикач у шторці періоду, памʼять у localStorage після перезавантаження,
-    Бюджет місяця = сума бюджетів періодів з виплатою в місяці (зарплата 06.10 = поточний, аванс 21.10 = наступний), Потік за місяць"""
+    Огляд агрегує факт і майбутні дні; окремий Бюджет має власний збережений план місяця."""
     page.set_viewport_size({'width': 1920, 'height': 1080})
     freeze(page, DAY)
     ref = _ref(page)
-    go_tab(page, 1)
+    go_tab(page, 0)
     page.click('.side-pname')
     page.wait_for_timeout(250)
     sw = page.locator('.per-mode button', has_text='Календарний місяць')
@@ -171,16 +173,24 @@ def month_mode(page):
     page.reload()
     page.wait_for_selector('.side', timeout=20000)
     page.wait_for_timeout(400)
-    go_tab(page, 1)
+    go_tab(page, 0)
     check('Жовтень' in page.inner_text('.side-pname'), f'після перезавантаження не місяць: {page.inner_text(".side-pname")!r}')
-    note = page.inner_text('.bud-month')
-    check('денний план за датами цього місяця' in note, 'місячний бюджет не пояснює денну агрегацію')
     projection=finance_ref(page)
     inp=page.evaluate('window.__financeInput')
     planned=sum(d['variableCents'] for d in projection['days'] if d['date'].startswith('2026-10'))
-    actual=sum(round(t['amount']*100) for t in inp['transactions'] if t['type']=='expense' and not t.get('fixed_id') and '2026-10-01'<=t['date']<=DAY)
+    actual=sum(round(t['amount']*100) for t in inp['transactions'] if t['type']=='expense' and not t.get('fixed_id') and not t.get('credit_id') and '2026-10-01'<=t['date']<=DAY)
     pool=(planned+actual)/100
-    check(abs(num(page.inner_text('.bud-pool .bud-kpi-v'))-pool)<=1, 'бюджет місяця не дорівнює факту + майбутнім дням')
+    from checks.v157 import _snap, _bud_card
+    fact_ui,plan_ui=_bud_card(_snap(page),'desktop')
+    check(plan_ui is not None and abs(plan_ui-pool)<=1 and abs(fact_ui-actual/100)<=1, 'місячна картка Огляду не дорівнює факту + майбутнім дням')
+    go_tab(page,1)
+    check(page.locator('.p-budget').get_attribute('data-month')=='2026-10-01','Бюджет не на календарному місяці')
+    from checks.budget_period_parity import assert_unsaved_salary
+    assert_unsaved_salary(page)
+    check(abs(num(page.locator('.bud-spent .bud-kpi-v').inner_text())-actual/100)<.01,'Бюджет показує не місячний факт')
+    page.click('.side-pname')
+    check(page.locator('.per-mode').count()==0,'Бюджет дозволяє перейти на період виплат')
+    page.keyboard.press('Escape')
     page.mouse.move(2, 2)
     shot(page, 'v139-budget-month-1920.jpg', full=False)
     go_tab(page, 2)

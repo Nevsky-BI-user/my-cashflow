@@ -42,6 +42,14 @@ def kpi_values(page, scope):
     want = (snap['positiveOwnCents'] - snap['creditDebtCents']) / 100
     check(abs(bal - want) <= 1, f'«Баланс» {bal}, еталон власні мінус борг {want:.2f}')
     inst = [_norm(t) for t in page.locator(f'{scope} .kpi-inst [data-r=inst], {scope} .kpi-inst[data-r=inst]').all_inner_texts()]
+    if scope == '.p-overview.desk':
+        # На ПК назва та платіж займають різні рядки; строгий формат перевіряємо за текстовими полями.
+        inst = page.locator(f'{scope} .kpi-inst [data-r=inst]').evaluate_all(r"""rows=>rows.map(e=>{
+            const name=e.querySelector('.kpi-in'),amount=e.querySelector('.kpi-iv'),end=e.querySelector('.kpi-ie');
+            if(!name||!amount)return e.innerText;
+            return name.textContent.trim()+' · '+amount.textContent.trim().replace(/^·\s*/, '')+(end?' '+end.textContent.trim():'');
+        })""")
+        inst = [_norm(t) for t in inst]
     print(f'      розстрочки: {inst}')
     for t in inst:
         check(INST.match(t.replace('\n', ' ')), f'рядок розстрочки не за форматом «Назва · X ₴ × n · до DD.MM.YYYY»: {t!r}')
@@ -51,7 +59,7 @@ def kpi_desktop(page):
     page.set_viewport_size({'width': 1920, 'height': 1080})
     freeze(page, DAY)
     go_tab(page, 0)
-    kpi_values(page, '.dv-kpis')
+    kpi_values(page, '.p-overview.desk')
     # наведення показує пояснення, відведення ховає; «i» закріплює, Escape закриває
     # v154 (власник): пояснення відкривається лише наведенням на «i», не на число плитки
     page.locator('.kpi-funds .kpi-i').hover()
@@ -128,17 +136,17 @@ def donut_desktop(page):
         page.set_viewport_size({'width': w, 'height': hgt})
         freeze(page, DAY)
         go_tab(page, 0)
-        segs = _donut(page, '.dv-main', '.dv-main .dv-bud-v')
+        segs = _donut(page, '.dv-bud', '.dv-bud .dv-bud-v')
         # v148: нижче 840px Огляд ПК прокручується сторінкою, тож кільце спершу в поле зору
-        page.locator('.dv-main .bd-ring').scroll_into_view_if_needed()
+        page.locator('.dv-bud .bd-ring').scroll_into_view_if_needed()
         k = next(i for i, s in enumerate(segs) if not s['id'].startswith('__'))
-        _hover_seg(page, '.dv-main', segs, k)
+        _hover_seg(page, '.dv-bud', segs, k)
         tip = _norm(page.inner_text('.bd-tip .bd-tip-h')) if page.locator('.bd-tip').count() else ''
         check(TIP.match(tip), f'{w}: підказка сегмента не «Назва: факт X з плану Y ₴»: {tip!r}')
-        dim = page.locator('.dv-main .bd-seg.dim').count()
+        dim = page.locator('.dv-bud .bd-seg.dim').count()
         check(dim == len(segs) - 1, f'{w}: при наведенні приглушено {dim} з {len(segs) - 1} інших сегментів')
         shot(page, f'v145-donut-{w}.jpg', full=False)
-        _hover_seg(page, '.dv-main', segs, k)
+        _hover_seg(page, '.dv-bud', segs, k)
         page.mouse.down()
         page.mouse.up()
         page.wait_for_timeout(400)

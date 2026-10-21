@@ -5,6 +5,20 @@ from checks.v157 import _nav, _snap, _bud_card
 
 DAY='2026-10-13'
 
+def assert_unsaved_salary(page, start='2026-10-01'):
+    """Незбережений місяць: зарплата й сирі зобов'язання, без прогнозних витрат."""
+    raw=page.evaluate("""()=>{const b=window.__calendarBudget,s=window.__cashSnap(),d=b.start.split('-').map(Number);return{budget:b,envelope:monthlySalaryEnvelope(s.salary,s.fixed,s.credits,d[0],d[1]-1)}}""")
+    b,e=raw['budget'],raw['envelope']
+    mandatory=sum(i['amount_cents'] for i in e['mandatory_items'])
+    net=max(0,e['total_cents']-mandatory)
+    check(b['start']==start and b['gross']==e['total_cents'] and b['mandatory']==mandatory,'calendar salary or mandatory total differs from raw monthly envelope')
+    check(b['plan']==net and b['unallocated']==net and b['remaining']==net-b['fact'],'unsaved calendar capacity must equal salary minus mandatory payments')
+    check(num(page.locator('.bud-pool .bud-kpi-v').inner_text())==e['total_cents']/100,'salary KPI differs from calendar payouts')
+    check(num(page.locator('.bud-mandatory .bud-kpi-v').inner_text())==mandatory/100,'mandatory payment KPI differs from raw commitments')
+    check(num(page.locator('.bud-avail .bud-kpi-v').inner_text())==(net-b['fact'])/100,'available KPI differs from salary minus commitments and actual category spending')
+    check(page.locator('.bud-day,.bud-alloc').count()==0,'allocation summary belongs only in editor')
+    return b
+
 def verify(page):
     raw=page.evaluate("()=>({tx:window.__cashSnap().transactions,periods:window.__cashCore.projection.periods,pbs:window.__periodBudget,view:window.__budgetView})")
     v=raw['view']; start,end=v['start'],v['end']
@@ -38,17 +52,12 @@ def verify(page):
         check(all(w['label'] in labels for w in v['weeks']),'week UI is not selected range')
         check(page.locator('.o-strip,.o-ccy').count()==0,'removed mobile bottom totals or rates returned')
     go_tab(page,1)
-    if plan is None: actual=num(page.locator('.p-budget strong').inner_text())
-    elif vp=='desktop':
-        actual=num(page.locator('.bud-spent .bud-kpi-v').inner_text())
-        check(abs(num(page.locator('.bud-pool .bud-kpi-v').inner_text())-plan/100)<.51,'Budget pool differs from Overview')
-    else:
-        text=page.locator('.p-budget > .card-x').first.inner_text()
-        check(str(round(plan/100)) in ''.join(c for c in text if c.isdigit() or c=='/'),'mobile Budget plan missing')
-        actual=fact/100
-        values=page.locator('.p-budget > .card-x').first.locator('span').all_text_contents()
-        check(any(abs(num(x)-fact/100)<.51 for x in values if any(c.isdigit() for c in x)),'mobile Budget fact differs')
-    check(abs(actual-fact/100)<.51,'Budget fact differs from Overview incl uncategorized')
+    monthly=page.evaluate("()=>({v:window.__calendarBudget,tx:txDemo(2026,9)})")
+    mb=monthly['v']
+    actual_month=sum(cents(t) for t in monthly['tx'] if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and '2026-10-01'<=t['date'][:10]<=DAY)
+    check(mb['start']=='2026-10-01' and mb['fact']==actual_month,'Budget must use its own current calendar month')
+    assert_unsaved_salary(page)
+    check(abs(num(page.locator('.bud-spent .bud-kpi-v').inner_text())-actual_month/100)<.01,'monthly Budget fact differs from raw rows')
     print(f'      {vp} {start}..{end}: fact {fact/100}, plan {None if plan is None else plan/100}, weekly {total/100}')
     go_tab(page,0)
 
@@ -92,7 +101,8 @@ def unavailable(page):
     check(page.evaluate('window.__budgetView.plan') is None,'partial future month cannot have complete zero/partial plan')
     check('/' not in page.locator('.dv-bud-v,.o-bud-v').inner_text(),'unavailable Overview shows a numeric plan')
     go_tab(page,1)
-    check('Збереженого плану' in page.locator('.p-budget').inner_text(),'unavailable Budget lacks explanation')
+    assert_unsaved_salary(page)
+    check(page.locator('.bud-mandatory').count()==1,'independent monthly Budget lacks mandatory payment explanation')
 
 
 CHECKS=[('budget_period_parity: all selected ranges desktop','desktop',parity),('budget_period_parity: all selected ranges mobile','mobile',parity),('budget_period_parity: February September crossmonth boundaries and exclusions','desktop',edges)]
@@ -107,7 +117,7 @@ def responsive(page):
         page.wait_for_timeout(700)
         from helpers import settle
         settle(page)
-        geo=page.evaluate("""()=>({wide:document.documentElement.scrollWidth,clipped:[...document.querySelectorAll('.dv-kpi-v,.kpi-rv')].filter(e=>e.offsetParent&&e.scrollWidth>e.clientWidth+1).map(e=>e.textContent),main:(()=>{const e=document.querySelector('.dv-main');return e?{height:e.clientHeight,scroll:e.scrollHeight,bottom:e.getBoundingClientRect().bottom}:null})(),budget:(()=>{const e=document.querySelector('.dv-bud');return e?e.getBoundingClientRect().bottom:null})(),chart:(()=>{const e=document.querySelector('.dv-fc svg');return e?e.getBoundingClientRect().height:null})()})""")
+        geo=page.evaluate("""()=>({wide:document.documentElement.scrollWidth,clipped:[...document.querySelectorAll('.dv-kpi-v,.kpi-rv')].filter(e=>e.offsetParent&&e.scrollWidth>e.clientWidth+1).map(e=>e.textContent),main:(()=>{const e=document.querySelector('.dv-cols');return e?{height:e.clientHeight,scroll:e.scrollHeight,bottom:e.getBoundingClientRect().bottom}:null})(),budget:(()=>{const e=document.querySelector('.dv-bud');return e?e.getBoundingClientRect().bottom:null})(),chart:(()=>{const e=document.querySelector('.dv-fc svg');return e?e.getBoundingClientRect().height:null})()})""")
         check(geo['wide']<=width and not geo['clipped'],f'{width}: cropped money or horizontal overflow {geo}')
         if width>=1024:
             check(geo['main']['scroll']<=geo['main']['height']+2 and geo['budget']<=height and geo['budget']<=geo['main']['bottom']+1,f'{width}: Budget outside visible column {geo}')
@@ -125,8 +135,8 @@ def historical_geometry(page):
     freeze(page,DAY,PAST_TX)
     _nav(page,-1)
     page.set_viewport_size(dict(width=1280,height=800));page.wait_for_timeout(500);settle(page)
-    geo=page.evaluate("""()=>{const o={};for(const sel of ['.dtitle','.p-overview','.dv-main','.dv-side','.dv-fc','.dv-fc svg','.dv-bud','.dv-near']){const e=document.querySelector(sel),r=e.getBoundingClientRect();o[sel]={top:r.top,bottom:r.bottom,height:r.height,client:e.clientHeight,scroll:e.scrollHeight}}return o}""")
-    check(geo['.dv-main']['scroll']<=geo['.dv-main']['client']+2 and geo['.dv-bud']['bottom']<=geo['.dv-main']['bottom']+1,'historical Budget must remain fully visible without inner scroll')
+    geo=page.evaluate("""()=>{const o={};for(const sel of ['.dtitle','.p-overview','.dv-cols','.dv-near','.dv-fc','.dv-fc svg','.dv-bud']){const e=document.querySelector(sel),r=e.getBoundingClientRect();o[sel]={top:r.top,bottom:r.bottom,height:r.height,client:e.clientHeight,scroll:e.scrollHeight}}return o}""")
+    check(geo['.dv-cols']['scroll']<=geo['.dv-cols']['client']+2 and geo['.dv-bud']['bottom']<=geo['.dv-cols']['bottom']+1,'historical Budget must remain fully visible without inner scroll')
     print('      historical exact geometry:',geo)
     page.screenshot(path=str(ROOT/'spec'/'.out'/'budget-parity-historical-1280.png'),full_page=True)
 

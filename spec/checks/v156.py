@@ -12,15 +12,15 @@ ACC = {('light', True): 'rgb(59, 91, 219)', ('light', False): 'rgb(59, 91, 219)'
        ('dark', True): 'rgb(124, 147, 245)', ('dark', False): 'rgb(139, 159, 247)'}
 
 PROBE = r"""()=>{
- const probe=(p,v,e)=>{const d=document.createElement('div');d.style[p]=v;(e?.closest('.p-overview')||document.body).appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
+ const probe=(p,v,e)=>{const d=document.createElement('div');d.style[p]=v;(e?.closest('.p-overview')||e?.closest('.shell.overview-active')||document.body).appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
  const vis=e=>!!e&&e.getBoundingClientRect().width>0&&getComputedStyle(e).visibility!=='hidden';
- const st=(e,ps)=>{if(!vis(e))return null;const s=getComputedStyle(e,ps||null);return {bi:s.backgroundImage,bg:s.backgroundColor,c:s.color,acc:probe('color','var(--indigo)',e),tab:probe('backgroundImage','var(--tab-grad)',e),accBg:probe('backgroundColor','var(--acc-bg)',e)}};
+ const st=(e,ps)=>{if(!vis(e))return null;const s=getComputedStyle(e,ps||null);return {bi:s.backgroundImage,bg:s.backgroundColor,c:s.color,acc:probe('color','var(--indigo)',e),onAccent:probe('color','var(--on-accent)',e),tab:probe('backgroundImage','var(--tab-grad)',e),accBg:probe('backgroundColor','var(--acc-bg)',e)}};
  const ops=[...document.querySelectorAll('button')].filter(b=>vis(b)&&b.textContent.replace(/\s+/g,' ').trim()==='+ Операція').map(b=>({cls:b.className,...st(b)}));
  const item=document.querySelector('.side-item[aria-current=page],.side-item.on');
  return {acc:probe('color','var(--acc)'),ind:probe('color','var(--indigo)'),grad:probe('backgroundImage','var(--grad-accent)'),tab:probe('backgroundImage','var(--tab-grad)'),
   accBg:probe('backgroundColor','var(--acc-bg)'),ops,item:st(item),itemBar:st(item,'::before'),
   tabBar:st(document.querySelector('.tab-bar .tab-btn[aria-current=page]'),'::before'),
-  dact:st([...document.querySelectorAll('.dact')].find(vis)),fab:st(document.querySelector('button.fab')),
+  dact:st([...document.querySelectorAll('.dact')].find(vis)),fab:st(document.querySelector('button.fab')),allocation:st(document.querySelector('.budget-mobile-head button')),
   chip:st(document.querySelector('.dv-fc .fc-chips button[aria-pressed=true]')),
   chipOff:st(document.querySelector('.dv-fc .fc-chips button[aria-pressed=false]')),
   link:st(document.querySelector('.dv-all-payments'))}
@@ -51,11 +51,11 @@ def one_accent(page):
         if desk:
             check(len(r['ops']) >= 2, f'{w}: на Огляді не видно бічної і верхньої «+ Операція»: {r["ops"]}')
         for b in r['ops']:
-            check(b['bi'] == r['grad'], f'{w}: кнопка «+ Операція» ({b["cls"]}) не градієнтом акценту: {b["bi"]}')
+            check((b['bi'] == 'none' and b['bg'] == b['acc']) if desk else b['bi'] == r['grad'], f'{w}: operation button differs from its accent role: {b}')
         if desk:
             check(r['item'] and r['itemBar'], f'{w}: немає активного пункту меню')
-            check(r['itemBar']['bi'] == r['grad'], f'{w}: смужка активного пункту меню не градієнтом акценту: {r["itemBar"]}')
-            check(r['item']['bi'] == r['tab'] and r['item']['bg'] == r['accBg'] and r['item']['c'] == r['acc'], f'{w}: активний пункт меню не тоном акценту: {r["item"]}')
+            check(page.locator('.side-item.on').evaluate("e=>getComputedStyle(e).boxShadow.includes('inset')"), f'{w}: active navigation has no inset accent')
+            check(r['item']['bi'] == 'none' and r['item']['bg'] == r['item']['accBg'] and r['item']['c'] == r['item']['acc'], f'{w}: active navigation differs from its accent role: {r["item"]}')
             check(r['link'] and r['link']['c'] == r['link']['acc'], f'{w}: посилання «Усі платежі →» не кольору акценту: {r["link"]}')
         else:
             check(r['tabBar'] and r['tabBar']['bi'] == r['grad'], f'{w}: смужка активної вкладки не градієнтом акценту: {r["tabBar"]}')
@@ -64,13 +64,14 @@ def one_accent(page):
         if desk:
             check(all(r['chip'][k] == r['item'][k] for k in ('bi', 'bg', 'c')) if r['chip']['acc'] == r['item']['acc'] else r['chip']['tab'] == 'none', f'{w}: натиснутий перемикач і активний пункт меню різного тону: {r["chip"]} / {r["item"]}')
         check(r['chipOff'] and r['chipOff']['bi'] == 'none' and r['chipOff']['c'] != r['chipOff']['acc'], f'{w}: ненатиснутий перемикач графіка з тоном акценту: {r["chipOff"]}')
-        # основна кнопка «Розподіл бюджету» на Бюджеті: той самий градієнт
+        # На ПК градієнт шапки, на телефоні — єдина верхня кнопка кольору акценту.
         go_tab(page, 1)
         page.wait_for_timeout(450)
         b = page.evaluate(PROBE)
-        # на ПК кнопка «Розподіл бюджету» в шапці і в картці, на телефоні кругла кнопка тієї ж дії
-        pb = b['dact'] if desk else b['fab']
-        check(pb and pb['bi'] == r['grad'], f'{w}: основна кнопка Бюджету («Розподіл бюджету») не градієнтом акценту: {pb}')
+        pb = b['dact'] if desk else b['allocation']
+        check(pb and (pb['bi'] == r['grad'] if desk else pb['bi'] == 'none' and pb['bg'] == pb['acc'] and pb['c'] == pb['onAccent']), f'{w}: основна кнопка Бюджету не відповідає акценту: {pb}')
+        if not desk:
+            check(b['fab'] is None and page.get_by_role('button',name='Розподіл бюджету',exact=True).count()==1,'мобільний розподіл дублюється поза шапкою')
         if not desk:
             go_tab(page, 2)
             page.wait_for_timeout(450)

@@ -21,8 +21,11 @@ CAPTURE = r"""()=>{
  const T=e=>e?e.textContent.replace(/\s+/g,' ').trim():null;
  const vis=e=>!!e&&e.getBoundingClientRect().width>0;
  const pick=sel=>[...document.querySelectorAll(sel)].find(vis)||null;
+ const rowText=e=>{const name=e.querySelector('.kpi-in'),amount=e.querySelector('.kpi-iv');
+  if(e.matches('[data-r=inst]')&&name&&amount){const end=e.querySelector('.kpi-ie');return T(name)+' · '+T(amount).replace(/^·\s*/,'')+(end?' '+T(end):'')}
+  return T(e)};
  const kpis={};document.querySelectorAll('.kpi-t').forEach(k=>{if(!vis(k))return;const c=[...k.classList].find(x=>/^kpi-(funds|budget|balance|inst)$/.test(x));
-  kpis[c]={v:T(k.querySelector('.dv-kpi-v')),sub:T(k.querySelector('.kpi-asof')),rows:[...k.querySelectorAll('.kpi-row,.kpi-inst')].map(T)}});
+  kpis[c]={v:T(k.querySelector('.dv-kpi-v')),sub:T(k.querySelector('.kpi-asof')),rows:[...k.querySelectorAll('.kpi-row,.kpi-inst')].map(rowText)}});
  const bv=pick('.dv-bud-v,.o-bud-v');const card=bv?bv.closest('.dv-bud,.o-budget'):null;
  const bd=card?card.querySelector('.bd'):null;
  const near=pick('.dv-near,.o-next');
@@ -201,7 +204,7 @@ def _tiles_equal(got, exp, tag):
 
 
 GEO = r"""()=>{const svg=document.querySelector('.dv-fc svg'),pan=document.querySelector('.p-overview'),t=document.querySelector('.dtitle'),o=document.querySelector('.dtitle .ov-per');
- return {chart:svg.getBoundingClientRect().height,inner:[...document.querySelectorAll('.dv-main,.dv-side')].filter(e=>e.offsetParent).some(e=>e.scrollHeight>e.clientHeight+2),
+ return {chart:svg.getBoundingClientRect().height,inner:[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).some(e=>e.scrollHeight>e.clientHeight+2),
   scroll:pan.classList.contains('ov-scroll'),recent:document.querySelector('.dv-recent').getBoundingClientRect().bottom,wide:document.documentElement.scrollWidth,
   clipped:[...document.querySelectorAll('.kpi-rv,.dv-kpi-v,.kpi-asof,.ov-per-t')].filter(e=>e.offsetParent&&e.scrollWidth>e.clientWidth+1).map(e=>e.textContent),
   title:t.getBoundingClientRect().height,per:o?o.getBoundingClientRect().bottom:null}}"""
@@ -372,9 +375,19 @@ def past_period(page):
     print(f'      {tag}: плитки {[got["kpis"]["kpi-" + k]["v"] for k in ("funds", "budget", "balance", "inst")]}, бюджет «{got["bud"]}», платежі {rows}, графік «{ch["per"][1]}»')
     if vp == 'desktop':
         _geometry(page, tag, base)
-    # вкладка «Бюджет» того самого періоду пише ті самі слова
+    # Бюджет відкриває власний поточний місяць; його історію гортати окремо.
     go_tab(page, 1)
-    check('Фактичні витрати періоду' in page.inner_text('.tab-page'), 'вкладка «Бюджет» минулого періоду без «Фактичні витрати періоду»')
+    check(page.locator('.p-budget').get_attribute('data-month')==DAY[:7]+'-01','минулий період Огляду змінив місяць Бюджету')
+    _nav(page,-1)
+    budget=page.locator('.p-budget')
+    check(budget.get_attribute('data-month')=='2026-09-01','не відкрився минулий календарний місяць')
+    tx=list({str(t['id']):t for t in raw['fin']['transactions']}.values())
+    monthly_fact=sum(_round(t['amount']) for t in tx if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and '2026-09-01'<=t['date'][:10]<'2026-10-01')/100
+    check(abs(num(budget.locator('.bud-spent .bud-kpi-v').inner_text())-monthly_fact)<.01,'історичний місячний факт не відповідає сирим операціям')
+    from checks.budget_period_parity import assert_unsaved_salary
+    assert_unsaved_salary(page,'2026-09-01')
+    go_tab(page,0)
+    check(page.evaluate(PER_T)==per,'навігація Бюджету змінила історичний період Огляду')
 
 
 def month_mode(page):

@@ -1,4 +1,4 @@
-const CACHE = 'cashflow-v166';
+const CACHE = 'cashflow-v172';
 
 const ASSETS = [
   './',
@@ -6,6 +6,7 @@ const ASSETS = [
   './manifest.json',
   './icon-192.svg',
   './icon-512.svg',
+  './brand-mark.svg',
 ];
 
 self.addEventListener('install', e => {

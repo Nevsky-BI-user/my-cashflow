@@ -55,10 +55,8 @@ def salary(page):
 
 
 def budget(page):
-    go_tab(page, 1)
-    page.click('.dact')
-    page.wait_for_timeout(500)
-    sh = page.locator('.sheet').last
+    from checks.v148 import _open
+    sh = _open(page)
     total = lambda: int((re.search(r'Розподілено(?:: | [^(]*\()(\d+)%', sh.inner_text()) or [0, -1])[1])
     # повзунки категорій; «Відсоток» у тому ж вікні до розподілу не входить
     cat = 'input.nf-range:not([aria-label^="Відсоток"])'
@@ -85,10 +83,8 @@ def budget(page):
 def unlock_all(page):
     """v148: категорії за замовчуванням розблоковані (кнопки «Розблокувати всі» немає); замок лишається,
     а якщо хоч одна заблокована, кнопка «Розблокувати всі» вгорі вікна знімає всі замки."""
-    go_tab(page, 1)
-    page.click('.dact')
-    page.wait_for_timeout(500)
-    sh = page.locator('.sheet').last
+    from checks.v148 import _open
+    sh = _open(page)
     locks = sh.locator('button[aria-label="Розблокувати"]')
     check(locks.count() == 0, f'на старті заблоковано {locks.count()} категорій')
     check(sh.locator('.bud-unlock-all').count() == 0, 'кнопка «Розблокувати всі» без жодного замка')

@@ -72,14 +72,14 @@ def categories(page):
     check(len(set(cols)) == len(cols), f'кольори категорій повторюються: {cols}')
     check(all(c in pal for c in cols), 'колір категорії поза палітрою')
     _contrast(page, pal, 'палітра')
-    # Бюджет (v150, власник: «кращі сучасніші кольори для бюджету»): значок і смуга категорії з однієї палітри бюджету BUD_PAL
-    # (кільце, легенда й смуги одного кольору; color категорії лише запасний): тло значка = перший колір пари, смуга = градієнт пари
-    # v155: смуга пласка, суцільний колір категорії поточної теми (budPal вже повертає колір теми)
+    # Місячний Бюджет показує факт, план і залишок числами; значки категорій
+    # зберігають палітру BUD_PAL та пласку заливку без градієнта.
     go_tab(page, 1)
     expand_groups(page)  # v145: групи за замовчуванням згорнуті
-    rows = page.locator('.bud-cat').evaluate_all(
-        "els=>els.map(e=>{const b=e.querySelector('.bud-bar span');return{n:e.querySelector('.bud-name').textContent.trim(),hot:e.classList.contains('hot'),idle:e.classList.contains('idle'),"
-        "ico:getComputedStyle(e.querySelector('.bud-ico')).backgroundColor,bar:b?getComputedStyle(b).backgroundImage:null,barc:b?getComputedStyle(b).backgroundColor:null}})")
+    check(page.locator('.calendar-budget').count() == 1, 'не відкрився місячний бюджет')
+    rows = page.locator('.calendar-budget .bud-cat').evaluate_all(
+        "els=>els.map(e=>{const s=getComputedStyle(e.querySelector('.bud-ico'));return{n:e.querySelector('.bud-name').textContent.trim(),"
+        "ico:s.backgroundColor,image:s.backgroundImage}})")
     rgb = lambda c: tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
     num3 = lambda s: tuple(int(float(x)) for x in s.replace('rgba(', '').replace('rgb(', '').replace(')', '').split(',')[:3])
     want = {c['name']: rgb(c['color']) for c in cats}
@@ -87,12 +87,11 @@ def categories(page):
     check(len({v[0] for v in bud.values()}) == min(len(bud), page.evaluate('BUD_PAL.length')), f'перші кольори палітри бюджету повторюються: {bud}')
     seen = 0
     for r in rows:
-        if r['idle'] or r['n'] not in bud:
+        if r['n'] not in bud:
             continue
         seen += 1
         check(num3(r['ico']) == bud[r['n']][0], f'значок «{r["n"]}» {r["ico"]}, очікували {bud[r["n"]][0]}')
-        if not r['hot']:
-            check(r['bar'] == 'none' and r['barc'] and num3(r['barc']) == bud[r['n']][0], f'смуга «{r["n"]}» {r["bar"]} {r["barc"]}, очікували пласку {bud[r["n"]][0]}')
+        check(r['image'] == 'none', f'значок «{r["n"]}» має градієнт {r["image"]}')
     print(f'      бюджет: перевірено категорій {seen} з {len(rows)}')
     check(seen >= 3, 'на сторінці Бюджету замало активних категорій для перевірки')
     page.mouse.move(2, 2)

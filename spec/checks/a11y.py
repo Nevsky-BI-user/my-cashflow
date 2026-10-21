@@ -101,7 +101,7 @@ def _contrast_desktop(page, theme):
     _pairs(page, [('баланс після операції', '.flow-bal'), ('сума витрати', ".flow-row.tx[data-type=out] .flow-amt")])
     _pairs(page, [('фактичне надходження', '.flow-row.tx[data-type=in] .flow-amt')])
     go_tab(page, 1)
-    _pairs(page, [('план щоденних витрат', '.bud-day .bud-kpi-v')])
+    _pairs(page, [('обов’язкові платежі місяця', '.bud-mandatory .bud-kpi-v')])
     go_tab(page, 0)
 
 
