@@ -120,7 +120,7 @@ function harness(responses, options={}) {
     return {ok:true,arrayBuffer:async()=>new Uint8Array([1,2]).buffer};
   };
   const accs=options.accounts??[{id:7,name:'Готівка'}];
-  const bindings={sb,fetch,BOT_TOKEN:'test',CLAUDE_API_KEY:'test',RECEIPT_MODEL:'fast',RECEIPT_MODEL_STRONG:'strong',RECEIPT_SYSTEM:receiptSystem,
+  const bindings={sb,fetch,BOT_TOKEN:'test',CLAUDE_API_KEY:'test',RECEIPT_MODEL:'fast',RECEIPT_MODEL_STRONG:'strong',RECEIPT_SYSTEM:receiptSystem,CONFIRM_KB:{keyboard:[]},ENTRY_INPUT_KB:{keyboard:[]},
     todayKyiv:()=> options.today??'2026-10-20',reply:async(...args)=>state.replies.push(args),
     replyTx:async(...args)=>state.txReplies.push(args),categorizeLater:id=>state.categories.push(id),
     activeAccounts:async(includeMono)=>{state.accountLoads.push(includeMono);return accs},
@@ -336,7 +336,7 @@ test('batch is rejected during multipart collection without clearing its context
 test('independent batch does not erase an existing income confirmation',async()=>{
   const pending={amount:100,type:'income',source_id:'tg:1'};
   const h=harness([batch()],{pending});await h.run();
-  assert.equal(h.state.rows.length,2);assert.equal(h.state.pending,pending);
+  assert.equal(h.state.rows.length,0);assert.equal(h.state.pending,pending);
 });
 
 const bankAccounts=[

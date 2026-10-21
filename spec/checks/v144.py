@@ -112,7 +112,7 @@ n:g.querySelector('.bud-grp-n').firstChild.textContent}))""")
     page.wait_for_timeout(200)
     check(h0.get_attribute('aria-expanded') == 'true', 'Space не розгорнув групу')
     page.reload()
-    page.wait_for_timeout(600)
+    page.wait_for_selector('.side', timeout=20000)
     go_tab(page, 1)
     check(page.locator('.bud-grp-h').first.get_attribute('aria-expanded') == 'true', 'розгорнута група не запамʼяталась після перезавантаження')
     expand_groups(page)
@@ -143,7 +143,7 @@ c:[...g.querySelectorAll('.bud-cat')].map(c=>({n:c.querySelector('.bud-name').te
     food = lambda: num(page.locator('.bud-cat', has_text='Продукти').locator('.bud-value[data-label="Факт"]').inner_text())
     f0 = food()
     # фікстура: дві витрати на Продукти з fixed_id і credit_id не змінюють ні факт категорії, ні actualVariable
-    freeze(page, DAY, [("TX_DEMO_ROWS=[", "TX_DEMO_ROWS=[[25,'FIXTEST',777,'out','mono',5411,'food'],[26,'CRTEST',555,'out','mono',5411,'food'],"),
+    seed_demo(page, DAY, [("TX_DEMO_ROWS=[", "TX_DEMO_ROWS=[[25,'FIXTEST',777,'out','mono',5411,'food'],[26,'CRTEST',555,'out','mono',5411,'food'],"),
                        ("description:r[1],amount:amt,", "description:r[1],fixed_id:r[1]==='FIXTEST'?'fx-test':null,credit_id:r[1]==='CRTEST'?'cr-test':null,amount:amt,")])
     go_tab(page, 1)
     expand_groups(page)
