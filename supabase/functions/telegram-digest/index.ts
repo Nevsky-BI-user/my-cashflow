@@ -1,3 +1,5 @@
+import { repaymentAdvice, repaymentAdviceText } from '../_shared/repayment.ts';
+import { salaryOptions, salaryKeyboard } from '../_shared/salary-bot.ts';
 // Ранковий підсумок і нагадування на завтра в Telegram.
 // Викликає pg_cron щогодини о :00 UTC (міграція 27-telegram-digest.sql); функція сама перевіряє, що в Києві зараз 9-та година,
 // тож перехід на літній і зимовий час не потребує зміни розкладу.
@@ -81,12 +83,17 @@ Deno.serve(async (req) => {
     console.error('digest: finance load failed', (e as Error)?.message);
     return json({ ok: false }, 500);
   }
-  const digest = formatDigest(d.projection, d.credits, d.txs, d.today);
+  const salaries=await salaryOptions(sb,now.date);
+  const salaryToday=salaries.choices.filter(p=>p.date===now.date);
+  const source=salaryToday[0];
+  const advice=source?repaymentAdviceText(repaymentAdvice(d.input,d.projection,source.accountId,d.today)):'';
+  const digest = formatDigest(d.projection, d.credits, d.txs, d.today)+(advice?'\n\n'+advice:'');
   const due = dueTomorrow(d.projection, d.fixed, d.credits, d.today);
   let sent = 0;
   for (const chatId of chats) {
     // Підсумок не розкриває згорнуту користувачем панель кнопок.
     if (await send(chatId, digest)) sent++;
+    if(salaryToday.length&&await send(chatId,'Сьогодні день виплати. Підтвердіть надходження:',salaryKeyboard(salaryToday)))sent++;
     // Кожне нагадування окремим повідомленням: кнопка «Оплачено» редагує саме його
     for (const it of due) if (await send(chatId, formatReminder(it), paidKb(it.callback))) sent++;
   }

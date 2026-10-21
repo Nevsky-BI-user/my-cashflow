@@ -27,7 +27,7 @@ const prevMonthStart = (d: string) => {
 async function loadTxs(sb: any, from: string, today: string, since: number): Promise<BotTx[]> {
   const rows: BotTx[] = [];
   for (let page = 0; page < 100; page++) {
-    let q = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,payment_due_date,type,amount,created_at,date,source,description')
+    let q = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,payment_due_date,transfer_id,type,amount,created_at,date,source,description')
       .lte('date', today).order('id', { ascending: true }).range(page * 1000, page * 1000 + 999);
     q = Number.isFinite(since) ? q.or(`created_at.gt."${new Date(since).toISOString()}",date.gte.${from},payment_due_date.gte.${from}`) : q.or(`date.gte.${from},payment_due_date.gte.${from}`);
     const { data, error } = await q;
@@ -36,6 +36,15 @@ async function loadTxs(sb: any, from: string, today: string, since: number): Pro
     if (!data || data.length < 1000) return rows;
   }
   throw new Error('bot transactions pagination limit');
+}
+
+export async function loadMonthlyBudgets(sb:any){
+ const rows:any[]=[];
+ for(let page=0;page<100;page++){
+  const {data,error}=await sb.from('monthly_budgets').select('month_start,total_cents,allocations,mandatory_items').order('month_start').range(page*1000,page*1000+999);
+  if(error)throw new Error('monthly budgets lookup failed');rows.push(...(data||[]));if(!data||data.length<1000)return rows;
+ }
+ throw new Error('monthly budgets pagination limit');
 }
 
 export async function loadFinance(sb: any, today: string): Promise<FinanceData> {
@@ -49,6 +58,7 @@ export async function loadFinance(sb: any, today: string): Promise<FinanceData> 
     sb.from('categories').select('id,name,color,is_income,budget_limit,limit_abs,sort_order,group_id').order('id'),
   ]);
   if (acc.error || fix.error || cred.error || sal.error || cats.error) throw new Error('bot finance lookup failed');
+  const monthly_budgets=await loadMonthlyBudgets(sb);
   const accounts = acc.data || [];
   const manual = accounts.filter((a: any) => !a.mono_account_id && a.balance_updated_at);
   const since = Math.min(...manual.map((a: any) => Date.parse(a.balance_updated_at)).filter((t: number) => !isNaN(t)));
@@ -63,7 +73,7 @@ export async function loadFinance(sb: any, today: string): Promise<FinanceData> 
     if (!r.error && r.data && r.data[0]?.date) firstOwnDate = String(r.data[0].date).slice(0, 10);
   }
   const categories = (cats.data || []).map((c: any) => ({ ...c, type: c.is_income ? 'income' : 'expense' }));
-  const input = { accounts, fixed: fix.data || [], credits: cred.data || [], salary: sal.data, categories, transactions: txs };
+  const input = { monthly_budgets, accounts, fixed: fix.data || [], credits: cred.data || [], salary: sal.data, categories, transactions: txs };
   const projection = financeProjection(input, { asof: today, through: shift(today, 120) });
   return { today, projection, txs, accounts, fixed: fix.data || [], credits: cred.data || [], cats: categories, salary: sal.data, firstOwnDate, input };
 }

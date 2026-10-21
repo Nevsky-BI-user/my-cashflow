@@ -1,3 +1,5 @@
+import { repaymentAdvice, repaymentAdviceText } from '../_shared/repayment.ts';
+import { salaryOptions, salaryKeyboard, recordSalary } from '../_shared/salary-bot.ts';
 import { fixedCandidates, fixedOccurrence, fixedOccurrenceKey } from '../_shared/fixedmatch.ts';
 // Telegram-бот (Фази 4.1, 4.2, 5.1): текстові витрати/доходи, /income з дедупом Monobank і /yes,
 // фото чеків, привʼязка кодом, /balance, /last; звіти Графік, Бюджет, Тиждень, Місяць і кнопка «Оплачено» під нагадуваннями.
@@ -7,7 +9,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { financeProjection, lastPayout, type AccTx } from '../_shared/budget.ts';
 import { formatFinanceMessage } from '../_shared/finance-message.ts';
 import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
-import { loadFinance, type FinanceData } from '../_shared/bot-data.ts';
+import { loadFinance, loadMonthlyBudgets, type FinanceData } from '../_shared/bot-data.ts';
 import {
   balanceSeries, budgetModel, chartCaption, formatBudget, formatMonth, formatWeek, monthModel, parsePaidCallback, payPlan, payRange, weekModel,
 } from '../_shared/bot-reports.ts';
@@ -261,6 +263,26 @@ async function confirmFixedLink(chatId:number,userId:string,txId:number,fixedId:
   await answer('Привʼязано');return reply(chatId,`✅ ${f.name}: зараховано оплату за ${due}. Фактична дата витрати збережена.`);
 }
 
+async function offerSalary(chatId:number,explicit=false){
+ const data=await salaryOptions(sb,todayKyiv());
+ if(!data.choices.length){if(explicit)await reply(chatId,'Налаштуйте зарплатний рахунок, суми й дати виплат у застосунку.');return;}
+ await reply(chatId,'Підтвердіть отриману виплату:',salaryKeyboard(data.choices));
+}
+async function onSalary(chatId:number,userId:string,parts:RegExpMatchArray,answer:(s:string)=>Promise<unknown>){
+ const result=await recordSalary(sb,userId,todayKyiv(),parts[1]==='s'?'salary':'advance',parts[2],parts[3],parts[4]?Number(parts[4]):undefined);
+ if(result.status==='invalid')return answer('Виплата недоступна або дата ще не настала');
+ if(result.status==='already')return answer('Цю виплату вже враховано');
+ if(result.status==='awaiting')return answer('Чекаємо надходження з Monobank');
+ if(result.status==='choose'){
+  await answer('Оберіть наявний дохід');
+  return reply(chatId,'Є кілька однакових доходів. Оберіть виплату:',{inline_keyboard:result.rows.map((t:any)=>[{text:t.date+' · '+fmtMoney(t.amount),callback_data:'sal:'+parts[1]+':'+parts[2]+':'+parts[3]+':'+t.id}])});
+ }
+ await answer('Виплату враховано');
+ await reply(chatId,'✅ '+(result.payout.kind==='salary'?'Зарплата':'Аванс')+': '+fmtMoney(result.payout.amount)+' · '+result.payout.accountName);
+ const finance=await loadFinance(sb,todayKyiv()),advice=repaymentAdviceText(repaymentAdvice(finance.input,finance.projection,result.payout.accountId,todayKyiv()));
+ if(advice)await reply(chatId,advice);
+}
+
 async function onCallback(cq: any) {
   const cbId = String(cq?.id || '');
   if (!cbId) return;
@@ -275,6 +297,8 @@ async function onCallback(cq: any) {
       return answer('Помилка, спробуйте ще раз');
     }
     if (!prof) return answer('Доступ закритий');
+    const salary=String(cq?.data||'').match(/^sal:([sa]):(\d{4}-\d{2}-\d{2}):(\d+)(?::(\d+))?$/);
+    if(salary)return onSalary(chatId,prof.id,salary,answer);
     const pick=String(cq?.data||'').match(/^flpick:(\d+)$/);
     if(pick){await answer('Оберіть зобовʼязання');return offerFixedLink(chatId,prof.id,Number(pick[1]));}
     const link=String(cq?.data||'').match(/^fl:(\d+):(\d+):(\d{4}-\d{2}-\d{2})$/);
@@ -1131,7 +1155,7 @@ const MONTH_ACC = ['січень', 'лютий', 'березень', 'квіте
 async function financeTransactions(from: string, today: string, since: number): Promise<AccTx[]> {
   const rows: AccTx[] = [];
   for (let page = 0; page < 100; page++) {
-    let query = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,payment_due_date,type,amount,created_at,date,source')
+    let query = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,payment_due_date,transfer_id,type,amount,created_at,date,source')
       .lte('date', today).order('id', { ascending: true }).range(page * 1000, page * 1000 + 999);
     query = Number.isFinite(since) ? query.or(`created_at.gt."${new Date(since).toISOString()}",date.gte.${from},payment_due_date.gte.${from}`) : query.or(`date.gte.${from},payment_due_date.gte.${from}`);
     const {data, error} = await query;
@@ -1160,7 +1184,8 @@ async function freeBlock(today: string): Promise<string> {
   const periodStart = sal.data ? lastPayout(sal.data, today).date : today.slice(0, 7) + '-01';
   const from = [from60, periodStart, today.slice(0, 7) + '-01'].sort()[0];
   const transactions = await financeTransactions(from, today, since);
-  const projection = financeProjection({accounts: acc.data || [], fixed: fix.data || [], credits: cred.data || [], salary: sal.data,
+  const monthly_budgets=await loadMonthlyBudgets(sb);
+  const projection = financeProjection({monthly_budgets,accounts: acc.data || [], fixed: fix.data || [], credits: cred.data || [], salary: sal.data,
     categories: (cats.data || []).map(c => ({...c, type: c.is_income ? 'income' : 'expense'})), transactions},
     {asof: today, through: shiftDate(today, 90)});
   const lost = transactions.filter(t => t.account_id == null && t.type === 'expense' &&
@@ -1403,6 +1428,7 @@ Deno.serve(async (req) => {
   const updateId = Number(update.update_id) || 0;
   const pending = prof.telegram_pending ?? null;
   const done = () => new Response('ok');
+  if(/^\/salary$/i.test(text)){await offerSalary(chatId,true);return done();}
   const linkCommand=text.match(/^\/link(?:\s+(\d+))?$/i);
   if(linkCommand){await offerFixedLink(chatId,prof.id,linkCommand[1]?Number(linkCommand[1]):undefined);return done();}
   if (/^\/(?:no|cancel)$/i.test(text) || text === BTN.cancel || text === BTN.no) {
@@ -1429,7 +1455,7 @@ Deno.serve(async (req) => {
     if (pending && pending.kind !== 'entry') await reply(chatId, 'Спочатку завершіть або скасуйте попередню дію.', CONFIRM_KB);
     else {
       const state: EntryPending = {kind:'entry',type:entryType,input:'choose',expires:new Date(Date.now()+PENDING_TTL_MS).toISOString()};
-      if (await replacePending(prof.id, pending, state)) await entryHint(chatId, state);
+      if (await replacePending(prof.id, pending, state)) {await entryHint(chatId, state);if(entryType==='income')await offerSalary(chatId);}
       else await reply(chatId, 'Не вдалося почати введення. Спробуйте ще раз.');
     }
     return done();

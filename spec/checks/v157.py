@@ -102,11 +102,11 @@ PER_T = "()=>{const e=[...document.querySelectorAll('.ov-per-t')].find(x=>x.getB
 # минулий період: синтетичні фактичні платежі (обовʼязковий і розстрочка) у демо-правках; третій поза періодом, щоб перевірити межі
 _TX = ("{{id:'{id}',date:'{d}',created_at:'{d}T12:00:00.000Z',account_id:'l1',description:'{n}',amount:{a},type:'expense',source:'manual',mcc:null,"
        "category_id:null,categories:null,fixed_id:{f},credit_id:{c},auto_categorized:false,receipt_url:null}}")
-PAST_TX = [("useState({add:[],del:{},acc:{},fx:{},cr:{},due:{}})",
+PAST_TX = [("useState({add:[],del:{},acc:{},fx:{},cr:{},due:{},transfers:{}})",
             "useState({add:[" + ','.join([
                 _TX.format(id='s157a', d='2026-09-25', n='Оренда', a=12000, f="'f1'", c='null'),
                 _TX.format(id='s157b', d='2026-10-02', n='Ланцюжок', a=3731.88, f='null', c="'l1'"),
-                _TX.format(id='s157c', d='2026-09-15', n='Оренда', a=12000, f="'f1'", c='null')]) + "],del:{},acc:{},fx:{},cr:{},due:{}})")]
+                _TX.format(id='s157c', d='2026-09-15', n='Оренда', a=12000, f="'f1'", c='null')]) + "],del:{},acc:{},fx:{},cr:{},due:{},transfers:{}})")]
 
 
 def _pill(page, S, E, tag):

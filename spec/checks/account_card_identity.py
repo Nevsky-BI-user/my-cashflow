@@ -19,6 +19,7 @@ def instrument(page):
 
 def edit(page, index=0):
     page.locator('.dv-cards .bcard').nth(index).click()
+    page.locator('.account-history-edit').click()
     return dialog(page, 'Рахунок')
 
 

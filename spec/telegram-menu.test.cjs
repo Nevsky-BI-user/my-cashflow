@@ -48,11 +48,11 @@ test('усі клавіатури згортаються після вибору
  }
 });
 
-test('каталог містить усі 15 команд з допустимими назвами й українськими описами',async()=>{
+test('каталог містить усі 16 команд з допустимими назвами й українськими описами',async()=>{
  const {BOT_COMMANDS}=await keyboard;
- const commands=['menu','income','expense','balance','chart','budget','week','month','last','app','help','cancel','yes','no','start'];
+ const commands=['menu','salary','income','expense','balance','chart','budget','week','month','last','app','help','cancel','yes','no','start'];
  assert.deepEqual(BOT_COMMANDS.map(item=>item.command),commands);
- assert.equal(new Set(BOT_COMMANDS.map(item=>item.command)).size,15);
+ assert.equal(new Set(BOT_COMMANDS.map(item=>item.command)).size,16);
  for(const {command,description} of BOT_COMMANDS){
   assert.match(command,/^[a-z0-9_]{1,32}$/);
   assert.ok(description.length>=1&&description.length<=256,command);
