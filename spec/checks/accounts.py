@@ -128,18 +128,16 @@ def mobile(page):
         bank, suffix = account['bank'], account['card_last4']
         card = row.locator('.bank-' + bank)
         check(card.locator('.o-bank-number').inner_text() == '**** **** **** ' + suffix, bank + ': невірна маска номера')
-        material = card.evaluate("""e=>{const s=getComputedStyle(e),c=s.backgroundColor.match(/[\\d.]+/g)||[];return {white:c.length>=3&&c.slice(0,3).every(v=>Number(v)>=230),edge:s.getPropertyValue('--bank-edge').trim(),mark:e.querySelector('.bank-mark')?.textContent}}""")
-        check(material['white'] and material['mark'] and material['edge'], bank + ': немає білої поверхні або позначення банку')
-        identities.append(material['edge'])
-        paint = card.locator('.account-amounts b').first.evaluate("e=>({color:getComputedStyle(e).color,head:getComputedStyle(e).getPropertyValue('--head')})")
-        check(paint['color'] != 'rgb(255, 255, 255)', bank + ': біла сума нечитабельна на білій картці')
-    check(len(set(identities)) == 3, 'Банки без власних кольорових країв')
+        material = card.evaluate("""e=>({paint:getComputedStyle(e).backgroundImage,mark:e.querySelector('.bank-mark')?.textContent})""")
+        check('gradient' in material['paint'] and material['mark'], bank + ': bank surface or mark missing')
+        identities.append(material['paint'])
+    check(len(set(identities)) == 3, 'Banks must retain distinct colored surfaces')
     check(row.locator('.bank-oschad .ms-wrap').count() == 1 and page.locator('.o-ms-list').count() == 0, 'поріг витрат має бути всередині картки Ощаду')
     rect = row.bounding_box()
     first = cards.first.bounding_box()
     second = cards.nth(1).bounding_box()
     check(first['x'] >= rect['x'] and first['x'] + first['width'] <= rect['x'] + rect['width'], 'Основна картка обрізана')
-    check(second['x'] < rect['x'] + rect['width'] and second['x'] >= first['x'] + first['width'], 'Немає видимого краю сусідньої картки')
+    check(second['x'] < rect['x'] + rect['width'] and second['x'] < first['x'] + first['width'], 'Немає видимого краю сусідньої картки')
     x, y = first['x'] + first['width'] * .75, first['y'] + first['height'] / 2
     page.mouse.move(x, y)
     page.mouse.down()
@@ -152,12 +150,14 @@ def mobile(page):
     touch_drag(page, rect['x'] + 70, y, rect['x'] + 240, y, after=550)
     check(cards.first.get_attribute('aria-current') == 'true', 'Дотик не повернув першу картку')
     check(page.locator('.account-history-sheet').count() == 0, 'Дотик помилково відкрив історію')
-    cards.nth(1).focus()
+    cards.first.focus()
+    page.keyboard.press('ArrowRight')
+    page.wait_for_timeout(550)
     page.keyboard.press('ArrowRight')
     page.wait_for_timeout(550)
     check(cards.nth(2).get_attribute('aria-current') == 'true', 'Стрілка не перемкнула картку')
     page.emulate_media(reduced_motion='reduce')
-    check(row.locator('.o-account-track').evaluate('e=>getComputedStyle(e).transitionDuration') in ('0s', '1e-05s'), 'Рух не вимкнений при reduced-motion')
+    check(row.locator('.o-stack-item').first.evaluate('e=>getComputedStyle(e).transitionDuration') in ('0s', '1e-05s'), 'Рух не вимкнений при reduced-motion')
     page.keyboard.press('ArrowLeft')
     page.keyboard.press('ArrowLeft')
     page.wait_for_timeout(100)
@@ -240,8 +240,11 @@ def cash_mobile(page):
     check(row.count() == 1, '390: немає секції рахунків')
     cards.first.scroll_into_view_if_needed()
     check(cards.first.evaluate(IN_VIEW), '390: до картки рахунку не можна догортати без обрізання')
-    add = row.get_by_role('button', name='Додати рахунок', exact=True)
+    add = row.locator('.o-stack-add button')
     check(add.count() == 1, '390: у ряду рахунків немає «+»')
+    cards.first.focus()
+    page.keyboard.press('End')
+    page.wait_for_timeout(550)
     add.scroll_into_view_if_needed()
     _add_cash(page, add, cards.count, '390')
     check(row.locator('.o-bank-card', has_text='Готівка вдома').count() == 1, 'нової картки немає в колоді')
@@ -250,7 +253,7 @@ def cash_mobile(page):
 CHECKS = [
     ('Картки на ПК, форма, баланс, зарплатний один', 'desktop', desktop),
     ('ПК 1920: адаптивна ширина, шрифт 14, без дрібного', 'desktop', wide),
-    ('Картки на телефоні: жест, номери, білі поверхні та історія', 'mobile', mobile),
+    ('Картки на телефоні: жест, номери, кольорова колода та історія', 'mobile', mobile),
     ('Рахунки на ПК 1280×800 і 1920×1080: ряд видно, «+» додає готівку', 'desktop', cash_desktop),
     ('Рахунки на телефоні 390: ряд видно, «+» додає готівку', 'mobile', cash_mobile),
 ]

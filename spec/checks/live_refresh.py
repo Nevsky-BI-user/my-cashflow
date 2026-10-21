@@ -25,13 +25,25 @@ MOCK = r"""(()=>{
 def mount(page):
     page.add_init_script(MOCK)
     freeze(page, DAY)
-    page.wait_for_selector('.sync-status[data-state=updated]', timeout=20000)
+    page.wait_for_selector('.sync-status[data-state=updated]', state='attached', timeout=20000)
     check(page.evaluate('Object.keys(__liveMock.handlers).length') == 10, 'ten finance subscriptions required')
     check(page.evaluate('__liveMock.channels') == 1, 'duplicate auth channel')
 
 
 def updated(page):
-    page.wait_for_selector('.sync-status[data-state=updated]', timeout=15000)
+    page.wait_for_selector('.sync-status[data-state=updated]', state='attached', timeout=15000)
+
+
+def quiet_status(page):
+    mount(page)
+    status = page.locator('.sync-status')
+    stamp = status.get_attribute('data-updated')
+    check(bool(stamp), 'немає часової мітки успішного snapshot')
+    for tab in range(5):
+        go_tab(page, tab)
+        check(status.is_hidden(), f'позначка оновлення перекриває вкладку {tab}')
+        check(status.inner_text() == '', 'успішне оновлення залишило зайве повідомлення')
+        check(status.get_attribute('data-updated') == stamp, 'перехід вкладками змінив свіжість даних')
 
 
 def external_updates(page):
@@ -101,6 +113,8 @@ def failure_retry_and_goals(page):
 
 
 CHECKS = [
+    ('live_refresh: successful sync stays invisible on every desktop tab', 'desktop', quiet_status),
+    ('live_refresh: successful sync stays invisible on every mobile tab', 'mobile', quiet_status),
     ('live_refresh: actual App external event changes financial facts', 'desktop', external_updates),
     ('live_refresh: logout invalidates pending actual App response', 'desktop', logout_pending),
     ('live_refresh: selected month rejects older pending response', 'desktop', view_pending),

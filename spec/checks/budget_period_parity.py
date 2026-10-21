@@ -48,8 +48,7 @@ def verify(page):
     if month and plan is not None: check(got['budLbl']=='Бюджет місяця','monthly budget label')
     check(abs(a-fact/100)<.51 and ((b is None and plan is None) or (b is not None and plan is not None and abs(b-plan/100)<.51)),f'{vp} Overview {got["bud"]}, expected {fact}/{plan}')
     if vp=='mobile':
-        labels=page.locator('.o-weeks').inner_text()
-        check(all(w['label'] in labels for w in v['weeks']),'week UI is not selected range')
+        check(page.locator('.o-weeks').count()==0,'Removed weekly expense chart returned on mobile')
         check(page.locator('.o-strip,.o-ccy').count()==0,'removed mobile bottom totals or rates returned')
     go_tab(page,1)
     monthly=page.evaluate("()=>({v:window.__calendarBudget,tx:txDemo(2026,9)})")
