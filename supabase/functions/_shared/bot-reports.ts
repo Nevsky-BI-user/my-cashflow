@@ -2,7 +2,7 @@ import { ownCashSeries } from './own-history.ts';
 // Звіти Telegram-бота з тієї самої проєкції, що й застосунок: Графік, Бюджет, Тиждень, Місяць, ранковий підсумок,
 // нагадування про платежі на завтра і запис «Оплачено». Чисті функції без I/O: їх перевіряють node-тести.
 import { financeProjection, lastPayout, payoutBudget, repayDate, type SalaryCfg } from './budget.ts';
-import { day, money } from './finance-message.ts';
+import { day, leftOrOver, money, untilPayoutLine } from './finance-message.ts';
 
 type P = Record<string, any>;
 export type Tx = {
@@ -279,8 +279,8 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
 export function formatBudget(m: BudgetModel | null): string {
   if (!m) return 'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.';
   const lines = [`📊 Бюджет періоду ${day(m.start)}-${day(m.end)}`,
-    `Бюджет: ${money(m.poolCents)} · витрачено ${money(m.spentCents)} (${pct(m.spentCents, m.poolCents)}%) · лишилось ${money(m.leftCents)}`];
-  if (m.leftDays > 0) lines.push(`До ${day(m.end)}: ${money(m.dailyCents)}/день (${m.leftDays} дн.)`);
+    `Бюджет: ${money(m.poolCents)} · витрачено ${money(m.spentCents)} (${pct(m.spentCents, m.poolCents)}%) · ${leftOrOver(m.leftCents)}`];
+  if (m.leftDays > 0 && m.leftCents >= 0) lines.push(`До ${day(m.end)}: ${money(m.dailyCents)}/день (${m.leftDays} дн.)`);
   return lines.join('\n');
 }
 
@@ -525,8 +525,8 @@ const dueOn = (pr: P, date: string) => paymentDues(pr, date)
 export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string): string {
   const s = pr.snapshot, u = pr.untilPayout, tomorrow = plusDays(today, 1);
   const lines = [`☀️ Доброго ранку! ${day(today)}`, `Баланс: ${money(s.positiveOwnCents - s.creditDebtCents)}`];
-  if (u && u.days > 0) lines.push(`Доступно до ${day(u.end)}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : ''));
-  if(pr.currentPeriod?.monthlyBudget?.covered)lines.push('Бюджет періоду: '+money(pr.currentPeriod.targetCents)+' · залишок '+money(pr.currentPeriod.remainingTargetCents)+(pr.currentPeriod.monthlyBudget.estimated?' (прогноз за останнім місячним планом)':''));
+  if (u && u.days > 0) lines.push(untilPayoutLine(u));
+  if(pr.currentPeriod?.monthlyBudget?.covered)lines.push('Бюджет періоду: '+money(pr.currentPeriod.targetCents)+' · '+((pr.currentPeriod.overrunCents||0)>0?leftOrOver(-pr.currentPeriod.overrunCents):leftOrOver(pr.currentPeriod.remainingTargetCents,'залишок'))+(pr.currentPeriod.monthlyBudget.estimated?' (прогноз за останнім місячним планом)':''));
   const list = (title: string, empty: string, rows: { name: string; cents: number }[]) => rows.length
     ? [`${title}: ${money(rows.reduce((n, r) => n + r.cents, 0))}`, ...rows.map((r) => `· ${r.name}: ${money(r.cents)}`)]
     : [empty];

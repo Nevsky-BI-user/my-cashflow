@@ -64,7 +64,7 @@ def kpi_desktop(page):
     # v154 (власник): пояснення відкривається лише наведенням на «i», не на число плитки
     page.locator('.kpi-funds .kpi-i').hover()
     page.wait_for_selector('.kpi-tip[data-k=funds]')
-    check('Готівка і плюсові баланси' in page.inner_text('.kpi-tip[data-k=funds]'), 'пояснення «Доступні кошти» без тексту')
+    check('За планом' in page.inner_text('.kpi-tip[data-k=funds]'), 'підказка «Доступні кошти» без розкладу «За планом»')
     page.mouse.move(2, 2)
     page.wait_for_timeout(400)
     check(page.locator('.kpi-tip').count() == 0, 'пояснення не сховалось після відведення миші')
@@ -90,6 +90,10 @@ def kpi_mobile(page):
     kpi_values(page, '.projection-summary')
     for k in KEYS:
         i = page.locator(f'.kpi-{k} .kpi-i')
+        # v183: підказка без чисел прибрана разом із «i» (розстрочки; баланс без кредиток)
+        if i.count() == 0:
+            check(k in ('balance', 'inst'), f'{k}: немає «i»')
+            continue
         i.click()
         page.wait_for_selector(f'.kpi-tip[data-k={k}]')
         box = page.locator(f'.kpi-tip[data-k={k}]').bounding_box()

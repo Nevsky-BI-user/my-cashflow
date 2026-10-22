@@ -110,7 +110,7 @@ def historical(page):
     check(trigger(page).get_attribute('data-date') == initial, 'history incorrectly changes upcoming payout')
     d = open_card(page)
     expected = verify_amounts(page)
-    check('Історичний період' in d.inner_text(), 'history/current date context missing')
+    check('Історичний період' not in d.inner_text() and d.locator('.pd-foot').count() == 0, 'v183: лишилась примітка-пояснення pd-foot')
     d.locator('.pd-close').click()
     _nav(page, 2)
     check(trigger(page).get_attribute('data-date') == initial, 'selected future range changed nearest payout')
@@ -155,7 +155,7 @@ def partial(page):
     check(trigger(page).get_attribute('data-state') == 'available', 'partial horizon lost known payout allocation')
     d = open_card(page)
     verify_amounts(page)
-    check('Горизонт не покриває весь період' in d.inner_text(), 'partial horizon not disclosed')
+    check('н/д' in d.inner_text() and 'Горизонт не покриває' not in d.inner_text(), 'partial horizon not marked н/д')
     check(d.locator('[data-row=credit],[data-row=short],[data-row=mandatory]').count() == 0, 'partial totals presented as zero/complete')
 
 
@@ -163,7 +163,7 @@ def unavailable(page):
     freeze(page, DAY, [('const baseProjection=financeProjection(financeInput,{asof:financeOptions.asof,through:financeThrough});', "const baseProjection=financeProjection(financeInput,{asof:financeOptions.asof,through:'2026-10-20'});")])
     check(trigger(page).get_attribute('data-state') == 'unavailable', 'outside-horizon allocation fabricated')
     d = open_card(page)
-    check('поза горизонтом' in d.locator('[role=status]').inner_text(), 'missing reason for unavailable payout')
+    check(d.locator('[role=status]').inner_text().strip() == 'н/д', 'unavailable payout not marked н/д')
     check(d.locator('.pd-money').count() == 0, 'unavailable allocation shown as financial zero')
 
 

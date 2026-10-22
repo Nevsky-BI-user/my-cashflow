@@ -35,7 +35,7 @@ def contract(page):
     check(all(d['closingCashCents']>=0 for d in r['days']) and any(d['arrearsCents']>0 and d['netCents']==d['closingCashCents']-d['debtCents']-d['arrearsCents'] for d in r['days']), 'cash shortfall was hidden or own funds went negative')
     # v145: «доступно після виплати» живе в підказці плитки «Бюджет періоду»; кнопки там же; v151: це A рушія (рядок «Після виплати»)
     tip=_budget_tip(page)
-    m=re.search(r'= ([\d\s  ]+(?:,\d+)?) ₴ \(ліміт не дохід', tip)
+    m=re.search(r'Після виплати [^\n]*= ([\d   ]+(?:,\d+)?) ₴', tip)
     check(m and num(m.group(1))==26800, f'overview does not show 26800: {tip!r}')
     page.locator('.kpi-tip[data-k=budget]').get_by_role('button',name='Як пораховано',exact=True).click()
     check('28' in page.locator('dialog[open]').inner_text(), 'explanation omits mandatory28000')
