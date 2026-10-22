@@ -131,7 +131,8 @@ def run(page, tag):
 
 
 def desktop(page):
-    check(page.evaluate('APP_VER') == 'v183', 'APP_VER не v183')
+    ver = page.evaluate('APP_VER')
+    check(int(ver.lstrip('v')) >= 183, f'APP_VER {ver} нижче v183')
     over, rest = run(page, 'desktop')
     check('chart' in over and 'chart' in rest, 'на ПК графік не перевірено')
 
