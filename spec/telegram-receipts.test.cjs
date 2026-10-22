@@ -349,6 +349,19 @@ const bankAccounts=[
   {id:12,name:'Картка для покупок',bank:'mono'},
   {id:13,name:'Для платежів',bank:'oschad'},
 ];
+test('prompt recognises the Oschad 24/7 history screen without bank name or card digits',()=>{
+  for(const sign of ['Ощад 24/7','bank "oschad"','«Продукти», «Платежі», «Історія», «Ще»','Аналітика за','«Всі рахунки»','«Телефон»','підсумки місяця, не операції'])
+    assert.ok(receiptSystem.includes(sign),sign);
+});
+test('Oschad screenshot without visible digits picks the only Oschad account with configured digits',async()=>{
+  const accounts=[{id:1,name:'Ощадбанк',bank:'oschad',kind:'debit',active:true,card_last4:'4366'},
+    {id:2,name:'ПриватБанк кредитна',bank:'privat',kind:'credit',active:true,card_last4:'0882'},
+    {id:4,name:'Готівка',bank:'cash',kind:'cash',active:true},
+    {id:5,name:'Приват Біла',bank:'privat',kind:'debit',active:true,card_last4:'8814'}];
+  const h=harness([batch([transaction({bank:'oschad',amount:440,description:'YUR-AKVA'}),
+    transaction({bank:'oschad',amount:190,description:'Melisa'}),transaction({bank:'oschad',amount:400,description:'RozetkaPay'})])],{accounts});
+  await h.run();assert.deepEqual(h.state.rows.map(r=>r.account_id),[1,1,1]);
+});
 test('mixed bank screenshot picks Privat 0882, Mono Visa and Oschad independently',async()=>{
   const h=harness([batch([
     transaction({bank:'privat',card_last4:'0882'}),
