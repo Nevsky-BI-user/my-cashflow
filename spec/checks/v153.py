@@ -145,7 +145,7 @@ def events_own(page):
         go_tab(page, 3)
         page.wait_for_selector('.p-credits.desk .cal-days .cal-cell')
         hd = page.inner_text('.ck-day')
-        for s in ('Власні після', 'Борг', 'власні після події; борг кредиток окремо; клік по дню: розклад'):
+        for s in ('Власні після', 'Борг'):
             check(s in hd, f'{name}: немає «{s}» у «Події і баланс»')
         check('Баланс після' not in hd, f'{name}: лишилась колонка «Баланс після»')
         eng = page.evaluate(ENG)
@@ -222,7 +222,7 @@ def budget_manual(page):
     check(m['pb'] == 1200000 and m['man'] == 1200000, f'бюджет періоду (плитка, План на день) {m["pb"]}, ручна {m["man"]}')
     check((m['repay'] + m['sav']) - (a0['repay'] + a0['sav']) == a0['target'] - m['target'],
           f'погашення {a0["repay"]}->{m["repay"]}, накопичення {a0["sav"]}->{m["sav"]}: не рівно на різницю бюджетів {a0["target"] - m["target"]}')
-    check('з 12 000 ₴' in txt and 'вручну' in txt, f'«Розподілено ... з 12 000 ₴» чи підпис «вручну» не оновились: {txt[:300]!r}')
+    check('з 12 000 ₴' in txt and sh.locator('[data-k=bud-manual]').get_attribute('aria-pressed') == 'true', f'«Розподілено ... з 12 000 ₴» чи перемикач «Вручну» не оновились: {txt[:300]!r}')
     fr = page.evaluate("(()=>{const q=window.__financeProjection.periods.find(p=>p.basis!=='current');return {start:q.start,own:q.ownCents,reserve:q.reserveCents,free:q.ownCents-q.reserveCents}})()")
     check(fr['start'] == '2026-10-21' and fr['free'] > 1200000 and fr['free'] < 9000000, f'фікстура: вільне з виплати 21.10 не між 12 000 і 90 000: {fr}')
     check(sh.locator('[data-k=bud-over]').count() == 0, f'попередження при сумі в межах вільного з виплати після обовʼязкових: {fr}')

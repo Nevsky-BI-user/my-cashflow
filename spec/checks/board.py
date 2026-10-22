@@ -69,20 +69,22 @@ def delete_one(page):
 
 
 def columns(page):
-    # Фактичні накопичення — четверта картка одного верхнього ряду.
+    # Фактичні накопичення: третя картка одного верхнього ряду (v183: картку-пояснення «План внесків» прибрано, ряд на 3 колонки).
     # «Горизонт подій», «Що як» та «Історія накопичень» прибрано свідомо: це прогноз строків зі старої
     # формули надлишку (docs/redesign/projection-contract.md, розділ «Заощадження»)
     main = page.locator('.goals-main').inner_text().lower()
     check(page.locator('.goals-main .board-d').count() == 1, 'немає карти цілей')
     log = page.locator('.goals-log').bounding_box()
     cards = page.locator('.goals-kpis > .surface')
-    check(cards.count() == 4 and cards.nth(3).locator('.goals-log-tot').count() == 1,
-          'фактичні накопичення не четверта верхня картка')
-    boxes = [cards.nth(i).bounding_box() for i in range(4)]
+    check(cards.count() == 3 and cards.nth(2).locator('.goals-log-tot').count() == 1,
+          'фактичні накопичення не третя верхня картка')
+    boxes = [cards.nth(i).bounding_box() for i in range(3)]
+    row = page.locator('.goals-kpis').bounding_box()
+    check(abs(boxes[2]['x'] + boxes[2]['width'] - row['x'] - row['width']) <= 1, 'верхній ряд не заповнює ширину: порожня колонка')
     check(max(b['y'] for b in boxes) - min(b['y'] for b in boxes) <= 1,
-          'верхні чотири картки не в одному ряду')
+          'верхні картки не в одному ряду')
     check(max(b['height'] for b in boxes) - min(b['height'] for b in boxes) <= 1,
-          'верхні чотири картки різної висоти')
+          'верхні картки різної висоти')
     board = page.locator('.board-d').bounding_box()
     check(log and board and log['y'] + log['height'] <= board['y'], 'фактичні накопичення не над картками')
     coin = page.locator('.board-wrap .coin').bounding_box()

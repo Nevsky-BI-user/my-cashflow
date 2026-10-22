@@ -3,6 +3,12 @@ import type { financeProjection } from './budget.ts';
 type FinanceMessage = ReturnType<typeof financeProjection>;
 export const money = (cents: number) => new Intl.NumberFormat('uk-UA', {maximumFractionDigits: 2}).format(cents / 100) + ' ₴';
 export const day = (value: string) => value.slice(8, 10) + '.' + value.slice(5, 7);
+// v183 (власник: залишок не буває від'ємним): від'ємне «доступно до виплати» показується як нестача, сума без знака
+export const untilPayoutLine = (u: {end: string; cents: number; dailyCents: number; days: number}) => u.cents < 0
+  ? `Не вистачає до ${day(u.end)}: ${money(-u.cents)}`
+  : `Доступно до ${day(u.end)}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : '');
+// Залишок бюджету: від'ємний показується як «перевитрата» з додатною сумою
+export const leftOrOver = (cents: number, left = 'лишилось') => cents < 0 ? `перевитрата ${money(-cents)}` : `${left} ${money(cents)}`;
 export const previousDay = (value: string) => new Date(Date.parse(value + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
 const plural = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'операція' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'операції' : 'операцій';
 
@@ -22,7 +28,7 @@ export function formatFinanceMessage(p: FinanceMessage, unassigned: {count: numb
   else lines.push('Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
   // Доступно до виплати: з рушія (власні мінус обовʼязкові до виплати; борг кредиток гаситься з виплати)
   const u = p.untilPayout;
-  if (u && u.days > 0) lines.push(`Доступно до ${day(u.end)}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : ''));
+  if (u && u.days > 0) lines.push(untilPayoutLine(u));
   lines.push(`Власні кошти: ${money(own)}`, `Баланс: ${money(own - cardDebt)}`);
   if (accounts.length) {
     lines.push('', 'Картки:');

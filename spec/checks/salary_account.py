@@ -14,7 +14,7 @@ def salary_account(page):
     d=dialog(page,'Операція')
     buttons=d.locator('.drw-acc .acc-seg button')
     check(buttons.count()>0 and all(buttons.nth(i).is_disabled() for i in range(buttons.count())),'рахунок підтвердженої зарплати можна змінити')
-    check('Рахунок підтвердженої зарплати змінити не можна' in d.inner_text(),'немає пояснення обмеження')
+    check('Рахунок підтвердженої зарплати змінити не можна' not in d.inner_text(),'v183: лишилось речення-пояснення обмеження')
     cat=d.locator('select').first
     check(cat.is_enabled(),'категорію заблоковано разом із рахунком')
     cat.select_option('2')

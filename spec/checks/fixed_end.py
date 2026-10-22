@@ -70,7 +70,7 @@ def form(page):
     d.locator('[aria-label="Тип"] button', has_text='Дохід').click()
     end = d.locator('input[type=date][aria-label="Остання дата"]')
     check(end.input_value() == '', 'нова форма не безстрокова за замовчуванням')
-    check('Порожньо: безстроково' in d.inner_text(), 'немає підказки про безстроковий платіж')
+    check('Порожньо: безстроково' not in d.inner_text(), 'v183: лишилось речення-пояснення про безстроковий платіж')
     end.fill('2026-11-20')
     page.wait_for_timeout(150)
     check('востаннє 20.11.2026' in d.inner_text(), 'немає підказки про останню дату')

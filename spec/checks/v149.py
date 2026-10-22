@@ -71,7 +71,7 @@ def kpi_plan(page):
     page.locator('.kpi-funds .kpi-i').click()
     page.wait_for_selector('.kpi-tip[data-k=funds]')
     tip = page.inner_text('.kpi-tip[data-k=funds]')
-    check('За планом: бюджет періоду' in tip and '= A ' in tip and 'інакше 15 000' in tip, f'у підказці немає розкладу «За планом»: {tip!r}')
+    check('За планом, ' in tip and '= A ' in tip and '; бюджет ' in tip, f'у підказці немає розкладу «За планом»: {tip!r}')
     page.keyboard.press('Escape')
     rows = {}
     for t in page.evaluate(KPI):

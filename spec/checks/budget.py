@@ -117,7 +117,11 @@ def desktop(page):
         f=sum(round(t['amount']*100) for t in valid if str(t.get('category_id'))==str(c['id']))/100
         row=page.locator('.bud-cat[data-cat="'+str(c['id'])+'"]')
         check(abs(num(row.locator('.bud-value[data-label="Факт"]').inner_text())-f)<.01,'category fact')
-        check(num(row.locator('.bud-remaining').inner_text())==1000-f,'category remaining')
+        # v183: перевитрата показується без знака з data-over; знак відновлюємо з атрибута
+        cell=row.locator('.bud-remaining')
+        rem=num(cell.inner_text())
+        check(rem>=0 and (cell.get_attribute('data-over')=='1')==(f>1000),'category remaining sign')
+        check(rem==abs(1000-f),'category remaining')
     check(page.locator('.bud-cat.hot').count()==0,'linear daily expectation returned')
     check(all(label in page.locator('.bud-table-head').inner_text() for label in ('Факт','План','Залишок')),'monthly category columns lack explicit labels')
     for width,height in [(1280,800),(1910,917)]:

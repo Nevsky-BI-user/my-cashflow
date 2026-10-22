@@ -95,6 +95,7 @@ CHECKS += [
 
 # пояснення KPI (власник: «відкривається лише при наведенні на i»): плитка, числа й рядки не відкривають; з «i» і з підказки геть: закривається
 KEYS = ('funds', 'budget', 'balance', 'inst')
+NO_TIP = ('balance', 'inst')
 
 
 def _tips(page):
@@ -114,6 +115,10 @@ def kpi_i_desktop(page):
             loc.hover()
             page.wait_for_timeout(350)
             check(_tips(page) == 0, f'{k}: наведення на «{sel or "центр плитки"}» відкрило пояснення')
+        # v183: «i» лише там, де пояснення не порожнє (баланс без боргів кредиток, розстрочки без платежів)
+        if i.count() == 0:
+            check(k in NO_TIP, f'{k}: немає «i», хоча пояснення є')
+            continue
         i.hover()
         page.wait_for_selector(f'.kpi-tip[data-k={k}]')
         tile.locator('.dv-kpi-v').hover()
@@ -143,6 +148,9 @@ def kpi_i_mobile(page):
         tile.locator('.dv-kpi-v').click()
         page.wait_for_timeout(250)
         check(_tips(page) == 0, f'{k}: дотик до числа плитки відкрив пояснення')
+        if i.count() == 0:
+            check(k in NO_TIP, f'{k}: немає «i», хоча пояснення є')
+            continue
         i.click()
         page.wait_for_selector(f'.kpi-tip[data-k={k}]')
         page.mouse.click(5, 5)
