@@ -33,6 +33,9 @@ def gestures(page):
         first, second = deck.locator('.o-stack-item').nth(0).bounding_box(), deck.locator('.o-stack-item').nth(1).bounding_box()
         check(first['x'] < second['x'] < first['x'] + first['width'] and second['y'] > first['y'], f'{width}: cards do not overlap in depth')
         check(page.evaluate('document.documentElement.scrollWidth<=innerWidth'), f'{width}: horizontal document overflow')
+        # Задні картки не обрізані, до наступного блоку не менше 16px.
+        gap = page.evaluate("(()=>{const s=document.querySelector('.o-account-section'),n=s.nextElementSibling,d=document.querySelector('.o-card-stack').getBoundingClientRect();const b=Math.max(...[...document.querySelectorAll('.o-stack-item')].map(e=>e.getBoundingClientRect().bottom));return {clip:b-d.bottom,gap:n.getBoundingClientRect().top-b}})()")
+        check(gap['clip'] <= 0 and gap['gap'] >= 16, f'{width}: картки злиплися з блоком нижче {gap}')
         check(page.get_by_role('button', name='Наступна картка').count() == 0 and page.get_by_role('button', name='Попередня картка').count() == 0, f'{width}: стрілки під колодою')
         start = deck.locator('.o-stack-item').first.evaluate('e=>getComputedStyle(e).transform')
         _step(page, 'ArrowRight')

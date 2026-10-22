@@ -7,10 +7,13 @@ def instrument(page):
     def route_handler(route):
         response = route.fetch()
         source = response.text()
-        source = source.replace("useState(()=>sb?[]:ACCOUNTS_DEMO)",
-                                "useState(()=>JSON.parse(localStorage.getItem('test_cards')||'null')||ACCOUNTS_DEMO)")
-        source = source.replace("const[accEdit,setAccEdit]=useState(null);",
-                                "window.testAccounts=accounts;useEffect(()=>{localStorage.setItem('test_cards',JSON.stringify(accounts))},[accounts]);const[accEdit,setAccEdit]=useState(null);")
+        for old, new in (("return accountOrder(ACCOUNTS_DEMO,ids)})",
+                          "return JSON.parse(localStorage.getItem('test_cards')||'null')||accountOrder(ACCOUNTS_DEMO,ids)})"),
+                         ("const[accEdit,setAccEdit]=useState(null);",
+                          "window.testAccounts=accounts;useEffect(()=>{localStorage.setItem('test_cards',JSON.stringify(accounts))},[accounts]);const[accEdit,setAccEdit]=useState(null);")):
+            # заміна, що не знайшла рядка, мовчки вимикає перевірку збереження
+            check(source.count(old) == 1, 'фікстура рахунків не знайшла рядок: ' + old[:40])
+            source = source.replace(old, new)
         route.fulfill(response=response, body=source)
     page.route('**/index.html', route_handler)
     page.reload()
