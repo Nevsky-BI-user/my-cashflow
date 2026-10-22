@@ -38,13 +38,13 @@ def desktop(page):
     check(mono.count() == 1, 'немає картки monobank')
     mt = mono.inner_text().lower()
     check('monobank' in mt and 'дебетова' in mt and 'оновлено' in mt, f'картка monobank: {mt!r}')
-    # Білі картки; банк визначають кольоровий край і монограма.
+    # Градієнти й монограми відрізняють банки.
     materials = cards.evaluate_all("""es=>es.map(e=>{const s=getComputedStyle(e);return {
       edge:s.getPropertyValue('--bank-edge').trim(),mark:e.querySelector('.bank-mark')?.textContent,
-      background:s.backgroundColor,white:(s.backgroundColor.match(/[\\d.]+/g)||[]).slice(0,3).every(v=>Number(v)>=230)
+      paint:s.backgroundImage
     }})""")
-    check(all(m['white'] and m['mark'] and m['edge'] for m in materials)
-          and len({m['edge'] for m in materials}) == 3,
+    check(all('gradient' in m['paint'] and m['mark'] and m['edge'] for m in materials)
+          and len({m['paint'] for m in materials}) == 3,
           f'Bank material, monogram or identifying edge missing: {materials}')
     paint = mono.evaluate("""e=>{const probe=document.createElement('span');
       probe.style.color='var(--head)';e.appendChild(probe);

@@ -7,7 +7,7 @@ def open_transfer(page):
     else:
         card=page.locator('.o-bank-card',has_text='ПриватБанк кредитна')
         while card.get_attribute('aria-current')!='true':
-            page.get_by_role('button',name='Наступна картка',exact=True).click()
+            page.locator('.o-stack-item[aria-hidden=false] button').first.focus();page.keyboard.press('ArrowRight');page.wait_for_timeout(500)
         card.click()
     page.get_by_role('button',name='Погасити з картки',exact=True).click()
     d=dialog(page,'Погашення з картки')
@@ -32,7 +32,7 @@ def repayment(page):
     else:
         card=page.locator('.o-bank-card',has_text='ПриватБанк кредитна')
         while card.get_attribute('aria-current')!='true':
-            page.get_by_role('button',name='Наступна картка',exact=True).click()
+            page.locator('.o-stack-item[aria-hidden=false] button').first.focus();page.keyboard.press('ArrowRight');page.wait_for_timeout(500)
         card.click()
     row=page.locator('.account-history-row',has_text='Переказ з Ощадбанк')
     check(row.count()==1,'немає контрагента у історії')

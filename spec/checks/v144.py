@@ -247,9 +247,9 @@ def colors(page):
     for theme in ('light', 'dark'):
         page.evaluate('(t)=>document.documentElement.setAttribute("data-theme",t)', theme)
         page.wait_for_timeout(200)
-        cards = page.evaluate("""[...document.querySelectorAll('.dv-cards .bcard')].map(e=>{const s=getComputedStyle(e),probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;e.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};return{c:[...e.classList].find(x=>x.startsWith('bk-')),bi:s.backgroundImage,sh:s.boxShadow,edge:s.borderTopColor,tokenOk:s.backgroundImage==='none'&&s.backgroundColor==='rgb(255, 255, 255)'&&s.borderTopColor===probe('borderTopColor','var(--bank-edge)')}})""")
-        check(len(cards) >= 3 and all(c['c'] and c['bi'] == 'none' and c['sh'] != 'none' for c in cards), f'{theme}: картки без градієнта за банком: {cards}')
-        check(all(c['tokenOk'] for c in cards) and len({c['edge'] for c in cards}) == len({c['c'] for c in cards}), f'{theme}: bank surfaces or identity edges differ from desktop Overview roles: {cards}')
+        cards = page.evaluate("""[...document.querySelectorAll('.dv-cards .bcard')].map(e=>{const s=getComputedStyle(e),probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;e.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};return{c:[...e.classList].find(x=>x.startsWith('bk-')),bi:s.backgroundImage,sh:s.boxShadow,edge:s.borderTopColor,tokenOk:s.backgroundImage.includes('gradient')}})""")
+        check(len(cards) >= 3 and all(c['c'] and 'gradient' in c['bi'] and c['sh'] != 'none' for c in cards), f'{theme}: картки без градієнта за банком: {cards}')
+        check(all(c['tokenOk'] for c in cards) and len({c['bi'] for c in cards}) == len({c['c'] for c in cards}), f'{theme}: bank gradients do not identify bank roles: {cards}')
         ratios = [r for i in range(len(cards)) for r in page.locator('.dv-cards .bcard').nth(i).evaluate(CR)]
         print(f'      {theme}: контраст тексту карток мін. {min(ratios)}')
         check(min(ratios) >= 4.5, f'{theme}: контраст тексту на картці {min(ratios)} < 4.5')

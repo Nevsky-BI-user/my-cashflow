@@ -86,10 +86,10 @@ def one_system(page):
         _bank_cards(page, f'{tag}/{theme}', desk)
 
 
-# Білі банківські картки без градієнта та відблиску, кольорові краї збережено.
+# v181: на Огляді ПК картки в градієнтах банків; у Налаштуваннях білі без градієнта та відблиску, з кольоровими краями.
 BANKS = r"""()=>[...document.querySelectorAll('.bcard[class*=" bk-"]')].filter(e=>e.offsetParent).map(e=>{const s=getComputedStyle(e),b=getComputedStyle(e,'::before');
  const probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;e.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
- const layered=!!e.closest('.shell.overview-active .p-overview.desk'),bi=s.backgroundImage;return {cls:e.className.split(' ').find(c=>c.startsWith('bk-')),layered,tokenOk:bi==='none'&&s.backgroundColor==='rgb(255, 255, 255)'&&s.borderTopColor===probe('borderTopColor','var(--bank-edge)'),edge:s.borderTopColor,bi,head:(bi.match(/^[a-z-]+\([^,]*/)||[''])[0],n:(bi.match(/-gradient\(/g)||[]).length,
+ const layered=!!e.closest('.shell.overview-active .p-overview.desk'),bi=s.backgroundImage;return {cls:e.className.split(' ').find(c=>c.startsWith('bk-')),layered,tokenOk:bi==='none'&&s.backgroundColor==='rgb(255, 255, 255)'&&s.borderTopColor===probe('borderTopColor','var(--bank-edge)'),grad:bi.includes('gradient'),edge:s.borderTopColor,bi,head:(bi.match(/^[a-z-]+\([^,]*/)||[''])[0],n:(bi.match(/-gradient\(/g)||[]).length,
  pos:(bi.match(/\d+(\.\d+)?%/g)||[]).map(parseFloat),glare:b.content!=='none'&&b.backgroundImage!=='none'}})"""
 
 
@@ -111,8 +111,8 @@ def _bank_cards(page, w, desk):
     check(len(sm) >= 3, f'{w}: у Налаштуваннях → Рахунки замало карток банків: {len(sm)}')
     layered = [c for c in cards if c['layered']]
     if desk:
-        check(len(layered) == len(cards) and all(c['tokenOk'] and c['n'] == 0 for c in layered), f'{w}: desktop Overview bank layers differ from authored tokens: {layered}')
-        check(len({c['edge'] for c in layered}) == len({c['cls'] for c in layered}), f'{w}: desktop bank edges do not identify bank roles: {layered}')
+        check(len(layered) == len(cards) and all(c['grad'] and c['n'] >= 1 for c in layered), f'{w}: desktop Overview bank layers differ from authored tokens: {layered}')
+        check(len({c['bi'] for c in layered}) == len({c['cls'] for c in layered}), f'{w}: desktop bank gradients do not identify bank roles: {layered}')
     check(not any(c['layered'] for c in sm), f'{w}: Overview bank layers leaked into Settings')
     cards = sm
     if desk:
