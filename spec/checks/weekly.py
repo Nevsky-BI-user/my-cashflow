@@ -155,8 +155,11 @@ def paid_no_button(page):
         txt = r.first.inner_text()
         print(f'      телефон: {txt!r}')
         check('сплачено' in txt and r.first.locator('.pay-done').count() == 0, f'сплачена розстрочка з кнопкою на телефоні: {txt!r}')
-        o = page.locator('details.cm-month .cm-event', has_text='Оренда')
-        check(o.first.locator('.pay-done').count() == 1, 'на телефоні зникла кнопка неоплаченої Оренди')
+        # v182: неоплачене до початку поточного періоду (Оренда 01.10, період з 06.10) у списку не показується;
+        # неоплачене поточного періоду (Садочок 10.10) лишається з кнопкою оплати
+        check(page.locator('details.cm-month .cm-event', has_text='Оренда').count() == 0, 'на телефоні Оренда 01.10 з минулого періоду в списку')
+        o = page.locator('details.cm-month .cm-event', has_text='Садочок')
+        check(o.first.locator('.pay-done').count() == 1, 'на телефоні зникла кнопка неоплаченого Садочка')
 
 
 def credit_cash(page):
