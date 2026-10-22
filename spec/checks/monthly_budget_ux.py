@@ -79,7 +79,8 @@ def page_chart(page):
         geometry=row.evaluate('(e)=>{const n=e.querySelector(".bud-category-title").getBoundingClientRect(),v=e.querySelector(".bud-value").getBoundingClientRect();return{gap:v.left-n.right,width:n.width}}')
         check(geometry['gap']<=24 and geometry['width']<=190,'category column stretches excessively before amounts')
     name=row.get_attribute('aria-label') or row.inner_text()
-    check(all(label in name for label in ('Факт','План','Залишок')),'category accessible name lacks amount meanings')
+    # v183: відʼємний залишок читається як «Перевитрата»
+    check(all(label in name for label in ('Факт','План')) and ('Залишок' in name or 'Перевитрата' in name),'category accessible name lacks amount meanings')
     chart=page.locator('.bud-chart')
     check(chart.get_attribute('role')=='slider' and chart.get_attribute('tabindex')=='0','chart is not keyboard accessible')
     check(chart.locator('text').count()>=4,'chart axes lack explicit date and money labels')
@@ -101,7 +102,7 @@ def page_chart(page):
     else:
         page.mouse.move(point['x'],point['y'])
     check('02.10' in readout.inner_text(),'chart pointer/touch does not update selected date')
-    check('Бюджет' in readout.inner_text() and 'Залишок' in readout.inner_text(),'chart readout lacks explicit money series names')
+    check('Бюджет' in readout.inner_text() and ('Залишок' in readout.inner_text() or 'Перевитрата' in readout.inner_text()),'chart readout lacks explicit money series names')
     check(num(page.locator('.bud-mandatory .bud-kpi-v').inner_text())==250,'mandatory KPI lost reserve amount')
     check(page.evaluate('document.documentElement.scrollWidth<=innerWidth'),'Budget page overflows horizontally')
 

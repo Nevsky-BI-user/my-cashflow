@@ -57,6 +57,10 @@ test('Бюджет: бюджет періоду як плитка застосу
  assert.ok(t.includes('До 21.10: 291,78 ₴/день (9 дн.)'),t);
  for(const gone of ['Категорії, факт','Найбільші перевитрати','⚠️'])assert.ok(!t.includes(gone),gone+'\n'+t);
  assert.equal(rep.formatBudget(null),'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
+ // v183: перевитрата періоду: «перевитрата X» без мінуса, рядка «/день» немає
+ const over=norm(rep.formatBudget({...m,leftCents:-50000,dailyCents:0}));
+ assert.ok(over.includes('· перевитрата 500 ₴'),over);
+ assert.ok(!/лишилось -|\/день/.test(over),over);
 });
 
 // v153: плани категорій бота діляться від того самого бюджету періоду, що й у застосунку (planSplit з index.html), сума планів = бюджету

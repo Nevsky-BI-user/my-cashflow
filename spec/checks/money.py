@@ -18,7 +18,7 @@ def parity(page):
     # v145: «доступно після виплати» у підказці плитки «Бюджет періоду»; v151: це A рушія (власні на виплату − резерв − погашення)
     page.locator('.kpi-budget .kpi-i').click()
     tip=page.inner_text('.kpi-tip[data-k=budget]')
-    m=re.search(r'= (−?[\d\s  ]+(?:,\d+)?) ₴ \(ліміт не дохід', tip)
+    m=re.search(r'Після виплати [^\n]*= (−?[\d   ]+(?:,\d+)?) ₴', tip)
     check(m and abs(num(m.group(1))-r['nextPlan']['baseAvailableCents']/100)<=1, f'головна сума не збігається з проєкцією: {[x for x in tip.split(chr(10)) if "Після виплати" in x]!r}')
     page.keyboard.press('Escape')
     check(len({e['id'] for e in r['events']})==len(r['events']), 'події дублюються')

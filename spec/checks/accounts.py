@@ -38,13 +38,13 @@ def desktop(page):
     check(mono.count() == 1, 'немає картки monobank')
     mt = mono.inner_text().lower()
     check('monobank' in mt and 'дебетова' in mt and 'оновлено' in mt, f'картка monobank: {mt!r}')
-    # Білі картки; банк визначають кольоровий край і монограма.
+    # Градієнти й монограми відрізняють банки.
     materials = cards.evaluate_all("""es=>es.map(e=>{const s=getComputedStyle(e);return {
       edge:s.getPropertyValue('--bank-edge').trim(),mark:e.querySelector('.bank-mark')?.textContent,
-      background:s.backgroundColor,white:(s.backgroundColor.match(/[\\d.]+/g)||[]).slice(0,3).every(v=>Number(v)>=230)
+      paint:s.backgroundImage
     }})""")
-    check(all(m['white'] and m['mark'] and m['edge'] for m in materials)
-          and len({m['edge'] for m in materials}) == 3,
+    check(all('gradient' in m['paint'] and m['mark'] and m['edge'] for m in materials)
+          and len({m['paint'] for m in materials}) == 3,
           f'Bank material, monogram or identifying edge missing: {materials}')
     paint = mono.evaluate("""e=>{const probe=document.createElement('span');
       probe.style.color='var(--head)';e.appendChild(probe);
@@ -69,6 +69,7 @@ def desktop(page):
     shot(page, 'ov-1280.jpg', full=False)
     # баланс Ощадбанку: повзунок 7300 і «Зберегти»
     cards.first.click()
+    page.locator('.account-history-edit').click()
     page.wait_for_timeout(300)
     d = dialog(page, 'Рахунок')
     check(d.count() == 1, 'клік по картці не відкрив форму рахунку')
@@ -83,6 +84,7 @@ def desktop(page):
     check(s == '7 300 ₴', f'після збереження на картці «{s}», а не «7 300 ₴»')
     # зарплатний рахунок лише один: увімкнути на monobank
     cards.nth(2).click()
+    page.locator('.account-history-edit').click()
     page.wait_for_timeout(300)
     d.locator('[role=switch]').click()
     d.locator('button', has_text='Зберегти').click()
@@ -91,6 +93,7 @@ def desktop(page):
     check(gold == [0, 0, 1], f'позначка «зарплата сюди» по картках: {gold}, очікували лише на третій')
     # Esc закриває форму
     cards.first.click()
+    page.locator('.account-history-edit').click()
     page.wait_for_timeout(300)
     page.keyboard.press('Escape')
     page.wait_for_timeout(300)
@@ -225,6 +228,7 @@ def cash_desktop(page):
     check(page.locator('.dv-cards .bcard', has_text='Готівка вдома').count() == 1, 'ПК: картки «Готівка вдома» немає в ряду')
     # вид зберігся: повторне відкриття картки показує «Готівка» вибраною
     page.locator('.dv-cards .bcard', has_text='Готівка вдома').click()
+    page.locator('.account-history-edit').click()
     page.wait_for_timeout(300)
     d = dialog(page, 'Рахунок')
     pressed = d.locator('[role=group][aria-label="Тип"] button[aria-pressed=true]').inner_text()

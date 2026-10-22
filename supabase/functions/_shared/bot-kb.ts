@@ -31,6 +31,7 @@ export const ENTRY_INPUT_KB = MAIN_KB;
 // Єдиний каталог команд для реєстрації меню Telegram.
 export const BOT_COMMANDS = [
   { command: 'menu', description: 'Відкрити головне меню' },
+  { command: 'salary', description: 'Врахувати зарплату або аванс однією кнопкою' },
   { command: 'income', description: 'Додати дохід текстом або із зображення' },
   { command: 'expense', description: 'Додати витрату текстом або із зображення' },
   { command: 'balance', description: 'Поточний баланс і фінансовий стан' },

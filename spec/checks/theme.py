@@ -32,7 +32,8 @@ def fonts_cards_buttons(page):
     cards = page.evaluate(CARDS)
     check(len(cards) >= 3, f'карток банків {len(cards)}')
     for c in cards:
-        check(c['bg'] == 'rgb(255, 255, 255)' and c['bi'] == 'none', f'картка банку без білої поверхні: {c}')
+        # v181: на ПК картка банку знову в градієнті свого банку.
+        check('gradient' in c['bi'], f'картка банку без градієнта банку: {c}')
         check(c['h'] >= 142, f'картка банку замала для підписів: {c["h"]}px')
         check(c['sh'] != 'none', f'картка банку без тіні: {c}')
     for sel in ('.side-add', '.dact'):

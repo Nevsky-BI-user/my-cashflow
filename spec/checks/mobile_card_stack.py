@@ -16,6 +16,12 @@ def _current(page, index):
     check(all(x['inert'] == (i != index) for i, x in enumerate(state)), f'Inactive cards remain interactive: {state}')
 
 
+def _step(page, key):
+    # Стрілок під колодою немає: крок клавішею з поточної картки.
+    page.locator('.o-stack-item[aria-hidden=false] button').first.focus()
+    page.keyboard.press(key)
+
+
 def gestures(page):
     freeze(page, '2026-10-13')
     for width in (320, 390, 430):
@@ -27,8 +33,12 @@ def gestures(page):
         first, second = deck.locator('.o-stack-item').nth(0).bounding_box(), deck.locator('.o-stack-item').nth(1).bounding_box()
         check(first['x'] < second['x'] < first['x'] + first['width'] and second['y'] > first['y'], f'{width}: cards do not overlap in depth')
         check(page.evaluate('document.documentElement.scrollWidth<=innerWidth'), f'{width}: horizontal document overflow')
+        # Задні картки не обрізані, до наступного блоку не менше 16px.
+        gap = page.evaluate("(()=>{const s=document.querySelector('.o-account-section'),n=s.nextElementSibling,d=document.querySelector('.o-card-stack').getBoundingClientRect();const b=Math.max(...[...document.querySelectorAll('.o-stack-item')].map(e=>e.getBoundingClientRect().bottom));return {clip:b-d.bottom,gap:n.getBoundingClientRect().top-b}})()")
+        check(gap['clip'] <= 0 and gap['gap'] >= 16, f'{width}: картки злиплися з блоком нижче {gap}')
+        check(page.get_by_role('button', name='Наступна картка').count() == 0 and page.get_by_role('button', name='Попередня картка').count() == 0, f'{width}: стрілки під колодою')
         start = deck.locator('.o-stack-item').first.evaluate('e=>getComputedStyle(e).transform')
-        page.get_by_role('button', name='Наступна картка', exact=True).click()
+        _step(page, 'ArrowRight')
         page.wait_for_timeout(90)
         mid = deck.locator('.o-stack-item').first.evaluate('e=>getComputedStyle(e).transform')
         if width == 390:
@@ -37,7 +47,12 @@ def gestures(page):
         end = deck.locator('.o-stack-item').first.evaluate('e=>getComputedStyle(e).transform')
         check(start != mid and mid != end, f'{width}: no measured intermediate animation frame')
         _current(page, 1)
-        page.get_by_role('button', name='Попередня картка', exact=True).click()
+        # Зліва лишається видима смужка попередньої картки, без накладання на поточну.
+        box, prev, cur = deck.bounding_box(), deck.locator('.o-stack-item').nth(0).bounding_box(), deck.locator('.o-stack-item').nth(1).bounding_box()
+        strip = prev['x'] + prev['width'] - box['x']
+        check(14 <= strip <= 20 and prev['x'] + prev['width'] <= cur['x'], f'{width}: previous card strip {strip:.1f}px')
+        check(deck.locator('.o-stack-item').nth(0).evaluate('e=>getComputedStyle(e).opacity') == '1', f'{width}: previous card hidden')
+        _step(page, 'ArrowLeft')
         page.wait_for_timeout(500)
         _current(page, 0)
         r = card.bounding_box(); x, y = r['x'] + r['width']*.75, r['y']+r['height']*.5
@@ -88,7 +103,7 @@ def amounts(page):
 def interrupted_swipe(page):
     freeze(page, '2026-10-13')
     deck = _deck(page, 390)
-    page.get_by_role('button', name='Наступна картка', exact=True).click()
+    _step(page, 'ArrowRight')
     page.wait_for_timeout(80)
     item = deck.locator('.o-stack-item').nth(1)
     before = item.evaluate('e=>new DOMMatrixReadOnly(getComputedStyle(e).transform).m41')

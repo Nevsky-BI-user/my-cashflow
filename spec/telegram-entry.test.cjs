@@ -59,7 +59,7 @@ function harness(options={}){
     if(url.includes('/sendPhoto'))state.photos.push(init.body);
     return {ok:true,json:async()=>({ok:true})};
   };
-  const bindings={...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
+  const bindings={salaryOptions:async()=>({choices:[]}),...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
     creditPaid:()=>[],matchCredit:()=>null,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
     formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({})};
   // Підставляємо лише фінансовий вміст: реальні reply/sendPhoto формують Telegram payload.

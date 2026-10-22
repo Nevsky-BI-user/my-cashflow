@@ -10,7 +10,7 @@ def desktop(page):
     check(page.locator('.p-goals.desk').count() == 1, 'на ПК немає .p-goals.desk')
     check('збережено' in page.inner_text('.goals-kpis').lower(), 'немає фактичних заощаджень')
     check(num(page.locator('.goals-kpis strong').first.inner_text())==0, 'без внесків збережений баланс не нуль')
-    check('Автоматичних накопичень і прогнозу дати немає' in page.inner_text('.goals-kpis'), 'немає пояснення явних внесків')
+    check('Автоматичних накопичень' not in page.inner_text('.goals-kpis'), 'v183: лишилось речення-пояснення внесків')
     check(page.locator('.goals-wi-row').count()==0, 'старі ETA показуються без плану внесків')
     # шапка: сегмент ₴/$, «Налаштувати» (v149 замість шестерні) і «+ Ціль» ліворуч від головної кнопки; пунктирної плитки на дошці немає
     head = page.locator('.dtitle')
@@ -67,7 +67,7 @@ def mobile(page):
     check(page.locator('.p-goals.desk').count() == 0, 'на телефоні ПК-розмітка')
     txt=page.locator('.p-goals').inner_text()
     # пояснення v142: лише явні внески за пріоритетом цілей, без автоматичних накопичень і строків (projection-contract.md)
-    check('Внески розподіляються за пріоритетом цілей' in txt and 'Автоматичних накопичень і строків немає' in txt, 'немає пояснення фактичних заощаджень')
+    check('Внески розподіляються' not in txt and 'Автоматичних накопичень' not in txt, 'v183: лишилось речення-пояснення заощаджень')
     check('Горизонт подій' not in txt and 'Історія накопичень' not in txt, 'мобільний екран показує прогноз строків')
     check(page.locator('.goals-wi-row').count()==0, 'мобільний екран обіцяє ETA')
     shot(page, 'goals-375.jpg')

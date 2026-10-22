@@ -111,40 +111,32 @@ def week_key(day):
 
 
 def derive_accounts(accounts, txs):
-    """Копії рахунків з ефективними balance/debt (правило похідного балансу, див. шапку)."""
+    """????? ???????: ?????? ?????, ???? ?? FIFO ? ?????????; Monobank ??? ??? ???? ? ???????."""
     out = []
     for a in accounts or []:
-        a2 = dict(a)
-        out.append(a2)
-        if a.get('mono_account_id') or a.get('id') is None or not a.get('balance_updated_at'):
-            continue
-        since = parse_ts(a['balance_updated_at'])
-        exp = inc = 0.0
-        # кошики боргу за місяцем (п. 12): збережений борг у debt_month (без нього місяць мітки), витрати за датою операції
-        bk = {str(a.get('debt_month') or '')[:7] or str(a['balance_updated_at'])[:7]: float(a.get('debt') or 0)}
-        for t in txs or []:
-            if t.get('account_id') is None or str(t['account_id']) != str(a['id']):
-                continue
-            if not parse_ts(t['created_at']) > since:
-                continue
-            if t.get('type') == 'income':
-                inc += float(t['amount'])
+        row = dict(a); out.append(row)
+        if a.get('mono_account_id') or a.get('id') is None or not a.get('balance_updated_at'): continue
+        try: since = parse_ts(a['balance_updated_at'])
+        except ValueError: continue
+        balance, debt = float(a.get('balance') or 0), max(0, float(a.get('debt') or 0))
+        buckets = {str(a.get('debt_month') or a['balance_updated_at'])[:7]: debt}
+        rows = sorted([t for t in txs or [] if t.get('account_id') is not None and str(t['account_id']) == str(a['id']) and parse_ts(t['created_at']) > since], key=lambda t: (parse_ts(t['created_at']), str(t.get('id') or '')))
+        for t in rows:
+            amount = float(t.get('amount') or 0)
+            if a.get('kind') != 'credit':
+                balance += amount if t.get('type') == 'income' else -amount
+            elif t.get('type') == 'income':
+                left = amount
+                for month in sorted(buckets):
+                    used = min(left, buckets[month]); buckets[month] -= used; debt -= used; left -= used
+                balance += left
             else:
-                exp += float(t['amount'])
-                m = str(t.get('date') or t['created_at'])[:7]
-                bk[m] = bk.get(m, 0.0) + float(t['amount'])
+                own = min(max(0, balance), amount); borrowed = amount-own; balance -= own; debt += borrowed
+                month = str(t.get('date') or t['created_at'])[:7]; buckets[month] = buckets.get(month, 0)+borrowed
+        row['balance'] = round(balance, 2)
         if a.get('kind') == 'credit':
-            a2['debt'] = round(max(0.0, float(a['debt']) + exp - inc), 2)
-            left = inc  # доходи (погашення) гасять найстаріші кошики
-            out_b = []
-            for m in sorted(bk):
-                v = bk[m] - min(left, bk[m])
-                left -= bk[m] - v
-                if round(v, 2) > 0:
-                    out_b.append([m, round(v, 2)])
-            a2['debt_months'] = out_b
-        else:
-            a2['balance'] = round(float(a['balance']) - exp + inc, 2)
+            row['debt'] = round(debt, 2)
+            row['debt_months'] = [[m, round(buckets[m], 2)] for m in sorted(buckets) if round(buckets[m], 2) > 0]
     return out
 
 
@@ -197,6 +189,8 @@ def next_period_plan(data, asof):
     after = next((p for p in upcoming if p['date']>nxt['date']),None)
     if not after:
         return missing
+    if data.get('monthly_budgets') and monthly_period_budget(data['monthly_budgets'],nxt['date'],after['date'])['covered']:
+        return finance_projection(data,{'asof':asof,'through':after['date']})['nextPlan']
     start,end = date.fromisoformat(nxt['date']),date.fromisoformat(after['date'])
     txs = data.get('transactions',data.get('account_tx',[]))
     accounts = [a for a in derive_accounts(data.get('accounts',[]),txs) if a.get('active') is not False]
@@ -277,6 +271,44 @@ def payout_budget(own, reserve, debt, due, repay_day, manual=None):
     available = free - repay
     return {'repayCents': repay, 'dueShortCents': max(0, min(max(0, due), debt) - repay) if repay_day else 0, 'availableCents': available,
             'targetCents': base if man else (min(2000000, available) if available > 1500000 else 1500000)}
+
+
+def monthly_period_budget(rows, start, end, options=None):
+    """Точні копійки місячного плану на піввідкритий період; майбутнє успадковує останній план."""
+    options = options or {}
+    days = lambda a, b: (date.fromisoformat(b)-date.fromisoformat(a)).days
+    def valid(n):
+        v = float(n)
+        if not v.is_integer() or v < 0 or v > 9007199254740991: raise ValueError('Invalid monthly budget cents')
+        return int(v)
+    prefix = lambda n, a, b, d: n*b//d-n*a//d
+    saved = sorted(rows or [], key=lambda r: str(r['month_start']))
+    span = days(start,end)
+    if span < 0: raise ValueError('Invalid budget period')
+    cursor, unallocated, covered, totals, segments = start, 0, False, {}, []
+    while cursor < end:
+        dt = date.fromisoformat(cursor); month = cursor[:7]+'-01'
+        following = date(dt.year+(dt.month==12),dt.month%12+1,1).isoformat(); stop = min(following,end)
+        D,a,b = days(month,following),days(month,cursor),days(month,stop)
+        row = next((r for r in reversed(saved) if str(r['month_start'])<=month),None)
+        source, estimated = None,False
+        if row is not None:
+            covered=True; source=str(row['month_start']); estimated=source!=month
+            pool=max(0,valid(row['total_cents'])-sum(valid(x['amount_cents']) for x in row.get('mandatory_items') or []))
+            allocation={str(k):valid(v) for k,v in (row.get('allocations') or {}).items()}; used=sum(allocation.values())
+            if used>pool: raise ValueError('Monthly allocation exceeds variable pool')
+            rest=prefix(pool-used,a,b,D); allocation={k:prefix(v,a,b,D) for k,v in allocation.items()}
+        else:
+            total=valid(options.get('legacyTargetCents') or 0); raw=options.get('legacyAllocations') or {}; used=sum(valid(v) for v in raw.values())
+            if used>total: raise ValueError('Legacy allocation exceeds target')
+            allocation={str(k):prefix(valid(v),days(start,cursor),days(start,stop),span) for k,v in raw.items()}
+            rest=prefix(total-used,days(start,cursor),days(start,stop),span)
+        categories=[{'id':k,'totalCents':v} for k,v in sorted(allocation.items())]
+        for c in categories: totals[c['id']]=totals.get(c['id'],0)+c['totalCents']
+        unallocated+=rest
+        segments.append({'start':cursor,'end':stop,'month':month,'sourceMonth':source,'estimated':estimated,'legacy':row is None,'targetCents':sum(allocation.values())+rest,'categories':categories,'unallocatedCents':rest});cursor=stop
+    categories=[{'id':k,'totalCents':v} for k,v in sorted(totals.items())]
+    return {'targetCents':sum(totals.values())+unallocated,'categories':categories,'unallocatedCents':unallocated,'segments':segments,'sourceMonths':list(dict.fromkeys(s['sourceMonth'] for s in segments if s['sourceMonth'])),'estimated':any(s['estimated'] for s in segments),'legacy':any(s['legacy'] for s in segments),'covered':covered}
 
 
 def finance_projection(data, options):
@@ -438,7 +470,7 @@ def finance_projection(data, options):
     for a in accounts:
         if a.get('id') is None or cents(a.get('min_spend'))<=0: continue
         spent=0; met=None
-        rows=sorted([t for t in txs if sid(t.get('account_id'))==sid(a['id']) and t.get('type')=='expense' and txdate(t)[:7]==asof[:7]],key=lambda t:(txdate(t),str(t.get('created_at','')),cents(t.get('amount'))))
+        rows=sorted([t for t in txs if sid(t.get('account_id'))==sid(a['id']) and t.get('type')=='expense' and t.get('transfer_id') is None and txdate(t)[:7]==asof[:7]],key=lambda t:(txdate(t),str(t.get('created_at','')),cents(t.get('amount'))))
         for t in rows:
             spent+=cents(t.get('amount'))
             if met is None and spent>=cents(a.get('min_spend')): met=txdate(t)
@@ -470,7 +502,7 @@ def finance_projection(data, options):
         if d>end_generation: continue
         for a in accounts:
             if a.get('id') is None or cents(a.get('min_spend'))<=0 or cents(a.get('min_spend_fee'))<=0: continue
-            actual=total(cents(t.get('amount')) for t in txs if sid(t.get('account_id'))==sid(a['id']) and t.get('type')=='expense' and txdate(t)[:7]==month)
+            actual=total(cents(t.get('amount')) for t in txs if sid(t.get('account_id'))==sid(a['id']) and t.get('type')=='expense' and t.get('transfer_id') is None and txdate(t)[:7]==month)
             assigned=0 if month==asof[:7] else total(e['amountCents'] for e in events if e['kind']=='mandatory' and sid(e.get('accountId'))==sid(a['id']) and e['date'][:7]==month)
             if actual+assigned<cents(a.get('min_spend')): events.append(make('fee:'+sid(a['id'])+':'+month,d,'Комісія: '+str(a.get('name') or a['id']),'fee',cents(a.get('min_spend_fee')),{'accountId':a['id'],'certainty':'conditional'}))
     # категорія з limit_abs: сума в гривнях (budget_limit ігнорується), інакше вага budget_limit
@@ -493,10 +525,59 @@ def finance_projection(data, options):
             n=min(caps[i] if caps is not None else categories[i]['limitAbsCents'],left); totals[i]=n; left-=n
         if any(w>0 for w in weights): return categories,[t+a for t,a in zip(totals,allocate(left,weights))]
         return (categories+[{'id':'unallocated','name':'Не розподілено','weight':1}],totals+[left]) if left>0 else (categories,totals)
-    def distribution(target,start,end,available,caps=None):
-        count=distance(start,end); rows,totals=split(target if count>0 else 0,caps); remaining=totals[:]; schedule=[]; balance=available
+    monthly_rows=data.get('monthly_budgets') or []
+    def monthly_plan(start,end,legacy_target,subtract_actual=False):
+        if not monthly_rows: return None
+        lr,lt=split(legacy_target)
+        m=monthly_period_budget(monthly_rows,start,end,{'legacyTargetCents':legacy_target,'legacyAllocations':{c['id']:n for c,n in zip(lr,lt)}})
+        if not m['covered']: return None
+        by={}; remaining_segments=[]
+        for seg in m['segments']:
+            year,month=map(int,seg['month'][:7].split('-')); year,month=ym(year*12+month); month_end=dt(year,month,1)
+            full=monthly_period_budget(monthly_rows,seg['month'],month_end)
+            budget_rows=seg['categories']+[{'id':'unallocated','totalCents':seg['unallocatedCents']}]
+            full_rows=full['categories']+[{'id':'unallocated','totalCents':full['unallocatedCents']}]
+            fact=[t for t in txs if t.get('type')=='expense' and all(t.get(k) is None for k in ('fixed_id','credit_id','transfer_id')) and seg['month']<=txdate(t)<month_end]
+            known={c['id'] for c in (seg['categories'] if seg['legacy'] else full['categories'])}
+            def cat(t): return str(t['category_id']) if t.get('category_id') is not None and str(t['category_id']) in known else 'unallocated'
+            projected=[e for e in events if e['kind']=='variable' and seg['month']<=e['date']<seg['start']]
+            values=[]
+            for c in budget_rows:
+                spent=total(cents(t.get('amount')) for t in fact if cat(t)==c['id'])
+                part=total(cents(t.get('amount')) for t in fact if cat(t)==c['id'] and seg['start']<=txdate(t)<seg['end']) if subtract_actual else 0
+                used=total(e['amountCents'] for e in projected if str(e.get('categoryId'))==c['id'])
+                cap=float('inf') if seg['legacy'] else max(0,next((r['totalCents'] for r in full_rows if r['id']==c['id']),0)-spent-used)
+                values.append(min(max(0,c['totalCents']-part),cap))
+            actual_part=total(cents(t.get('amount')) for t in fact if seg['start']<=txdate(t)<seg['end']) if subtract_actual else 0
+            cap=min(max(0,seg['targetCents']-actual_part),float('inf') if seg['legacy'] else max(0,full['targetCents']-total(cents(t.get('amount')) for t in fact)-total(e['amountCents'] for e in projected)))
+            if sum(values)>cap: values=allocate(cap,values)
+            if not subtract_actual or seg['end']>plus(asof,1):
+                for c,n in zip(budget_rows,values): by[c['id']]=by.get(c['id'],0)+n
+                remaining_segments.append({**seg,'categories':[{'id':c['id'],'totalCents':n} for c,n in zip(budget_rows,values)],'targetCents':sum(values)})
+        return {**m,'remainingSegments':remaining_segments,'rawCategories':m['categories'],'rawUnallocatedCents':m['unallocatedCents'],'rawTargetCents':m['targetCents'],'targetCents':sum(by.values()),'categories':[{'id':k,'totalCents':by[k]} for k in sorted(by, key=lambda k: (0,int(k)) if k.isascii() and k.isdigit() and str(int(k))==k and int(k)<4294967295 else (1,list(by).index(k))) if k!='unallocated'],'unallocatedCents':by.get('unallocated',0)}
+    def distribution(target,start,end,available,caps=None,monthly=None):
+        count=distance(start,end); exact=monthly or monthly_plan(start,end,target)
+        chosen=exact['categories']+[{'id':'unallocated','totalCents':exact['unallocatedCents']}] if exact else None
+        if chosen is not None:
+            rows=[{'id':c['id'],'name':next((x['name'] for x in data.get('categories',[]) if str(x['id'])==c['id']),('Не розподілено' if c['id']=='unallocated' else 'Категорія '+c['id'])),'weight':0} for c in chosen]; totals=[c['totalCents'] for c in chosen]
+        else: rows,totals=split(target if count>0 else 0,caps)
+        remaining=totals[:]; schedule=[]; balance=available
+        natural=monthly_period_budget(monthly_rows,start,end) if chosen is not None else None
+        def amount_of(m,k): return m['unallocatedCents'] if k=='unallocated' else next((c['totalCents'] for c in m['categories'] if c['id']==k),0)
+        direct=natural and natural['covered'] and natural['targetCents']==sum(totals) and all(amount_of(natural,r['id'])==n for r,n in zip(rows,totals))
         for i in range(count):
-            spend=target//count+int(i<target%count); amounts=remaining[:] if i==count-1 else allocate(spend,remaining); remaining=[v-a for v,a in zip(remaining,amounts)]; balance=safe(balance-spend)
+            effective=sum(totals); daily=monthly_period_budget(monthly_rows,plus(start,i),plus(start,i+1)) if direct else None
+            spend=effective//count+int(i<effective%count)
+            def daily_amount(r,n):
+                if daily: return amount_of(daily,r['id'])
+                d=plus(start,i); seg=next((x for x in exact.get('remainingSegments',[]) if x['start']<=d<x['end']),None)
+                if seg:
+                    lo=max(seg['start'],start); hi=min(seg['end'],end); D=distance(lo,hi); k=distance(lo,d); v=next((c['totalCents'] for c in seg['categories'] if c['id']==r['id']),0)
+                    return v*(k+1)//D-v*k//D
+                return n*(i+1)//count-n*i//count
+            amounts=[daily_amount(r,n) for r,n in zip(rows,totals)] if chosen is not None else remaining[:] if i==count-1 else allocate(spend,remaining)
+            if chosen is not None: spend=sum(amounts)
+            remaining=[v-a for v,a in zip(remaining,amounts)]; balance=safe(balance-spend)
             schedule.append({'date':plus(start,i),'spendCents':spend,'remainingCents':balance,'byCategory':[{'id':c['id'],'name':c['name'],'amountCents':a} for c,a in zip(rows,amounts)]})
         return {'categories':[{**c,'totalCents':a} for c,a in zip(rows,totals)],'schedule':schedule}
     def between(start,end): return [e for e in events if start<=e['date']<end and e['kind']!='variable']
@@ -508,16 +589,20 @@ def finance_projection(data, options):
         until_payout={'end':next_date,'days':left_days,'cents':left,'dailyCents':left//left_days if left>0 and left_days>0 else 0}
     next_plan=current_period=None; periods=[]
     if has_plan:
-        nxt=payout_at(next_date); after=payout_at(following); reserved=mandatory(next_date,following); base=safe(own+nxt['amountCents']-reserved-debt); target=max(1500000,base)
-        next_plan={'start':next_date,'end':following,'days':distance(next_date,following),'nextPayout':nxt,'followingPayout':after,'positiveOwnCents':own,'debtCents':debt,'mandatoryCents':reserved,'otherIncomeCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='income'),'eligibleMandatoryCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='mandatory' and e.get('creditEligible')),'baseAvailableCents':base,'targetCents':target,'gapCents':max(0,target-base),'averageDailyCents':target/distance(next_date,following),**distribution(target,next_date,following,base)}
+        nxt=payout_at(next_date); after=payout_at(following); reserved=mandatory(next_date,following); base=safe(own+nxt['amountCents']-reserved-debt); target=max(1500000,base); mp=monthly_plan(next_date,following,target); target=mp['targetCents'] if mp else target
+        next_plan={'start':next_date,'end':following,'days':distance(next_date,following),'nextPayout':nxt,'followingPayout':after,'positiveOwnCents':own,'debtCents':debt,'mandatoryCents':reserved,'otherIncomeCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='income'),'eligibleMandatoryCents':total(e['amountCents'] for e in between(next_date,following) if e['kind']=='mandatory' and e.get('creditEligible')),'baseAvailableCents':base,'targetCents':target,'gapCents':max(0,target-base),'averageDailyCents':target/distance(next_date,following),**distribution(target,next_date,following,base,monthly=mp),**({'monthlyBudget':mp} if mp else {})}
         # темп щоденних витрат від завтра до дня перед виплатою: більше з 15 000 ₴ на весь період [start; виплата) і untilPayout на дні, що лишились
-        start=next((d for d in reversed(payout_dates) if d<=asof),asof); actual=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start); mandatory_now=mandatory(asof,next_date); available=safe(cash-mandatory_now)
+        start=next((d for d in reversed(payout_dates) if d<=asof),asof); actual=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('transfer_id') is None and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start); mandatory_now=mandatory(asof,next_date); available=safe(cash-mandatory_now)
         period_days=distance(start,next_date); left_days=max(0,distance(plus(asof,1),next_date)); floor_left=(manual if manual is not None else 1500000)*left_days//period_days if period_days>0 else 0; free_left=max(0,until_payout['cents'] if until_payout else 0); remaining=max(floor_left,manual-actual if manual is not None else free_left) if left_days>0 else 0; target=actual+remaining
         # сума в гривнях на прогноз від завтра: ліміт мінус факт змінних витрат категорії з початку періоду, не нижче 0
-        caps=[max(0,c['limitAbsCents']-total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start and t.get('category_id') is not None and sid(t['category_id'])==c['id'])) if 'limitAbsCents' in c else 0 for c in categories]
+        caps=[max(0,c['limitAbsCents']-total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('transfer_id') is None and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start and t.get('category_id') is not None and sid(t['category_id'])==c['id'])) if 'limitAbsCents' in c else 0 for c in categories]
         dist=distribution(remaining,plus(asof,1),next_date,available,caps)
-        current_period={'start':start,'end':next_date,'actualVariableCents':actual,'targetCents':target,'remainingTargetCents':remaining,'periodDays':period_days,'leftDays':left_days,'dailyCents':remaining/left_days if left_days>0 else 0,'futureSchedule':dist['schedule']}
-        periods.append({'start':start,'end':next_date,'basis':'current','openingCashCents':cash,'payoutCents':0,'mandatoryCents':mandatory_now,'debtReserveCents':0,'availableCents':available,'targetCents':target,'gapCents':max(0,remaining-available),**dist})
+        current_monthly=monthly_plan(start,next_date,target); remaining_monthly=monthly_plan(start,next_date,target,True) if current_monthly else None
+        if current_monthly and remaining_monthly:
+            target=current_monthly['rawTargetCents']; remaining=remaining_monthly['targetCents'] if left_days>0 else 0
+            dist=distribution(remaining,plus(asof,1),next_date,available,monthly=remaining_monthly if left_days>0 else {**remaining_monthly,'categories':[],'unallocatedCents':0})
+        current_period={'start':start,'end':next_date,'actualVariableCents':actual,'targetCents':target,'remainingTargetCents':remaining,'periodDays':period_days,'leftDays':left_days,'dailyCents':remaining/left_days if left_days>0 else 0,'futureSchedule':dist['schedule'],**({'monthlyBudget':current_monthly,'overrunCents':max(0,actual-target)} if current_monthly else {})}
+        periods.append({'start':start,'end':next_date,'basis':'current','openingCashCents':cash,'payoutCents':0,'mandatoryCents':mandatory_now,'debtReserveCents':0,'availableCents':available,'targetCents':target,'gapCents':max(0,remaining-available),**dist,**({'monthlyBudget':current_monthly} if current_monthly else {})})
     # v151 (власник: «власні кошти не можуть бути мінусові»): послідовна симуляція, дзеркало budget.ts
     events[:]=[e for e in events if e['kind']!='repay']
     def limit_of(a): return 0 if a.get('credit_limit') is None else max(0,cents(a.get('credit_limit')))
@@ -616,6 +701,7 @@ def finance_projection(data, options):
             n=min(bal,arrears); bal-=n; arrears-=n; e=make('arrears:'+d,d,'Сплата нестачі','arrears',n); events.append(e); gen.append(e)
         payout=[e for e in lst if e['kind']=='payout']; end=next((v for v in payout_dates if v>d),'')
         if payout and end:
+            monthly=monthly_plan(d,end,manual if manual is not None else 1500000); period_manual=monthly['targetCents'] if monthly else manual
             # v152: кожна виплата (зарплата чи аванс) проходить той самий розподіл: погашення, накопичення, готівка, переказ на Mono
             # v153 доповнення 7: залишок попереднього періоду (власні на початок дня виплати) до розподілу нової виплати гасить борг кредиток, потім
             # дострокове розстрочок (найменший залишок першим); без боргів решта йде в накопичення. З нової виплати накопичень немає.
@@ -644,7 +730,7 @@ def finance_projection(data, options):
             if left>0 and debt_all()==0 and not any(inst_from(x,end)>0 for x in inst): leftover_savings=left
             leftover_repay=total(out.values()); bal-=leftover_repay+leftover_prepaid+leftover_savings
             own_at=bal; rd=min(bal,debit_between(d,end)); rc=0; reserve=rd; repay=cash_out=to_mono=offset=0; savings=leftover_savings
-            left=payout_budget(bal,reserve,debt_all(),due_on(d),True,manual)['repayCents']
+            left=payout_budget(bal,reserve,debt_all(),due_on(d),True,period_manual)['repayCents']
             for a in accounts:
                 if left<=0: break
                 left-=repay_from(a,left,d,True,out)
@@ -655,7 +741,7 @@ def finance_projection(data, options):
                 if left<=0: break
                 left-=repay_from(a,left,d,False,out)
             repay=total(out.values())-leftover_repay
-            available=bal-reserve-repay; target=payout_budget(available,0,0,0,False,manual)['targetCents']; dist=distribution(target,d,end,available)
+            available=bal-reserve-repay; target=payout_budget(available,0,0,0,False,period_manual)['targetCents']; dist=distribution(target,d,end,available,monthly=monthly)
             # власні після розподілу проти подій періоду: найглибший мінус, якщо зняти ще x
             ahead=[e for e in events if d<=e['date']<end and not (e.get('funding')=='credit' and e.get('accountId') is not None) and (e['date']>d if e['kind']=='income' else e['kind'] not in ('payout','repay','prepay','savings','arrears'))]
             for s in dist['schedule']:
@@ -691,7 +777,7 @@ def finance_projection(data, options):
                 ps=([v for v in payout_dates if v<d] or [asof])[-1]; dm=lambda v: v[8:10]+'.'+v[5:7]
                 e=make('savings:'+d,d,'У заощадження: залишок періоду '+dm(ps)+'-'+dm(plus(d,-1)),'savings',savings); events.append(e); gen.append(e)
             reserved=rd; reserved_ok=rc
-            rec={'start':d,'end':end,'basis':'projected' if head else 'headline','openingCashCents':opening,'payoutCents':total(e['amountCents'] for e in payout),'mandatoryCents':mandatory(d,end),'debtReserveCents':leftover_repay+repay+offset,'availableCents':available,'targetCents':target,'gapCents':max(0,target-available),'ownCents':own_at,'reserveCents':reserve,'repayCents':leftover_repay+repay+offset,'savingsCents':savings,'cashOutCents':cash_out,'toMonoCents':to_mono,'monoOffsetCents':offset,'dueShortCents':due_short_cents,'dueShort':due_short,'prepayCents':prepaid+leftover_prepaid,'prepay':prepay,'leftoverCents':leftover,'leftoverRepayCents':leftover_repay,'leftoverPrepayCents':leftover_prepaid,'leftoverPrepay':leftover_prepay,'leftoverSavingsCents':leftover_savings,'payoutRepayCents':repay+offset,'payoutPrepayCents':prepaid,'payoutPrepay':payout_prepay,'installmentsLeft':[{'creditId':x['id'],'name':x['name'],'cents':inst_from(x,d)} for x in inst if inst_from(x,d)>0],**dist}
+            rec={'start':d,'end':end,'basis':'projected' if head else 'headline','openingCashCents':opening,'payoutCents':total(e['amountCents'] for e in payout),'mandatoryCents':mandatory(d,end),'debtReserveCents':leftover_repay+repay+offset,'availableCents':available,'targetCents':target,'gapCents':max(0,target-available),'ownCents':own_at,'reserveCents':reserve,'repayCents':leftover_repay+repay+offset,'savingsCents':savings,'cashOutCents':cash_out,'toMonoCents':to_mono,'monoOffsetCents':offset,'dueShortCents':due_short_cents,'dueShort':due_short,'prepayCents':prepaid+leftover_prepaid,'prepay':prepay,'leftoverCents':leftover,'leftoverRepayCents':leftover_repay,'leftoverPrepayCents':leftover_prepaid,'leftoverPrepay':leftover_prepay,**({'monthlyBudget':monthly} if monthly else {}),'leftoverSavingsCents':leftover_savings,'payoutRepayCents':repay+offset,'payoutPrepayCents':prepaid,'payoutPrepay':payout_prepay,'installmentsLeft':[{'creditId':x['id'],'name':x['name'],'cents':inst_from(x,d)} for x in inst if inst_from(x,d)>0],**dist}
             if head is None: head=rec
             if d<=through: periods.append(rec)
             for s in rec['schedule']:
@@ -749,6 +835,10 @@ def finance_projection(data, options):
 
 
 # Окремий синтетичний/CLI API не запускає стару касову модель.
+if len(sys.argv) > 1 and sys.argv[1] == '--monthly-period':
+    print(json.dumps([monthly_period_budget(c['rows'], c['start'], c['end'], c.get('options')) for c in json.load(sys.stdin)], ensure_ascii=True))
+    sys.exit(0)
+
 if len(sys.argv) > 1 and sys.argv[1] == '--finance':
     print(json.dumps([finance_projection(c['data'], c.get('options', c)) for c in json.load(sys.stdin)], ensure_ascii=True))
     sys.exit(0)
@@ -908,7 +998,7 @@ def min_spend_rows():
             continue
         # id порівнюється рядком: у демо-знімку id рахунків текстові (l1), у БД числові
         txs = [t for t in snap.get('account_tx') or [] if t.get('account_id') is not None and str(t['account_id']) == str(a['id'])
-               and t.get('type') == 'expense' and tx_day(t)[:7] == month]
+               and t.get('type') == 'expense' and t.get('transfer_id') is None and tx_day(t)[:7] == month]
         txs.sort(key=lambda t: (tx_day(t), str(t.get('created_at') or ''), float(t['amount'])))
         cum, met = 0.0, None
         for t in txs:

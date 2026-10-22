@@ -26,8 +26,9 @@ function mock(tables,failTable=null){
 async function block(sb,capture){
  const core=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/budget.ts')).href);
  const {formatFinanceMessage}=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/finance-message.ts')).href);
- const factory=new Function('sb','financeProjection','lastPayout','formatFinanceMessage','shiftDate',isolated+';return freeBlock;');
- return factory(sb,(data,options)=>{capture.data=data;capture.options=options;return core.financeProjection(data,options);},core.lastPayout,formatFinanceMessage,
+ const {loadMonthlyBudgets}=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/bot-data.ts')).href);
+ const factory=new Function('loadMonthlyBudgets','sb','financeProjection','lastPayout','formatFinanceMessage','shiftDate',isolated+';return freeBlock;');
+ return factory(loadMonthlyBudgets,sb,(data,options)=>{capture.data=data;capture.options=options;return core.financeProjection(data,options);},core.lastPayout,formatFinanceMessage,
    (day,n)=>new Date(Date.parse(day+'T00:00:00Z')+n*86400000).toISOString().slice(0,10));
 }
 test('real Telegram consumer loads every page and maps categories into the canonical engine',async()=>{

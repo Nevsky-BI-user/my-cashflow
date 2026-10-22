@@ -91,8 +91,19 @@ def desktop(page):
     seed_demo(page, DAY, PATCH)
     ref, start, end, spend, ops, hot = expected(page, DAY)
     pb=page.evaluate("window.__periodBudget")
-    check(pb['A']==pb['ownAt']-pb['reserve']-pb['repay'],'legacy payout formula changed')
-    check(pb['budget']==(min(2000000,pb['A']) if pb['A']>1500000 else 1500000),'legacy payout target changed')
+    check(pb['A']==pb['ownAt']-pb['reserve']-pb['repay'],'payout allocation formula changed')
+    # Фікстура має збережений жовтень: план періоду — точні частки категорій
+    # і нерозподіленого залишку, а не старий мінімум 15 000 ₴.
+    saved=page.evaluate("window.__financeInput.monthly_budgets[0]")
+    check(pb['start'][:7]=='2026-10' and pb['end'][:7]=='2026-10','fixture period moved outside October')
+    first=date.fromisoformat(pb['start']).day-1
+    stop=date.fromisoformat(pb['end']).day-1
+    pool=max(0,saved['total_cents']-sum(x['amount_cents'] for x in saved.get('mandatory_items',[])))
+    parts=list(saved['allocations'].values())
+    parts.append(pool-sum(parts))
+    planned=sum(amount*stop//31-amount*first//31 for amount in parts)
+    check(pb['budget']==planned,'period target differs from saved monthly category slices')
+    check(pb['avail']==page.evaluate('window.__financeProjection.currentPeriod.remainingTargetCents'),'spendable ignores remaining monthly caps')
     go_tab(page,1)
     check(page.locator('.bud-kpis .bud-kpi').count()==4,'four monthly KPIs')
     check(num(kpi(page,'bud-pool'))==30000,'saved monthly total')
@@ -106,7 +117,11 @@ def desktop(page):
         f=sum(round(t['amount']*100) for t in valid if str(t.get('category_id'))==str(c['id']))/100
         row=page.locator('.bud-cat[data-cat="'+str(c['id'])+'"]')
         check(abs(num(row.locator('.bud-value[data-label="Факт"]').inner_text())-f)<.01,'category fact')
-        check(num(row.locator('.bud-remaining').inner_text())==1000-f,'category remaining')
+        # v183: перевитрата показується без знака з data-over; знак відновлюємо з атрибута
+        cell=row.locator('.bud-remaining')
+        rem=num(cell.inner_text())
+        check(rem>=0 and (cell.get_attribute('data-over')=='1')==(f>1000),'category remaining sign')
+        check(rem==abs(1000-f),'category remaining')
     check(page.locator('.bud-cat.hot').count()==0,'linear daily expectation returned')
     check(all(label in page.locator('.bud-table-head').inner_text() for label in ('Факт','План','Залишок')),'monthly category columns lack explicit labels')
     for width,height in [(1280,800),(1910,917)]:

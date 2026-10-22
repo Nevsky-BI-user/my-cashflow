@@ -35,3 +35,16 @@ test('unassigned operations use Ukrainian plurals and conditional fees retain ac
    assert.ok(text.includes('Комісія: 400 ₴ (умовно)'));
  }
 });
+// v183: відʼємний залишок до виплати і бюджету звучить як нестача чи перевитрата, сума без мінуса
+test('negative until-payout and budget remainder read as shortage and overspend without minus',async()=>{
+ const {formatFinanceMessage,untilPayoutLine,leftOrOver}=await load();
+ assert.equal(normalize(untilPayoutLine({end:'2026-10-21',days:9,cents:-125050,dailyCents:0})),'Не вистачає до 21.10: 1 250,5 ₴');
+ assert.equal(normalize(untilPayoutLine({end:'2026-10-21',days:9,cents:280000,dailyCents:31111})),'Доступно до 21.10: 2 800 ₴ · 311,11 ₴/день (9 дн.)');
+ assert.equal(normalize(leftOrOver(-50000)),'перевитрата 500 ₴');
+ assert.equal(normalize(leftOrOver(50000)),'лишилось 500 ₴');
+ assert.equal(normalize(leftOrOver(50000,'залишок')),'залишок 500 ₴');
+ const p=sample();p.untilPayout={end:'2026-10-21',days:9,cents:-125050,dailyCents:0};
+ const text=normalize(formatFinanceMessage(p));
+ assert.ok(text.includes('Не вистачає до 21.10: 1 250,5 ₴'),text);
+ assert.ok(!/Доступно до 21\.10: -/.test(text),text);
+});
