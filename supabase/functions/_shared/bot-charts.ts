@@ -133,8 +133,8 @@ export function balanceChartSvg(s: BalanceSeries): ChartModel {
 // v153 (власник: «кольори категорій бота = кольори застосунку»): палітра BUD_PAL, сірі BUD_OTH і BUD_NONE, сталий тон budStable і порядок budRing
 // рівно як в index.html (паритет перевіряє spec/budget-ring.test.cjs); колір категорії з БД пастельний, тому тут не береться
 // v155: системні кольори Apple, кожен слот = [світла тема, темна тема]; картинка бота світла, тож береться перший; пласко, без градієнтів
-export const BUD_PAL: [string, string][] = [['#AF52DE', '#BF5AF2'], ['#30B0C7', '#40C8E0'], ['#34C759', '#30D158'], ['#00C7BE', '#63E6E2'], ['#FFCC00', '#FFD60A'],
-  ['#007AFF', '#0A84FF'], ['#FF2D55', '#FF375F'], ['#FF9500', '#FF9F0A'], ['#5856D6', '#5E5CE6'], ['#A2845E', '#AC8E68']];
+export const BUD_PAL: [string, string][] = [['#A362C1', '#B16FCF'], ['#30B0C7', '#44BED5'], ['#5FC26E', '#6DD07B'], ['#00C7BE', '#2CD5CC'], ['#FFE175', '#FFE478'],
+  ['#517BDF', '#6188ED'], ['#E05863', '#EF666F'], ['#ED9D4C', '#FCAA59'], ['#635ABB', '#7166C9'], ['#A2845E', '#B0916A']];
 const BUD_OTH: [string, string] = ['#C7C7CC', '#636366'], BUD_NONE: [string, string] = ['#8E8E93', '#98989D'];
 const hueOf = (c: string) => {
   const r = parseInt(c.slice(1, 3), 16) / 255, g = parseInt(c.slice(3, 5), 16) / 255, b = parseInt(c.slice(5, 7), 16) / 255;
