@@ -36,14 +36,16 @@ SCAN = r"""()=>{
   if(!vis(e)||skip(e))continue;
   const s=getComputedStyle(e),bi=s.backgroundImage,p=palette(e);
   const authoredSurface=p.desktopOverview&&e.matches('.p-overview.desk .surface')&&bi===p.surfaceGradient;
-  if(bi&&bi.includes('gradient')&&!flat(bi)&&!p.accG.has(bi)&&!authoredSurface){
+  /* v183 (власник 22.10: «для всіх таких карток теж додай приємних градієнтів»): KPI Бюджету й плитки Огляду мають тон-градієнт, що сходить у фон картки */
+  const kpiTone=e.matches('.bud-kpi,.dv-kpi.kpi-t')&&/^radial-gradient\(/.test(bi)&&s.backgroundColor===p.card;
+  if(bi&&bi.includes('gradient')&&!flat(bi)&&!p.accG.has(bi)&&!authoredSurface&&!kpiTone){
    const scrim=/^linear-gradient\(rgba\(0, 0, 0, 0\)/.test(bi);/* затемнення фото цілі під підписом */
    if(!scrim)grads.push((e.getAttribute('class')||e.tagName)+' '+bi.slice(0,90));
   }
   if(/^(path|rect|circle|polygon|ellipse)$/.test(e.tagName)&&/url\(/.test(s.fill))grads.push('svg '+(e.getAttribute('class')||e.tagName)+' '+s.fill);
   if(e.classList.contains('kpi-ico')){
    let t=e.parentElement;while(t&&t!==document.body&&getComputedStyle(t).backgroundColor==='rgba(0, 0, 0, 0)')t=t.parentElement;
-   const ts=getComputedStyle(t),funds=p.scope==='overview'&&!matchMedia('(min-width:1024px)').matches&&t.classList.contains('kpi-funds'),expectedBorder=funds?p.accent:p.border;tiles.push({scope:p.scope,role:funds?'funds':'standard',borderOk:ts.borderTopColor===expectedBorder,cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===p.card&&ts.backgroundImage==='none'});
+   const ts=getComputedStyle(t),funds=p.scope==='overview'&&!matchMedia('(min-width:1024px)').matches&&t.classList.contains('kpi-funds'),expectedBorder=funds?p.accent:p.border;tiles.push({scope:p.scope,role:funds?'funds':'standard',borderOk:ts.borderTopColor===expectedBorder,cls:(t.getAttribute('class')||t.tagName).slice(0,40),bg:ts.backgroundColor,bi:ts.backgroundImage,bd:ts.borderTopWidth+' '+ts.borderTopColor,bdSat:sat(ts.borderTopColor),ok:ts.backgroundColor===p.card&&(ts.backgroundImage==='none'||t.matches('.bud-kpi,.dv-kpi.kpi-t')&&/^radial-gradient\(/.test(ts.backgroundImage))});
   }
   /* текст: лише елементи з власним текстовим вузлом; кільце, легенда, категорії й цілі мають кольори категорій */
   if([...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())&&!e.closest('.bd,.bud-cat,.bud-ico,.gtile,.goal-card,[data-cat]')){
