@@ -52,7 +52,8 @@ def _pay_flow(page, reduce):
     n0 = page.evaluate('()=>window.__AN.length')
     dlg.locator('.tx-save').click()
     page.wait_for_timeout(120)
-    fade = page.evaluate("()=>{const r=document.querySelector('[data-probe]');return r?r.getAnimations().map(a=>{const t=a.effect.getTiming();return t.duration}):null}")
+    # hover-перехід фону (курсор після діалогу над рядком) не є згасанням
+    fade = page.evaluate("()=>{const r=document.querySelector('[data-probe]');return r?r.getAnimations().filter(a=>a.transitionProperty!=='background-color').map(a=>{const t=a.effect.getTiming();return t.duration}):null}")
     page.wait_for_timeout(1300)
     ba = page.evaluate('()=>{const b=window.__BA;window.__BA=null;return b}')
     gone = page.evaluate("()=>!document.querySelector('[data-probe]')")
