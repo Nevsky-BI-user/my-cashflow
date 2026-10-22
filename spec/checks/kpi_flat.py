@@ -1,18 +1,15 @@
-"""v183: KPI-картки Бюджету й плитки Огляду з мʼяким градієнтом за змістом; текст читається на реальних пікселях в обох темах, 1280 і 390."""
+"""v185 (власник: «градієнти лише для карток»): KPI-картки Бюджету й плитки Огляду пласкі в обох темах, текст читається на реальних пікселях, картки банків на Огляді ПК зберігають градієнт; 1280 і 390."""
 from io import BytesIO
 import re
 
 from PIL import Image
 
 from helpers import check, freeze, go_tab, shot
-from checks.monthly_budget import seed_demo
 
 DAY = '2026-10-17'
 # позначає видимі елементи з власним текстом у картці; повертає їх кількість
 MARK = """e=>{let n=0;for(const x of e.querySelectorAll('*')){const own=[...x.childNodes].some(c=>c.nodeType===3&&c.textContent.trim());const r=x.getBoundingClientRect();
 if(own&&r.width>0&&r.height>0&&getComputedStyle(x).visibility!=='hidden'&&r.top>=0&&r.bottom<=innerHeight){x.setAttribute('data-cx',n++)}}return n}"""
-KG = "e=>getComputedStyle(e).getPropertyValue('--kg').trim()"
-TOKEN = "v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim()"
 
 
 def luminance(rgb):
@@ -47,8 +44,7 @@ def cards(page, sel, tag, want):
     loc = page.locator(sel)
     check(loc.count() >= want, f'{tag}: карток {loc.count()} < {want}')
     paints = loc.evaluate_all('es=>es.map(e=>getComputedStyle(e).backgroundImage)')
-    check(all('gradient' in p for p in paints), f'{tag}: немає градієнта {paints}')
-    check(len(set(paints)) == len(paints), f'{tag}: однакові градієнти у різних карток')
+    check(all('gradient' not in p for p in paints), f'{tag}: градієнт поза картками банків {paints}')
     worst = 99
     for i in range(loc.count()):
         card = loc.nth(i)
@@ -76,26 +72,21 @@ def run(page, sizes, kind):
             go_tab(page, 1)
             page.mouse.move(2, 2)
             b = cards(page, '.bud-kpis .bud-kpi', f'{theme}/{w} Бюджет', 4)
-            shot(page, f'kpi-gradients-budget-{kind}-{w}-{theme}.jpg', full=False)
+            shot(page, f'kpi-flat-budget-{kind}-{w}-{theme}.jpg', full=False)
             go_tab(page, 0)
             page.mouse.move(2, 2)
             o = cards(page, '.dv-kpi.kpi-t', f'{theme}/{w} Огляд', 4)
-            shot(page, f'kpi-gradients-overview-{kind}-{w}-{theme}.jpg', full=False)
+            shot(page, f'kpi-flat-overview-{kind}-{w}-{theme}.jpg', full=False)
             print(f'      {theme}/{w}: мінімальний контраст Бюджет {b:.2f}, Огляд {o:.2f}')
-    # перевитрата: залишок бюджету і плитка Огляду переходять у червонуватий тон
-    w, hgt = sizes[0]
-    page.set_viewport_size({'width': w, 'height': hgt})
-    seed_demo(page, DAY, [("[24,'Сільпо',2133,", "[24,'Сільпо',40000,")])
-    over = page.evaluate(TOKEN, '--kg-over')
-    go_tab(page, 1)
-    check(page.locator('.bud-avail .bud-kpi-v').get_attribute('data-over') == '1', 'сценарій без перевитрати')
-    check(page.locator('.bud-kpi.bud-avail').evaluate(KG) == over, 'залишок у перевитраті без червонуватого тону')
-    worst = cards(page, '.bud-kpis .bud-kpi', f'{w} перевитрата', 4)
-    go_tab(page, 0)
-    tile = page.locator('.dv-kpi.kpi-budget').first
-    if tile.locator('.kpi-row[data-over]').count():
-        check(tile.evaluate(KG) == over, 'плитка «Бюджет періоду» у перевитраті без червонуватого тону')
-    print(f'      перевитрата/{w}: тон {over}, мінімальний контраст {worst:.2f}')
+    # картки банків на Огляді ПК: градієнт лишається
+    if sizes[0][0] >= 1024:
+        page.set_viewport_size({'width': sizes[0][0], 'height': sizes[0][1]})
+        go_tab(page, 0)
+        bank = page.locator('.p-overview .bcard[class*=" bk-"]')
+        if bank.count():
+            paints = bank.evaluate_all('es=>es.map(e=>getComputedStyle(e).backgroundImage)')
+            check(all('gradient' in p for p in paints), f'картки банків без градієнта {paints}')
+            print(f'      картки банків з градієнтом: {len(paints)}')
 
 
 def desktop(page):
@@ -106,5 +97,5 @@ def mobile(page):
     run(page, [(390, 844)], 'mobile')
 
 
-CHECKS = [('KPI-градієнти Бюджету й Огляду: ПК 1280, обидві теми, контраст', 'desktop', desktop),
-          ('KPI-градієнти Бюджету й Огляду: телефон 390, обидві теми, контраст', 'mobile', mobile)]
+CHECKS = [('KPI пласкі, градієнт лише на картках банків: ПК 1280, обидві теми, контраст', 'desktop', desktop),
+          ('KPI пласкі: телефон 390, обидві теми, контраст', 'mobile', mobile)]
