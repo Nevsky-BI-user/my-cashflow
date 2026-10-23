@@ -361,3 +361,15 @@ test('«Оплачено»: розбір callback лише з id, повторн
  assert.equal(rep.payDate('2026-11-03','2026-11-01',false),'2026-11-03');
  assert.deepEqual(rep.payRange(false,'2026-12-05'),['2026-12-01','2027-01-01']);
 });
+
+// v186: у ранковому підсумку число на день лише із залишку бюджету; власні мінус обовʼязкові тільки як нестача
+test('Ранковий підсумок: залишок бюджету на день замість «Доступно до»',async()=>{
+ const {rep}=await setup();
+ const base={snapshot:{positiveOwnCents:139800,creditDebtCents:0},events:[],untilPayout:{end:'2026-11-06',days:14,cents:139800,dailyCents:9985}};
+ const t=norm(rep.formatDigest(base,[],[],'2026-10-23',{end:'2026-11-06',leftCents:1200000,dailyCents:85714,leftDays:14}));
+ assert.ok(t.includes('Бюджет до 06.11: лишилось 12 000 ₴ · 857,14 ₴/день (14 дн.)'),t);
+ assert.ok(!t.includes('Доступно до')&&!t.includes('99,85'),t);
+ const short=norm(rep.formatDigest({...base,untilPayout:{end:'2026-11-06',days:14,cents:-50000,dailyCents:0}},[],[],'2026-10-23',null));
+ assert.ok(short.includes('Не вистачає до 06.11: 500 ₴'),short);
+ assert.ok(!/\/день/.test(short),short);
+});

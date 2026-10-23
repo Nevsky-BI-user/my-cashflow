@@ -7,7 +7,7 @@ import { salaryOptions, salaryKeyboard } from '../_shared/salary-bot.ts';
 // Тіло {"force": true} пропускає перевірку години (ручна перевірка після деплою).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { loadFinance } from '../_shared/bot-data.ts';
-import { dueTomorrow, formatDigest, formatReminder, kyivNow } from '../_shared/bot-reports.ts';
+import { budgetModel, dueTomorrow, formatDigest, formatReminder, kyivNow } from '../_shared/bot-reports.ts';
 import { paidKb } from '../_shared/bot-kb.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -87,7 +87,10 @@ Deno.serve(async (req) => {
   const salaryToday=salaries.choices.filter(p=>p.date===now.date);
   const source=salaryToday[0];
   const advice=source?repaymentAdviceText(repaymentAdvice(d.input,d.projection,source.accountId,d.today)):'';
-  const digest = formatDigest(d.projection, d.credits, d.txs, d.today)+(advice?'\n\n'+advice:'');
+  // v186: залишок бюджету періоду на день, як звіт «Бюджет»
+  let budget = null;
+  try { budget = budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts); } catch (e) { console.error('digest: budget failed', (e as Error)?.message); }
+  const digest = formatDigest(d.projection, d.credits, d.txs, d.today, budget)+(advice?'\n\n'+advice:'');
   const due = dueTomorrow(d.projection, d.fixed, d.credits, d.today);
   let sent = 0;
   for (const chatId of chats) {

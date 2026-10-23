@@ -3,32 +3,37 @@ import type { financeProjection } from './budget.ts';
 type FinanceMessage = ReturnType<typeof financeProjection>;
 export const money = (cents: number) => new Intl.NumberFormat('uk-UA', {maximumFractionDigits: 2}).format(cents / 100) + ' ₴';
 export const day = (value: string) => value.slice(8, 10) + '.' + value.slice(5, 7);
-// v183 (власник: залишок не буває від'ємним): від'ємне «доступно до виплати» показується як нестача, сума без знака
+// v186 (власник: «доступно до 06.11 1398 або 99,9 грн на день... нісенітниця»): власні кошти мінус обовʼязкові не ліміт витрат,
+// бо щоденні витрати йдуть з кредитки; рядок лише попереджає про нестачу, сума без знака. Інакше null.
 export const untilPayoutLine = (u: {end: string; cents: number; dailyCents: number; days: number}) => u.cents < 0
-  ? `Не вистачає до ${day(u.end)}: ${money(-u.cents)}`
-  : `Доступно до ${day(u.end)}: ${money(u.cents)}` + (u.dailyCents > 0 ? ` · ${money(u.dailyCents)}/день (${u.days} дн.)` : '');
+  ? `Не вистачає до ${day(u.end)}: ${money(-u.cents)}` : null;
 // Залишок бюджету: від'ємний показується як «перевитрата» з додатною сумою
 export const leftOrOver = (cents: number, left = 'лишилось') => cents < 0 ? `перевитрата ${money(-cents)}` : `${left} ${money(cents)}`;
+// v186: єдине число «на день» у боті: залишок бюджету періоду на дні до кінця періоду (як плитка застосунку і звіт «Бюджет»)
+export type BudgetLeft = {end: string; leftCents: number; dailyCents: number; leftDays: number};
+export const dailyPart = (m: BudgetLeft) => m.leftCents > 0 && m.leftDays > 0 && m.dailyCents > 0 ? ` · ${money(m.dailyCents)}/день (${m.leftDays} дн.)` : '';
+export const budgetLeftLine = (m: BudgetLeft) => `Бюджет до ${day(m.end)}: ${leftOrOver(m.leftCents)}` + dailyPart(m);
 export const previousDay = (value: string) => new Date(Date.parse(value + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
 const plural = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'операція' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'операції' : 'операцій';
 
 export type Installment = {name: string; n: number; amountCents: number; lastDate?: string};
 
-// Короткий статус для бота: бюджет на початок періоду, доступно до виплати, власні, баланс, кожна картка окремим рядком, розстрочки, найближчі платежі.
+// Короткий статус для бота: бюджет на початок періоду, залишок бюджету на день, нестача до виплати, власні, баланс, кожна картка окремим рядком, розстрочки, найближчі платежі.
 export function formatFinanceMessage(p: FinanceMessage, unassigned: {count: number; amountCents: number} = {count: 0, amountCents: 0},
-  installments: Installment[] = []): string {
+  installments: Installment[] = [], budget: BudgetLeft | null = null): string {
   const accounts = p.snapshot.accounts || [];
   const instCents = installments.reduce((sum, i) => sum + i.n * i.amountCents, 0);
   const own = p.snapshot.positiveOwnCents;
   const cardDebt = accounts.reduce((sum, a) => sum + (a.debtCents || 0), 0);
   const lines: string[] = [];
   const plan = p.nextPlan;
-  // Порядок: бюджет на початок періоду, доступно до виплати, власні, баланс (власні мінус борг карток)
+  // Порядок: бюджет на початок періоду, залишок бюджету на день, нестача до виплати, власні, баланс (власні мінус борг карток)
   if (plan) lines.push(`Бюджет на початок періоду: ${money(plan.targetCents)} · ${money(plan.averageDailyCents)}/день (${day(plan.start)}-${day(plan.end)})`);
   else lines.push('Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
-  // Доступно до виплати: з рушія (власні мінус обовʼязкові до виплати; борг кредиток гаситься з виплати)
-  const u = p.untilPayout;
-  if (u && u.days > 0) lines.push(untilPayoutLine(u));
+  // v186: залишок бюджету поточного періоду на день; власні мінус обовʼязкові до виплати лише як попередження про нестачу
+  if (budget) lines.push(budgetLeftLine(budget));
+  const u = p.untilPayout, short = u && u.days > 0 ? untilPayoutLine(u) : null;
+  if (short) lines.push(short);
   lines.push(`Власні кошти: ${money(own)}`, `Баланс: ${money(own - cardDebt)}`);
   if (accounts.length) {
     lines.push('', 'Картки:');
