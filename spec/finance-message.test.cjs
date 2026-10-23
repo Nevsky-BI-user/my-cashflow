@@ -15,10 +15,10 @@ test('Telegram status: balance, own funds, living budget, cards line by line, in
  p.snapshot.accounts=[{id:1,name:'Ощад',balanceCents:280000,debtCents:0},{id:2,name:'Приват',balanceCents:0,debtCents:1000000,credit_limit:null},{id:3,name:'Mono',balanceCents:0,debtCents:600000,credit_limit:30000}];
  p.events=[{id:'repay:2:2026-09',date:'2026-10-21',kind:'repay',cashDeltaCents:-1000000,certainty:'planned',name:'Приват'},{date:'2026-10-22',kind:'mandatory',cashDeltaCents:-964000,certainty:'planned',name:'Садочок'}];
  p.untilPayout={end:'2026-10-21',days:9,cents:280000,dailyCents:31111};
- const text=normalize(formatFinanceMessage(p,undefined,[{name:'Ecoflow',n:2,amountCents:464300,lastDate:'2027-09-12'}]));
- for(const expected of ['Баланс: -13 200 ₴','Доступно до 21.10: 2 800 ₴ · 311,11 ₴/день (9 дн.)','Власні кошти: 2 800 ₴','Бюджет на початок періоду: 15 000 ₴ · 937,5 ₴/день (21.10-06.11)','Ощад: 2 800 ₴','Приват: 0 ₴ · борг 10 000 ₴ · план погашення 21.10','Mono: 0 ₴ · борг 6 000 ₴ · доступно 24 000 ₴','Розстрочки: 9 286 ₴','Ecoflow: 2 × 4 643 ₴ = 9 286 ₴ · до 12.09.2027','22.10 · Садочок: 9 640 ₴']) assert.ok(text.includes(expected),expected+'\n'+text);
- assert.ok(/^Бюджет на початок періоду.*\nДоступно до .*\nВласні кошти: .*\nБаланс: /.test(text),'порядок\n'+text);
- for(const gone of ['Бюджет на життя','Ecoflow сьогодні','Власні кошти сьогодні','Доступні кошти','бракує','Прогноз','План погашення','\u2014','\u2013']) assert.ok(!text.includes(gone),gone+'\n'+text);
+ const text=normalize(formatFinanceMessage(p,undefined,[{name:'Ecoflow',n:2,amountCents:464300,lastDate:'2027-09-12'}],{end:'2026-10-21',leftCents:280000,dailyCents:31111,leftDays:9}));
+ for(const expected of ['Баланс: -13 200 ₴','Бюджет до 21.10: лишилось 2 800 ₴ · 311,11 ₴/день (9 дн.)','Власні кошти: 2 800 ₴','Бюджет на початок періоду: 15 000 ₴ · 937,5 ₴/день (21.10-06.11)','Ощад: 2 800 ₴','Приват: 0 ₴ · борг 10 000 ₴ · план погашення 21.10','Mono: 0 ₴ · борг 6 000 ₴ · доступно 24 000 ₴','Розстрочки: 9 286 ₴','Ecoflow: 2 × 4 643 ₴ = 9 286 ₴ · до 12.09.2027','22.10 · Садочок: 9 640 ₴']) assert.ok(text.includes(expected),expected+'\n'+text);
+ assert.ok(/^Бюджет на початок періоду.*\nБюджет до .*\nВласні кошти: .*\nБаланс: /.test(text),'порядок\n'+text);
+ for(const gone of ['Доступно до','Бюджет на життя','Ecoflow сьогодні','Власні кошти сьогодні','Доступні кошти','бракує','Прогноз','План погашення','\u2014','\u2013']) assert.ok(!text.includes(gone),gone+'\n'+text);
 });
 test('no payout gives setup explanation',async()=>{
  const {formatFinanceMessage}=await load();const p=sample();
@@ -39,7 +39,8 @@ test('unassigned operations use Ukrainian plurals and conditional fees retain ac
 test('negative until-payout and budget remainder read as shortage and overspend without minus',async()=>{
  const {formatFinanceMessage,untilPayoutLine,leftOrOver}=await load();
  assert.equal(normalize(untilPayoutLine({end:'2026-10-21',days:9,cents:-125050,dailyCents:0})),'Не вистачає до 21.10: 1 250,5 ₴');
- assert.equal(normalize(untilPayoutLine({end:'2026-10-21',days:9,cents:280000,dailyCents:31111})),'Доступно до 21.10: 2 800 ₴ · 311,11 ₴/день (9 дн.)');
+ // v186: власні мінус обовʼязкові не ліміт витрат, без нестачі рядка немає
+ assert.equal(untilPayoutLine({end:'2026-10-21',days:9,cents:280000,dailyCents:31111}),null);
  assert.equal(normalize(leftOrOver(-50000)),'перевитрата 500 ₴');
  assert.equal(normalize(leftOrOver(50000)),'лишилось 500 ₴');
  assert.equal(normalize(leftOrOver(50000,'залишок')),'залишок 500 ₴');
@@ -47,4 +48,13 @@ test('negative until-payout and budget remainder read as shortage and overspend 
  const text=normalize(formatFinanceMessage(p));
  assert.ok(text.includes('Не вистачає до 21.10: 1 250,5 ₴'),text);
  assert.ok(!/Доступно до 21\.10: -/.test(text),text);
+});
+// v186: єдине число на день у боті: залишок бюджету періоду; перевитрата без «на день»
+test('budget left line: remainder per day, overspend without daily part',async()=>{
+ const {budgetLeftLine,formatFinanceMessage}=await load();
+ assert.equal(normalize(budgetLeftLine({end:'2026-11-06',leftCents:139800,dailyCents:9985,leftDays:14})),'Бюджет до 06.11: лишилось 1 398 ₴ · 99,85 ₴/день (14 дн.)');
+ assert.equal(normalize(budgetLeftLine({end:'2026-11-06',leftCents:-50000,dailyCents:0,leftDays:14})),'Бюджет до 06.11: перевитрата 500 ₴');
+ const p=sample();p.untilPayout={end:'2026-10-21',days:9,cents:280000,dailyCents:31111};
+ const text=normalize(formatFinanceMessage(p));
+ assert.ok(!text.includes('Доступно до')&&!text.includes('311,11'),'власні мінус обовʼязкові не показуються як ліміт на день\n'+text);
 });

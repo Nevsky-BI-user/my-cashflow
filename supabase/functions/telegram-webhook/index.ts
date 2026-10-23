@@ -1138,7 +1138,7 @@ async function confirmPending(chatId: number, userId: string) {
   }
 }
 
-// Посилання на застосунок під статусом; постійна клавіатура лишається
+// Посилання на застосунок у відповідь на /app (v186: під статусом кнопки немає)
 const APP_KB = { inline_keyboard: [[{ text: '📱 Відкрити застосунок', url: APP_URL }]] };
 
 async function balance(chatId: number) {
@@ -1148,9 +1148,9 @@ async function balance(chatId: number) {
     free = await freeBlock(today);
   } catch (e) {
     console.error('balance: free block failed', (e as Error)?.message);
-    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.', APP_KB);
+    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.');
   }
-  return reply(chatId, free, APP_KB);
+  return reply(chatId, free);
 }
 
 // Місяць після «за» (знахідний відмінок збігається з називним)
@@ -1211,8 +1211,16 @@ async function freeBlock(today: string): Promise<string> {
     }
     return { name: String(c.name), n, amountCents: Math.round(Number(c.monthly_amount) * 100), lastDate };
   }).filter((i) => i.n > 0);
+  // v186: залишок бюджету періоду на день тим самим шляхом, що звіт «Бюджет» і ранковий підсумок; збій не ламає статус
+  let budget = null;
+  try {
+    const fd = await loadFinance(sb, today);
+    budget = budgetModel(fd.projection, fd.txs, fd.cats, today, fd.input, fd.accounts);
+  } catch (e) {
+    console.error('status budget failed', (e as Error)?.message);
+  }
   return formatFinanceMessage(projection, {count: lost.length, amountCents: lost.reduce((sum, t) => sum + Math.round(Number(t.amount) * 100), 0)},
-    installments) + await recentText();
+    installments, budget) + await recentText();
 }
 
 // Сума з копійками для відповідей бота; оголошено тут, бо блок статусу (financeTransactions..recentText) тест виконує окремо

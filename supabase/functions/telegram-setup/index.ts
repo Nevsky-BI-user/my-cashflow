@@ -2,7 +2,6 @@
 // як у mono-register. Секрет TELEGRAM_WEBHOOK_SECRET лишається серверним:
 // Telegram потім надсилає його в заголовку X-Telegram-Bot-Api-Secret-Token.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { BOT_COMMANDS } from '../_shared/bot-kb.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -86,9 +85,9 @@ Deno.serve(async (req) => {
         'Записує витрати й доходи в Сімейний Кешфлоу: «250 кава», «+51000 зарплата», фото чека. ' +
         'Доступ лише для двох сімейних акаунтів: привʼязка кодом із застосунку (/start <код>).',
     }),
-    call('setMyCommands', {
-      commands: BOT_COMMANDS,
-    }),
+    // v186 (власник: «не потрібне це меню з командами»): прибрати каталог команд і кнопку меню, лишається клавіатура кнопок
+    call('deleteMyCommands', {}),
+    call('setChatMenuButton', { menu_button: { type: 'default' } }),
   ]);
   results.forEach((r, i) => { if (!r?.ok) console.error('bot profile step failed', i, r); });
 

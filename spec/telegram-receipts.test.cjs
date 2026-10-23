@@ -9,7 +9,7 @@ const fixedPure=stripTypeScriptTypes(fs.readFileSync(path.join(__dirname,'../sup
 const fixedApi=new Function(fixedPure+';return {fixedCandidates,fixedOccurrenceKey};')();
 const receiptLinkCode=stripTypeScriptTypes(source.slice(source.indexOf('async function linkReceiptRows('),source.indexOf('const addDays =',source.indexOf('async function linkReceiptRows('))));
 const isolated=stripTypeScriptTypes(source.slice(source.indexOf('const tgSourceId ='),source.indexOf('type Pending =')));
-const confirmSource=stripTypeScriptTypes(source.slice(source.indexOf('async function confirmPending('),source.indexOf('// Посилання на застосунок під статусом;')));
+const confirmSource=stripTypeScriptTypes(source.slice(source.indexOf('async function confirmPending('),source.indexOf('// Посилання на застосунок у відповідь на /app')));
 const transaction=(overrides={})=>({amount:120.5,type:'expense',currency:'UAH',description:'Магазин',date:'2026-10-19',...overrides});
 const batch=(transactions=[transaction(),transaction({amount:200,type:'income',description:'Повернення',date:'2026-10-20'})])=>
   ({kind:'transactions',complete:true,readable:'good',transactions});
