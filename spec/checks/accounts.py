@@ -89,8 +89,10 @@ def desktop(page):
     d.locator('[role=switch]').click()
     d.locator('button', has_text='Зберегти').click()
     page.wait_for_timeout(300)
-    gold = [cards.nth(i).inner_text().count('зарплата сюди') for i in range(3)]
-    check(gold == [0, 0, 1], f'позначка «зарплата сюди» по картках: {gold}, очікували лише на третій')
+    salary_badge = '.bcard-badges [aria-label="Зарплата надходить на цей рахунок"]'
+    gold = [cards.nth(i).locator(salary_badge).count() for i in range(3)]
+    check(gold == [0, 0, 1], f'позначка зарплатної картки: {gold}, очікували лише на третій')
+    check(cards.nth(2).locator(salary_badge).inner_text() == 'зарплатна', 'немає видимого підпису зарплатної картки')
     # Esc закриває форму
     cards.first.click()
     page.locator('.account-history-edit').click()
