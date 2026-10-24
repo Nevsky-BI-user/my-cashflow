@@ -40,7 +40,7 @@ const RECEIPT_SYSTEM =
   '"description": назва магазину або 2-3 слова, "date": "YYYY-MM-DD" або null, "readable": "good" або "poor"}. ' +
   'date — дата проведення саме цієї операції, видима на зображенні, зокрема в заголовку її групи. ' +
   'Для кожної операції поверни date_text: точний видимий напис дати, включно з днем тижня, або null. Успадковуй заголовок дати лише в межах його групи. ' +
-  'Видимі «сьогодні»/«вчора» та дату без року сервер визначить відносно опорної дати повідомлення за Києвом. Не підміняй відсутню дату опорною; невідома дата — null. Повну історичну дату зберігай. ' +
+  'Видимі «сьогодні»/«вчора» та дату без року сервер визначить відносно поточної дати за Києвом або явно вказаної дати створення скриншота. Не підміняй відсутню дату опорною; невідома дата — null. Повну історичну дату зберігай. ' +
   'Спільний заголовок вибраної картки стосується всіх операцій, якщо окрема операція не має інших явних ознак. Поверни спільні bank/card_last4/card_network також на верхньому рівні JSON; card_last4 — рівно чотири цифри рядком зі збереженими початковими нулями. ' +
   'Скриншот застосунку Ощад 24/7 визначає bank "oschad" для всіх операцій на ньому навіть без назви банку й номера картки. ' +
   'Його ознаки (досить двох): нижнє меню «Продукти», «Платежі», «Історія», «Ще»; картка «Аналітика за <місяць>» з «Надходження» і «Витрати»; ' +
@@ -449,16 +449,6 @@ function receiptDate(raw: unknown): string | null {
 }
 const RECEIPT_DATE_REQUIRED = '❌ Не вдалося визначити дату операції. Нічого не записано. Надішліть скриншот або фото, де видно дату проведення кожної операції.';
 
-// Опора стабільна при повторній доставці Telegram, з урахуванням київської півночі.
-function receiptReference(timestamp?: number): string | null {
-  if (!Number.isFinite(timestamp) || timestamp! <= 0) return null;
-  const d = new Date(timestamp! * 1000);
-  if (isNaN(d.getTime())) return null;
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value;
-  return `${get('year')}-${get('month')}-${get('day')}`;
-}
-
 // Лише явна дата створення скриншота змінює опору; довільна дата в підписі не є датою операції.
 function receiptCaptionReference(caption: string | undefined, reference: string | null): { reference: string | null; error: boolean } {
   const markers = [...(caption || '').matchAll(/дата\s+скриншот[ау]\s*:/giu)];
@@ -584,7 +574,7 @@ async function askReceipt(b64s: string[], model: string, reference: string | nul
       body: JSON.stringify({
         model,
         max_tokens: 4096,
-        system: RECEIPT_SYSTEM + (reference ? ` Опорна дата повідомлення (Europe/Kyiv): ${reference}.` : ' Опорна дата невідома; відносні дати та дати без року не визначай.'),
+        system: RECEIPT_SYSTEM + (reference ? ` Опорна дата (Europe/Kyiv): ${reference}; поточна дата за Києвом або явно вказана дата створення скриншота.` : ' Опорна дата невідома; відносні дати та дати без року не визначай.'),
         messages: [{
           role: 'user',
           content: [
@@ -817,8 +807,9 @@ async function addReceipt(
   if (!entry && pending0 && !isLiveReceipt(pending0)) return reply(chatId, 'Спочатку підтвердьте або скасуйте попередню дію.');
   if (isLiveReceipt(pending0) && pending0.parts.some((x) => x.update_id === updateId)) return 'duplicate';
   const wasReceipt = isLiveReceipt(pending0);
-  const captionReference = receiptCaptionReference(caption, receiptReference(messageDate));
-  if (captionReference.error) return reply(chatId, 'Некоректна дата скриншота. Нічого не записано. Вкажіть дату його створення в підписі: «дата скриншота: РРРР-ММ-ДД» або «дата скриншота: ДД.ММ.РРРР». Вона не може бути пізнішою за дату повідомлення.');
+  // Нове розпізнавання викликає поточну дату; наступні частини чека зберігають початкову опору.
+  const captionReference = receiptCaptionReference(caption, todayKyiv());
+  if (captionReference.error) return reply(chatId, 'Некоректна дата скриншота. Нічого не записано. Вкажіть дату його створення в підписі: «дата скриншота: РРРР-ММ-ДД» або «дата скриншота: ДД.ММ.РРРР». Вона не може бути пізнішою за поточну дату за Києвом.');
   const reference = wasReceipt && pending0.reference !== undefined ? pending0.reference : captionReference.reference;
 
   // Останній елемент масиву photo: найбільший розмір
