@@ -29,12 +29,12 @@ test('all month forms and weekdays work independently of date format',async()=>{
     }
   }
 });
-test('calendar centuries and leap years remain bounded by message date',async()=>{
+test('calendar centuries and leap years remain bounded by current Kyiv date',async()=>{
   const options={today:'2027-02-01',messageDate:Date.parse('2026-10-20T12:00:00Z')/1000};
-  for(const [raw,expected] of [['29.02.24','2024-02-29'],['29 лютого','2024-02-29'],['29.02.2000','2000-02-29'],['31.12','2025-12-31'],['1 січня 00','2000-01-01']]){
+  for(const [raw,expected] of [['29.02.24','2024-02-29'],['29 лютого','2024-02-29'],['29.02.2000','2000-02-29'],['31.12','2026-12-31'],['1 січня 00','2000-01-01']]){
     const h=harness([{...single,date_text:raw}],options);await h.run();assert.equal(h.state.rows[0]?.date,expected,raw);
   }
-  for(const raw of ['29.02.1900','29.02.2025','31.04.2026','01.01.27','2026-10-21','20/10.2026','03/04/05/06','пн 2026-10-20',null,'']){
+  for(const raw of ['29.02.1900','29.02.2025','31.04.2026','01.01.28','2027-02-02','20/10.2026','03/04/05/06','пн 2026-10-20',null,'']){
     const h=harness([batch([transaction(),transaction({amount:2,date_text:raw})])],options);await h.run();assert.equal(h.state.inserts.length,0,String(raw));
   }
   const h=harness([{...single,date_text:'01.01.00'}],{today:'2100-06-01',messageDate:Date.parse('2100-06-01T00:00:00Z')/1000});
@@ -140,7 +140,7 @@ function harness(responses, options={}) {
   return {state,api,run:(update=42,caption)=>api.addReceipt(1,'u',update,[{file_id:'photo'}],undefined,caption,options.messageDate)};
 }
 
-test('visible date groups use Telegram Kyiv date and inherit selected card header',async()=>{
+test('visible date groups call current Kyiv date despite an older Telegram message and inherit selected card header',async()=>{
   const response={...batch([
     transaction({amount:1,date:null,date_text:'сьогодні'}),
     transaction({amount:2,date:null,date_text:'вчора'}),
@@ -149,16 +149,16 @@ test('visible date groups use Telegram Kyiv date and inherit selected card heade
   const h=harness([response],{today:'2026-10-22',messageDate:Date.parse('2026-10-20T21:30:00Z')/1000,
     accounts:[{id:88,bank:'privat',name:'Картка 0882',card_last4:'0882'},{id:89,bank:'privat',name:'Інша'}]});
   await h.run();
-  assert.deepEqual(h.state.rows.map(r=>r.date),['2026-10-21','2026-10-20','2026-10-19']);
+  assert.deepEqual(h.state.rows.map(r=>r.date),['2026-10-22','2026-10-21','2026-10-19']);
   assert.deepEqual(h.state.rows.map(r=>r.account_id),[88,88,88]);
-  assert.match(h.state.requests[0].system,/2026-10-21/);
+  assert.match(h.state.requests[0].system,/2026-10-22/);
 });
 
 test('yearless and relative dates roll back at New Year, preserving full historical dates',async()=>{
   const h=harness([batch([
     transaction({amount:1,date:'вчора'}),transaction({amount:2,date:'31 грудня'}),
     transaction({amount:3,date:'31.12'}),transaction({amount:4,date:'12.01.2025'}),
-  ])],{today:'2027-01-03',messageDate:Date.parse('2026-12-31T22:30:00Z')/1000});
+  ])],{today:'2027-01-01',messageDate:Date.parse('2026-12-31T12:30:00Z')/1000});
   await h.run();
   assert.deepEqual(h.state.rows.map(r=>r.date),['2026-12-31','2026-12-31','2026-12-31','2025-01-12']);
 });
@@ -169,9 +169,28 @@ test('unresolved date or wrong weekday rejects entire batch despite model ISO gu
       {messageDate:Date.parse('2026-10-20T12:00:00Z')/1000});
     await h.run();assert.equal(h.state.inserts.length,0,String(raw));
   }
-  for(const raw of ['сьогодні','вчора','19 жовтня']){
-    const h=harness([{...single,date:raw}]);await h.run();assert.equal(h.state.inserts.length,0,raw);
+});
+
+test('runtime today function drives today and yesterday without a Telegram date or fixed calendar constant',async()=>{
+  const options={today:'2026-10-24'};
+  for(const [today,yesterday] of [['2026-10-24','2026-10-23'],['2026-11-01','2026-10-31'],['2027-01-01','2026-12-31']]){
+    options.today=today;
+    const h=harness([batch([transaction({amount:1,date_text:'сьогодні'}),transaction({amount:2,date_text:'вчора'})])],options);
+    await h.run();assert.deepEqual(h.state.rows.map(r=>r.date),[today,yesterday]);
+    assert.match(h.state.requests[0].system,new RegExp(today));
   }
+  for(const [raw,date] of [['сьогодні','2026-10-20'],['вчора','2026-10-19'],['19 жовтня','2026-10-19']]){
+    const h=harness([{...single,date:raw}]);await h.run();assert.equal(h.state.rows[0]?.date,date,raw);
+  }
+});
+
+test('actual todayKyiv function changes at Kyiv midnight before UTC midnight',()=>{
+  let now=Date.parse('2026-10-23T20:59:00Z');
+  class Clock extends Date { constructor(...args){super(...(args.length?args:[now]));} }
+  const code=source.slice(source.indexOf('function todayKyiv('),source.indexOf('// Невдалі спроби коду'));
+  const today=new Function('Date',stripTypeScriptTypes(code)+';return todayKyiv;')(Clock);
+  assert.equal(today(),'2026-10-23');
+  now=Date.parse('2026-10-23T21:01:00Z');assert.equal(today(),'2026-10-24');
 });
 
 test('conflicting per-operation card hints do not inherit selected header',async()=>{
@@ -195,11 +214,11 @@ test('explicit empty visible date rejects a model ISO guess for whole batch',asy
   }
 });
 
-test('multipart relative date retains first message reference across Kyiv midnight',async()=>{
-  const options={today:'2026-10-21',messageDate:Date.parse('2026-10-20T20:59:00Z')/1000};
+test('multipart relative date retains initial runtime reference across Kyiv midnight',async()=>{
+  const options={today:'2026-10-20',messageDate:Date.parse('2026-10-19T20:59:00Z')/1000};
   const h=harness([{...single,has_total:false,amount:null,date_text:'сьогодні'},{...single,date_text:'сьогодні'}],options);
   await h.run(40);
-  options.messageDate=Date.parse('2026-10-20T21:01:00Z')/1000;
+  options.today='2026-10-21';options.messageDate=Date.parse('2026-10-20T21:01:00Z')/1000;
   await h.run(41);
   assert.equal(h.state.rows[0].date,'2026-10-20');
   assert.ok(h.state.requests.every(r=>r.system.includes('Europe/Kyiv): 2026-10-20')));
@@ -574,14 +593,16 @@ test('explicit screenshot capture date anchors yesterday and yearless groups ins
 test('invalid explicit capture date blocks before storage or OCR and arbitrary caption dates do not anchor',async()=>{
   const options={today:'2026-06-20',messageDate:Date.parse('2026-06-18T21:01:00Z')/1000};
   for(const caption of ['дата скриншота:','дата скриншота: невідомо','дата скриншота: 2026-02-30',
-    'дата скриншота: 2026-06-20','дата скриншота: 2026-06-17abc','дата скриншота: 2026-06-17; дата скриншоту: 2026-06-18']){
+    'дата скриншота: 2026-06-21','дата скриншота: 2026-06-17abc','дата скриншота: 2026-06-17; дата скриншоту: 2026-06-18']){
     const h=harness([batch()],options);await h.run(70,caption);
     assert.equal(h.state.inserts.length,0);assert.equal(h.state.uploads.length,0);assert.equal(h.state.requests.length,0);
     assert.match(h.state.replies.at(-1)[1],/Некоректна дата скриншота/);
   }
   const h=harness([batch([transaction({date_text:'Вчора'})])],options);
   await h.run(70,'готівка, повернення за 2026-06-17');
-  assert.equal(h.state.rows[0].date,'2026-06-18');assert.equal(h.state.rows[0].account_id,7);
+  assert.equal(h.state.rows[0].date,'2026-06-19');assert.equal(h.state.rows[0].account_id,7);
+  const later=harness([batch([transaction({date_text:'Сьогодні'})])],options);
+  await later.run(71,'дата скриншота: 2026-06-20');assert.equal(later.state.rows[0]?.date,'2026-06-20');
 });
 
 test('multipart keeps first explicit capture reference across midnight and later valid captions',async()=>{
