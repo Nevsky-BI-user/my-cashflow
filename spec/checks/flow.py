@@ -137,26 +137,28 @@ def sort_chips(page):
 
 
 def all_chips(page):
-    """17 категорій (фікстура: 4 додаткові в BCAT): усі 17 чипів видно одразу, кнопки «ще N» / «згорнути» немає."""
+    """Усі штатні й чотири додаткові категорії видно одразу без кнопки «ще N» / «згорнути»."""
+    base_names = page.evaluate('BCAT.map(b=>b.name)')
+    expected = len(base_names) + 4
     extra = ''.join("{id:'x%d',name:'Тест %d',limit:100,color:'#999999',icon:'*'}," % (i, i) for i in range(4))
     freeze(page, '2026-10-08', patch=[('const BCAT=[', 'const BCAT=[' + extra)])
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(300)
     go_tab(page, 2)
     names = page.evaluate('BCAT.map(b=>b.name)')
-    check(len(names) == 17, f'у фікстурі {len(names)} категорій, а не 17')
+    check(len(names) == expected, f'у фікстурі {len(names)} категорій, а не {expected}')
     check(page.locator('.flow-cats .flow-more').count() == 0, 'є кнопка «ще N» / «згорнути»')
     shown = page.evaluate(CHIPS_N)
-    check(shown == 17, f'видно {shown} чипів категорій, а не 17')
+    check(shown == expected, f'видно {shown} чипів категорій, а не {expected}')
     vis = page.evaluate("[...document.querySelectorAll('.flow-cats .flow-chip')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom<=innerHeight}).length")
-    check(vis == 18, f'у вʼюпорті {vis} чипів разом з «Усі», а не 18')
+    check(vis == expected + 1, f'у вʼюпорті {vis} чипів разом з «Усі», а не {expected + 1}')
     txt = page.locator('.flow-cats .flow-chip').all_inner_texts()
     check(all(any(n in x for x in txt) for n in names), 'не всі категорії мають чип')
     bar = page.evaluate("Math.round(document.querySelector('.p-flow.desk .flow-bar').getBoundingClientRect().height)")
-    print(f'      Потік 1920x900, 17 категорій: панель фільтрів {bar}px')
+    print(f'      Потік 1920x900, {expected} категорій: панель фільтрів {bar}px')
     check(bar <= 150, f'панель фільтрів {bar}px, а не до 150')
     page.mouse.move(2, 2)
-    shot(page, 'flow-17-1920.jpg', full=False)
+    shot(page, f'flow-{expected}-1920.jpg', full=False)
 
 
 def subscription(page):
@@ -230,6 +232,6 @@ CHECKS = [
     ('Потік: немає підказки, коли операція вже розстрочка (EcoFlow)', 'desktop', subscription_known),
     ('Потік: «Ні» ховає підказку назавжди', 'desktop', subscription_no),
     ('Потік 1920: усі категорії видно, від старіших до новіших, перемикач порядку', 'desktop', sort_chips),
-    ('Потік: 17 категорій, усі видно без «ще N»', 'desktop', all_chips),
+    ('Потік: усі категорії видно без «ще N»', 'desktop', all_chips),
     ('Потік на телефоні: список і модалка', 'mobile', mobile),
 ]

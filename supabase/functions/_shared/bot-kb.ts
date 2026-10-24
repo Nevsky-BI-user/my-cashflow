@@ -1,7 +1,7 @@
 // Клавіатура бота: спільна для відповідей telegram-webhook і ранкового підсумку telegram-digest
 // (кожне повідомлення з нею оновлює кнопки в чаті). Кнопки шлють звичайний текст, який розуміє роутер вебхука.
 export const KB_BTN = {
-  balance: '💰 Баланс', chart: '📈 Графік', budget: '📊 Бюджет', week: '📅 Тиждень', month: '🔍 Місяць',
+  balance: '💰 Баланс', chart: '📈 Графік', budget: '📊 Бюджет', week: '📅 Тиждень', month: '🔍 Місяць', today: '🧾 Витрати за сьогодні',
   income: '➕ Дохід', expense: '➖ Витрата', last: '📋 Останні', help: '❓ Допомога', app: '📱 Застосунок',
   menu: '⬅️ Головне меню', text: '✍️ Текстом', image: '📷 Зображенням', cancel: '✖ Скасувати', yes: '✅ Так, додати',
 };
@@ -9,7 +9,7 @@ export const MAIN_KB = {
   keyboard: [
     [{ text: KB_BTN.balance }, { text: KB_BTN.chart }],
     [{ text: KB_BTN.budget }, { text: KB_BTN.week }],
-    [{ text: KB_BTN.month }, { text: KB_BTN.last }],
+    [{ text: KB_BTN.today }, { text: KB_BTN.last }],
     // v186 (власник): без кнопок «Допомога» і «Застосунок»; /help і /app працюють командами
   ],
   resize_keyboard: true,
