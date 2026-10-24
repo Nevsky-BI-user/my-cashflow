@@ -19,6 +19,49 @@ async function setup(){
 }
 // v153 доповнення 6: підпис графіка на фікстурі; сьогодні і мінімум ті самі, що у v149, після виплати за рушієм v153
 const CAPTION='Баланс сьогодні -33 428 ₴ · мінімум -135 372,2 ₴ 20.09 · після виплати 21.10: 17 670,62 ₴';
+
+test('Витрати за сьогодні: лише фактичний день, повний підсумок до копійки, без переказів і дублів',async()=>{
+ const rep=await mod('bot-reports.ts');
+ const row={type:'expense',amount:12.34,date:'2027-01-01',description:'Покупка',category_id:1,account_id:7};
+ const records=[{...row,id:1,created_at:'2027-01-01T08:00:00Z'},
+  {...row,id:2,amount:'0.20',fixed_id:3,created_at:'2027-01-01T09:00:00Z'},
+  {...row,id:3,amount:0.1,credit_id:4,created_at:'2027-01-01T09:00:00Z'},
+  {...row,id:1}, {...row,id:4,amount:500,transfer_id:'pair'},
+  {...row,id:5,type:'income'}, {...row,id:6,date:'2026-12-31'}, {...row,id:7,date:'2027-01-02'},
+  ...[0,-10,NaN,Infinity,1e308,1e20,'bad',0.004].map((amount,i)=>({...row,id:10+i,amount})),
+  {...row,id:20,date:null,created_at:'2027-01-01T12:00:00Z'}];
+ const m=rep.todayExpensesModel(records,[{id:1,name:'Категорія'}],[{id:7,name:'Дебет'}],'2027-01-01');
+ assert.equal(m.totalCents,1264);assert.equal(m.count,3);assert.deepEqual(m.rows.map(r=>r.id),[3,2,1]);
+ assert.ok(m.rows.every(r=>r.category==='Категорія'&&r.account==='Дебет'));
+ const text=norm(rep.formatTodayExpenses(m)[0]);
+ assert.match(text,/01\.01\.2027/);assert.match(text,/Разом: <b>12,64 ₴<\/b> · Операцій: 3/);
+ // Однакова сума доходу не приховує справжню витрату без явного звʼязку переказу.
+ assert.equal(rep.todayExpensesModel([row,{...row,type:'income',account_id:8}],[],[{id:8,kind:'credit'}],'2027-01-01').count,1);
+ const huge={...row,amount:80000000000000};
+ assert.throws(()=>rep.todayExpensesModel([{...huge,id:100},{...huge,id:101}],[],[],'2027-01-01'),/safe cents/);
+});
+
+test('Витрати за сьогодні: порожній день і відсутні реквізити пояснено явно',async()=>{
+ const rep=await mod('bot-reports.ts');
+ const empty=rep.formatTodayExpenses(rep.todayExpensesModel([],[],[],'2027-02-01'));
+ assert.equal(empty.length,1);assert.match(empty[0],/01\.02\.2027/);assert.match(empty[0],/Сьогодні витрат ще немає/);
+ const m=rep.todayExpensesModel([{type:'expense',amount:1,date:'2027-02-01'},
+  {type:'expense',amount:2,date:'2027-02-01',account_id:999,category_id:888}],[],[],'2027-02-01');
+ assert.ok(m.rows.every(r=>r.description==='Без опису'&&r.category==='Без категорії'));
+ assert.deepEqual(m.rows.map(r=>r.account),['Рахунок не вибрано','Невідомий рахунок']);
+});
+
+test('Витрати за сьогодні: усі рядки пагінуються, повний підсумок збережено, HTML екрановано',async()=>{
+ const rep=await mod('bot-reports.ts');
+ const rows=Array.from({length:150},(_,i)=>({id:i+1,type:'expense',date:'2027-04-02',amount:0.03,
+  description:'<магазин>&'.repeat(30),account_id:1,category_id:1}));
+ const model=rep.todayExpensesModel(rows,[{id:1,name:'<Категорія>&'}],[{id:1,name:'<Рахунок>&'}],'2027-04-02');
+ const pages=rep.formatTodayExpenses(model);
+ assert.ok(pages.length>1);assert.equal(model.totalCents,450);
+ assert.ok(pages.every(p=>p.length<=4096&&norm(p).includes('Разом: <b>4,5 ₴</b> · Операцій: 150')));
+ assert.deepEqual(pages.flatMap(p=>[...p.matchAll(/^(\d+)\. /gm)].map(m=>Number(m[1]))),Array.from({length:150},(_,i)=>i+1));
+ assert.ok(pages.every(p=>p.includes('&lt;магазин&gt;&amp;')&&!p.includes('<магазин>')&&!p.includes('<Рахунок>')));
+});
 // v151: periodBudgetStart застосунку рівно так, як він лежить в index.html (як у balance.test.cjs), для паритету з копією в боті
 const fs=require('node:fs');
 const html=fs.readFileSync(path.resolve(__dirname,'../index.html'),'utf8');

@@ -8,10 +8,11 @@ import { fixedCandidates, fixedOccurrence, fixedOccurrenceKey } from '../_shared
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { financeProjection, lastPayout, type AccTx } from '../_shared/budget.ts';
 import { formatFinanceMessage } from '../_shared/finance-message.ts';
+import { paymentDates, paymentPage, type PaymentKind } from '../_shared/payment-picker.ts';
 import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
 import { loadFinance, loadMonthlyBudgets, type FinanceData } from '../_shared/bot-data.ts';
 import {
-  balanceSeries, budgetModel, chartCaption, formatBudget, formatMonth, formatWeek, monthModel, parsePaidCallback, payPlan, payRange, weekModel,
+  balanceSeries, budgetModel, chartCaption, formatBudget, formatMonth, formatWeek, monthModel, parsePaidCallback, payPlan, payRange, weekModel, todayExpensesModel, formatTodayExpenses,
 } from '../_shared/bot-reports.ts';
 import { balanceChartSvg, donutSvg } from '../_shared/bot-charts.ts';
 import { svgToPng } from '../_shared/render-png.ts';
@@ -19,7 +20,7 @@ import { APP_URL, KB_BTN, MAIN_KB, ENTRY_KB, ENTRY_INPUT_KB } from '../_shared/b
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
-// Сильніша модель: одна повторна спроба для підозрілого результату Haiku (див. receiptSuspect)
+// Сильніша модель: обовʼязкова перевірка банківських списків і перечитування підозрілих чеків.
 const RECEIPT_MODEL_STRONG = 'claude-sonnet-5-5';
 const RECEIPT_SYSTEM =
   'Розпізнай чек або скриншот операцій. Відповідай ТІЛЬКИ JSON без пояснень. ' +
@@ -39,9 +40,9 @@ const RECEIPT_SYSTEM =
   '{"has_total": true або false, "amount": число або null, "items_sum": число або null, ' +
   '"description": назва магазину або 2-3 слова, "date": "YYYY-MM-DD" або null, "readable": "good" або "poor"}. ' +
   'date — дата проведення саме цієї операції, видима на зображенні, зокрема в заголовку її групи. ' +
-  'Для кожної операції поверни date_text: точний видимий напис дати, включно з днем тижня, або null. Успадковуй заголовок дати лише в межах його групи. ' +
+  'Для кожної операції поверни date_text: точний видимий напис дати, включно з днем тижня, або null. Читай список згори донизу: заголовок дати застосовується ТІЛЬКИ до операцій НИЖЧЕ нього до наступного заголовка. Заголовок під операцією НІКОЛИ не змінює її дату заднім числом: остання операція перед наступним заголовком зберігає дату попередньої групи. Якщо попереднього заголовка не видно й у рядку немає дати, поверни null. ' +
   'Видимі «сьогодні»/«вчора» та дату без року сервер визначить відносно поточної дати за Києвом або явно вказаної дати створення скриншота. Не підміняй відсутню дату опорною; невідома дата — null. Повну історичну дату зберігай. ' +
-  'Спільний заголовок вибраної картки стосується всіх операцій, якщо окрема операція не має інших явних ознак. Поверни спільні bank/card_last4/card_network також на верхньому рівні JSON; card_last4 — рівно чотири цифри рядком зі збереженими початковими нулями. ' +
+  'Поверни account_scope: "selected", якщо підсвічено конкретну картку у верхньому фільтрі; "all", якщо вибрано всі рахунки; інакше null. Для selected поверни selected_card_last4 (чотири цифри підсвіченої картки) і selected_bank. Вибрана картка визначає джерело ВСІХ операцій, навіть коли опис називає банк контрагента. Банк відправника або отримувача не є банком власника. Для all не перенось реквізити окремої операції на весь список. Поверни спільні bank/card_last4/card_network також на верхньому рівні JSON; card_last4 — рівно чотири цифри рядком зі збереженими початковими нулями. ' +
   'Скриншот застосунку Ощад 24/7 визначає bank "oschad" для всіх операцій на ньому навіть без назви банку й номера картки. ' +
   'Його ознаки (досить двох): нижнє меню «Продукти», «Платежі», «Історія», «Ще»; картка «Аналітика за <місяць>» з «Надходження» і «Витрати»; ' +
   'фільтри «За місяць», «Всі операції», «Всі рахунки»; бірюзовий акцент; копійки й ₴ дрібним надрядковим шрифтом після суми; ' +
@@ -91,7 +92,7 @@ function categorizeLater(id: number) {
 }
 
 const HELP =
-  'Просто надішліть суму й опис або фото. Сума без знака — витрата, з плюсом — дохід. На зображенні напрямок визначається за самою операцією. Кнопки звітів згортаються після вибору; відкрити їх можна стандартною іконкою клавіатури Telegram.\n\n' +
+  'Просто надішліть суму й опис або фото. Сума без знака — витрата, з плюсом — дохід. На зображенні напрямок визначається за самою операцією. Головна клавіатура зі звітами залишається відкритою; показати її можна стандартною іконкою клавіатури Telegram.\n\n' +
   'Формат: сума і опис, наприклад\n' +
   '250 кава\n' +
   '+51000 зарплата (плюс = дохід)\n' +
@@ -101,14 +102,14 @@ const HELP =
   'Банк на скриншоті допоможе вибрати рахунок; якщо є сумнів, бот запропонує кнопки. Підпис фото має пріоритет.\n' +
   '/yes: підтвердити дохід, схожий на Monobank\n' +
   '/balance: баланс, картки, розстрочки\n' +
-  '/chart: графік балансу, /budget: бюджет періоду, /week: тиждень, /month: місяць\n' +
+  '/chart: графік балансу, /budget: бюджет періоду, /week: тиждень, /today: витрати за сьогодні\n' +
   '/last: останні 5 записів\n\n' +
   'Рахунок: слово ощад, приват або готівка на початку чи в кінці опису (для фото: у підписі), ' +
   'наприклад «250 кава приват». Без слова витрата лишається без рахунку, бот спитає кнопками; ' +
   'дохід іде на рахунок зарплати. Операції Monobank приходять самі.';
 
 // Відповідь у чат; помилки Telegram не валять обробку апдейту
-// Клавіатура Telegram згортається після вибору; її кнопки шлють звичайний текст роутеру.
+// Постійна головна клавіатура шле звичайний текст роутеру.
 // Усі головні дії та кроки введення описані в спільному bot-kb.ts.
 const BTN = { ...KB_BTN, no: 'Ні, не додавати' };
 const CONFIRM_KB = { keyboard: [[{ text: BTN.yes }, { text: BTN.no }]], resize_keyboard: true, one_time_keyboard: true };
@@ -123,6 +124,47 @@ async function reply(chatId: number, text: string, keyboard: unknown = undefined
   } catch (e) {
     console.error('sendMessage failed:', e);
   }
+}
+
+// Денний список надсилаємо послідовно: Telegram може обмежити частоту навіть коректних сторінок.
+async function sendTodayExpenses(chatId: number, pages: string[], keyboard: unknown): Promise<boolean> {
+  const deadline = Date.now() + 60000;
+  const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+  let waited = 0;
+  const wait = async (ms: number) => {
+    if (Date.now() + ms > deadline || waited + ms > 60000) return false;
+    waited += ms; await pause(ms); return true;
+  };
+  const send = async (text: string, html: boolean, notification = false): Promise<boolean> => {
+    if (!text || text.length > 4096) return false;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!notification && Date.now() >= deadline) return false;
+      try {
+        const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ chat_id: chatId, text, reply_markup: keyboard, ...(html ? { parse_mode: 'HTML' } : {}) }),
+        });
+        const result = await r.json();
+        if (r.ok && result?.ok === true) return true;
+        const delay = result?.parameters?.retry_after;
+        if (attempt !== 0 || !(r.status === 429 || result?.error_code === 429) ||
+          typeof delay !== 'number' || !Number.isFinite(delay) || delay < 0 || delay > 10) return false;
+        if (!await wait(Math.max(1000, Math.ceil(delay * 1000)))) return false;
+      } catch { return false; }
+    }
+    return false;
+  };
+  for (let i = 0; i < pages.length; i++) {
+    if (i >= 50 || (i > 0 && !await wait(1000)) || !await send(pages[i], true)) {
+      // Навіть якщо Telegram не приймає повідомлень, спроба пояснити неповний звіт є окремою й обмеженою.
+      await pause(1000);
+      if (!await send('⚠️ Звіт про витрати надіслано не повністю. Спробуйте «Витрати за сьогодні» пізніше. Операції не змінювалися.', false, true)) {
+        console.error('today expenses: incomplete report notification failed');
+      }
+      return false;
+    }
+  }
+  return true;
 }
 
 // Виклик методу Bot API без відповіді; помилки лише в лог
@@ -241,21 +283,73 @@ async function replyTx(
 
 // Натискання кнопки рахунку: whitelist за chat_id, зміна account_id лише в записах із Telegram
 // Привʼязка збереженої витрати без зміни суми, рахунку та фактичної дати.
+async function paymentContext(kind:PaymentKind){
+  if(kind!=='c'){const {fixed,paid}=await fixedContext(kind==='a');return {items:fixed.filter((f:any)=>f.type!=='income'&&(kind==='a'?f.active===false:f.active!==false)),paid};}
+  const result=await sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments');
+  if(result.error)throw new Error('Не вдалося прочитати кредити');
+  const paid=new Set<string>();
+  for(let page=0;page<100;page++){
+    const history=await sb.from('transactions').select('credit_id,type,date,payment_due_date').not('credit_id','is',null).eq('type','expense').order('id').range(page*1000,page*1000+999);
+    if(history.error)throw new Error('Не вдалося перевірити оплати кредитів');
+    for(const key of creditPaid(history.data||[]))paid.add(key);
+    if((history.data||[]).length<1000)return {items:result.data||[],paid};
+  }
+  throw new Error('Перевищено ліміт історії оплат');
+}
+async function paymentTransaction(txId:number,userId:string){
+  if(!Number.isSafeInteger(txId)||txId<1)return null;
+  const {data,error}=await sb.from('transactions').select('id,date,type,fixed_id,credit_id').eq('id',txId).eq('user_id',userId).maybeSingle();
+  return !error&&data?.type==='expense'&&data.fixed_id==null&&data.credit_id==null?data:null;
+}
+function paymentNavigation(prefix:string,page:number,pages:number){
+  const buttons=[];
+  if(page>0)buttons.push({text:'← Назад',callback_data:prefix+(page-1)});
+  if(page+1<pages)buttons.push({text:'Далі →',callback_data:prefix+(page+1)});
+  return buttons.length?[buttons]:[];
+}
+async function offerPaymentPage(chatId:number,userId:string,txId:number,kind:PaymentKind,page:number,itemId?:number){
+  const tx=await paymentTransaction(txId,userId);
+  if(!tx)return reply(chatId,'Операцію не знайдено або її вже привʼязано.');
+  const {items,paid}=await paymentContext(kind),today=todayKyiv();
+  items.sort((a:any,b:any)=>Number(a.id)-Number(b.id));
+  if(itemId==null){
+    const result=paymentPage<any>(items,page);
+    return reply(chatId,`Оберіть платіж · сторінка ${result.page+1}/${result.pages}. Оплачені періоди недоступні для повторної привʼязки.`,{inline_keyboard:[
+      ...result.items.map((item:any)=>[{text:item.name,callback_data:`po:${txId}:${kind}:${item.id}:0`}]),
+      ...paymentNavigation(`pl:${txId}:${kind}:`,result.page,result.pages),
+      [{text:'← Тип платежу',callback_data:`flpick:${txId}`} ]
+    ]});
+  }
+  const item=items.find((i:any)=>Number(i.id)===itemId);
+  if(!item)return reply(chatId,'Платіж недоступний.');
+  const dates=paymentDates(kind,item,tx.date,today,paid),result=paymentPage(dates,page);
+  return reply(chatId,dates.length?`${item.name}: оберіть дату зобовʼязання · ${result.page+1}/${result.pages}. Фактична дата витрати залишиться ${tx.date}.`:`${item.name}: доступних неоплачених періодів немає. Графік завершений або всі періоди оплачені.`,{inline_keyboard:[
+    ...result.items.map(due=>[{text:due,callback_data:`pc:${txId}:${kind}:${itemId}:${due}`}]),
+    ...paymentNavigation(`po:${txId}:${kind}:${itemId}:`,result.page,result.pages),
+    [{text:'← Список платежів',callback_data:`pl:${txId}:${kind}:0`}]
+  ]});
+}
+async function confirmPaymentLink(chatId:number,userId:string,txId:number,kind:PaymentKind,itemId:number,due:string,answer:(s:string)=>Promise<unknown>){
+  const tx=await paymentTransaction(txId,userId);
+  if(!tx)return answer('Операцію не знайдено або вже привʼязано');
+  const {items,paid}=await paymentContext(kind),item=items.find((i:any)=>Number(i.id)===itemId);
+  if(!item||!paymentDates(kind,item,tx.date,todayKyiv(),paid).includes(due))return answer('Період недоступний або вже оплачений');
+  const payload=kind==='c'?{credit_id:itemId,fixed_id:null,payment_due_date:due}:{fixed_id:itemId,credit_id:null,payment_due_date:due};
+  const {data,error}=await sb.from('transactions').update(payload).eq('id',txId).eq('user_id',userId).eq('type','expense').is('fixed_id',null).is('credit_id',null).select('id');
+  if(error||!data?.length)return answer('Не вдалося привʼязати операцію');
+  await answer('Привʼязано');
+  return reply(chatId,`✅ ${item.name}: зараховано оплату за ${due}. Фактична дата витрати ${tx.date}, сума й рахунок збережені.`);
+}
+
 async function offerFixedLink(chatId:number,userId:string,txId?:number) {
   if(txId!=null){
     const {data:tx,error}=await sb.from('transactions').select('id,date,type,fixed_id,credit_id').eq('id',txId).eq('user_id',userId).maybeSingle();
     if(error||!tx||tx.type!=='expense'||tx.fixed_id!=null||tx.credit_id!=null)return reply(chatId,'Операцію не знайдено або її вже привʼязано.');
-    const {fixed,paid}=await fixedContext();const buttons:any[]=[];
-    for(const f of fixed){
-      const seen=new Set<string>();let count=0;
-      for(let k=0;k<=370&&count<3;k++){
-        const reference=addDays(String(tx.date||todayKyiv()).slice(0,10),k),due=fixedOccurrence(f,reference);
-        if(!due)continue;const key=fixedOccurrenceKey(f,due);
-        if(seen.has(key)||paid.has(key))continue;seen.add(key);count++;
-        buttons.push([{text:`${f.name} · ${due}`,callback_data:`fl:${txId}:${f.id}:${due}`}]);
-      }
-    }
-    return reply(chatId,buttons.length?'Оберіть платіж і дату зобовʼязання:':'Неоплачених постійних платежів немає.',{inline_keyboard:buttons.slice(0,60)});
+    return reply(chatId,'Оберіть тип обовʼязкового платежу:',{inline_keyboard:[
+      [{text:'Постійні платежі',callback_data:`pl:${txId}:f:0`}],
+      [{text:'Кредити та розстрочки',callback_data:`pl:${txId}:c:0`}],
+      [{text:'Архівні платежі',callback_data:`pl:${txId}:a:0`}]
+    ]});
   }
   const {data,error}=await sb.from('transactions').select('id,date,description,amount').eq('user_id',userId).eq('type','expense').is('fixed_id',null).is('credit_id',null).order('date',{ascending:false}).limit(10);
   if(error)return reply(chatId,'Не вдалося прочитати операції.');
@@ -311,6 +405,16 @@ async function onCallback(cq: any) {
     if(salary)return onSalary(chatId,prof.id,salary,answer);
     const pick=String(cq?.data||'').match(/^flpick:(\d+)$/);
     if(pick){await answer('Оберіть зобовʼязання');return offerFixedLink(chatId,prof.id,Number(pick[1]));}
+    const payment=String(cq?.data||'').match(/^(pl|po|pc):(\d+):([fca]):(\d+)(?::(\d+|\d{4}-\d{2}-\d{2}))?$/);
+    if(payment){
+      const [,action,tx,kind,id,value]=payment;
+      if(action==='pc'&&value&&/^\d{4}-\d{2}-\d{2}$/.test(value))return confirmPaymentLink(chatId,prof.id,Number(tx),kind as PaymentKind,Number(id),value,answer);
+      if(action==='pl'&&!value||action==='po'&&value&&/^\d+$/.test(value)){
+        await answer('Оберіть зобовʼязання');
+        return offerPaymentPage(chatId,prof.id,Number(tx),kind as PaymentKind,Number(action==='pl'?id:value),action==='po'?Number(id):undefined);
+      }
+      return answer('Некоректна дія');
+    }
     const link=String(cq?.data||'').match(/^fl:(\d+):(\d+):(\d{4}-\d{2}-\d{2})$/);
     if(link)return confirmFixedLink(chatId,prof.id,Number(link[1]),Number(link[2]),link[3],answer);
     const pd = parsePaidCallback(String(cq?.data || ''));
@@ -511,15 +615,18 @@ function normalizeReceipt(r: any, reference: string | null): any {
   if (!Array.isArray(r.transactions)) return normalize(r);
   return { ...r, transactions: r.transactions.map((t: any) => {
     if (!t || typeof t !== 'object') return t;
+    if (r.account_scope === 'selected' && r.selected_card_last4 != null) {
+      return normalize({ ...t, bank: r.selected_bank ?? r.bank ?? null, card_last4: r.selected_card_last4, card_network: r.card_network ?? null });
+    }
     // Номер отримувача з опису переказу не обирає рахунок, з якого списали кошти.
     const digits = typeof t.card_last4 === 'string' && /^\d{4}$/.test(t.card_last4) ? t.card_last4 : null;
-    if (digits && r.card_last4 !== digits && typeof t.description === 'string') {
+    if (digits && (r.account_scope === 'all' || r.card_last4 !== digits) && typeof t.description === 'string') {
       const masked = new RegExp('(?:\\*{2,}|[•●·]{2,})\\s*' + digits + '(?!\\d)').test(t.description);
       const recipient = /переказ\s+(?:на|до)\s+(?:картк[ауи]|рахун(?:ок|ку))|отримувач|одержувач/i.test(t.description);
-      if (masked || recipient) t = { ...t, bank: r.bank ?? t.bank, card_last4: null, card_network: null };
+      if (masked || recipient) t = { ...t, bank: r.account_scope === 'all' ? null : r.bank ?? t.bank, card_last4: null, card_network: null };
     }
     const conflict = ['bank','card_last4','card_network'].some((k) => t[k] != null && r[k] != null && t[k] !== r[k]);
-    const inherited = conflict ? t : { ...t, bank: t.bank ?? r.bank, card_last4: t.card_last4 ?? r.card_last4, card_network: t.card_network ?? r.card_network };
+    const inherited = conflict || r.account_scope === 'all' ? t : { ...t, bank: t.bank ?? r.bank, card_last4: t.card_last4 ?? r.card_last4, card_network: t.card_network ?? r.card_network };
     return normalize(inherited);
   }) };
 }
@@ -647,10 +754,12 @@ function receiptAccount(r: any, accs: Acc[]): Acc | null {
   const hint = receiptBankHint(r);
   if (r?.card_last4 != null && hint.card_last4 === null) return null;
   let candidates = accs.filter((a) => a.active !== false && a.kind !== 'cash' && a.bank !== 'cash');
-  if (hint.bank) candidates = candidates.filter((a) => a.bank === hint.bank);
   if (hint.card_last4) {
     candidates = candidates.filter((a) => a.card_last4 === hint.card_last4);
-  } else if (!hint.bank) return null;
+    if (candidates.length === 1) return candidates[0];
+    if (hint.bank) candidates = candidates.filter((a) => a.bank === hint.bank);
+  } else if (hint.bank) candidates = candidates.filter((a) => a.bank === hint.bank);
+  else return null;
   return candidates.length === 1 ? candidates[0] : null;
 }
 
@@ -748,17 +857,21 @@ function receiptBatch(r: any): ReceiptTransaction[] | null {
   return result;
 }
 
-// Каскад: Haiku; підозрілий результат одна спроба Sonnet на тих самих фото; беремо Sonnet, якщо валідний.
+// Банківський список завжди перевіряє сильніша модель: валідна дата також може належати іншій групі.
+// Для звичайних чеків зберігаємо каскад лише за підозрілого результату.
 // Діє на кожен виклик, зокрема для частин довгого чека
 async function recognizeReceipt(b64s: string[], reference: string | null = null): Promise<any | null> {
   const first = await askReceipt(b64s, RECEIPT_MODEL, reference);
+  const isBatch = first && (first.kind === 'transactions' || 'transactions' in first);
   const reason = receiptSuspect(first);
-  if (!reason) return first;
-  console.log('receipt escalate', reason);
+  if (!isBatch && !reason) return first;
+  console.log('receipt escalate', isBatch ? 'verify transaction groups' : reason);
   const strong = await askReceipt(b64s, RECEIPT_MODEL_STRONG, reference);
   // Вже побачений список не можна тихо замінити одним чеком при повторній спробі.
-  if (first && (first.kind === 'transactions' || 'transactions' in first)) {
-    return receiptBatch(strong) ? strong : first;
+  if (isBatch) {
+    if (receiptBatch(strong)) return strong;
+    // Невдале підтвердження не дозволяє записати навіть зовні коректний перший список.
+    return {kind:'transactions',complete:false,readable:'poor',transactions:Array.isArray(strong?.transactions)?strong.transactions:[]};
   }
   return receiptValid(strong) ? strong : first;
 }
@@ -1009,8 +1122,10 @@ async function findMonoIncome(amount: number, date: string): Promise<{ amount: n
 // від 5 літер; «комуналка», «комунальні» = платіж, що починається з «комунал»), закриває платіж місяця своєї дати
 // (тижневий: тижня пн-нд своєї дати), якщо за цей місяць чи тиждень він ще не оплачений. Кілька різних збігів:
 // не привʼязуємо (неоднозначно).
-async function fixedContext() {
-  const items=await sb.from('fixed_payments').select('id,name,type,active,period,weekday,day_of_month,month_of_year,end_date').eq('active',true);
+async function fixedContext(includeArchived=false) {
+  let query=sb.from('fixed_payments').select('id,name,type,active,period,weekday,day_of_month,month_of_year,end_date');
+  if(!includeArchived)query=query.eq('active',true);
+  const items=await query;
   if(items.error)throw new Error('Не вдалося перевірити постійні платежі');
   const fixed=items.data||[],paid=new Set<string>();
   for(let page=0;page<100;page++){
@@ -1517,8 +1632,8 @@ Deno.serve(async (req) => {
     else await reply(chatId, 'Скасовано. Оберіть наступну дію.', pending ? MAIN_KB : undefined);
     return done();
   }
-  const navigation = /^\/(?:menu|start|help|app|balance|chart|budget|week|month|last)$/i.test(text) || /^меню$/i.test(text) ||
-    [BTN.menu,BTN.help,BTN.app,BTN.balance,BTN.chart,BTN.budget,BTN.week,BTN.month,BTN.last].includes(text);
+  const navigation = /^\/(?:menu|start|help|app|balance|chart|budget|week|month|today|last)$/i.test(text) || /^меню$/i.test(text) ||
+    [BTN.menu,BTN.help,BTN.app,BTN.balance,BTN.chart,BTN.budget,BTN.week,BTN.month,BTN.today,BTN.last].includes(text);
   if (navigation && pending?.kind === 'entry' && !await replacePending(prof.id, pending, null)) {
     await reply(chatId, 'Не вдалося завершити введення. Спробуйте ще раз.', liveEntry(pending) ? entryKeyboard(pending) : MAIN_KB);
     return done();
@@ -1576,6 +1691,10 @@ Deno.serve(async (req) => {
   else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, chartReport);
   else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, budgetReport);
   else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), undefined, true));
+  else if (/^\/today$/i.test(text) || text === BTN.today) await withFinance(chatId, async (c, d) => {
+    const keyboard = pending && pending.kind !== 'entry' ? CONFIRM_KB : MAIN_KB;
+    await sendTodayExpenses(c, formatTodayExpenses(todayExpensesModel(d.txs, d.cats, d.accounts, d.today)), keyboard);
+  });
   else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), undefined, true));
   else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId);
   else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP, MAIN_KB);

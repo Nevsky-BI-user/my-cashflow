@@ -52,7 +52,7 @@ test('collisions, cash, inactive and conflicting metadata remain manual',async()
   const card={id:1,name:'Картка',bank:'privat',card_last4:'1234',kind:'debit',active:true};
   const cases=[[card,{...card,id:2}],[{...card,active:false}],[{...card,kind:'cash'}],[{...card,bank:'cash'}],
     [{...card,name:'1234',card_last4:'9999'}],[{...card,name:'1234 9999',card_last4:null}],
-    [{...card,name:'12345678',card_last4:null}],[{...card,name:'1234',card_last4:'bad'}],[{...card,bank:'mono'}]];
+    [{...card,name:'12345678',card_last4:null}],[{...card,name:'1234',card_last4:'bad'}]];
   for(const accounts of cases){
     const h=harness([batch([transaction({bank:'privat',card_last4:'1234'})])],{accounts});await h.run();
     assert.equal(h.state.rows[0]?.account_id,null,JSON.stringify(accounts));
@@ -240,7 +240,7 @@ test('caption selects an explicit account for each operation',async()=>{
 });
 test('replaying the same Telegram update neither inserts nor calls vision twice',async()=>{
   const h=harness([batch()]);await h.run();await h.run();
-  assert.equal(h.state.inserts.length,1);assert.equal(h.state.requests.length,1);
+  assert.equal(h.state.inserts.length,1);assert.equal(h.state.requests.length,2);
 });
 test('invalid member or incomplete list rejects whole batch without pending writes',async()=>{
   const cases=[
@@ -542,7 +542,7 @@ test('Bank rows preserve separate payment times and dates when another row has a
   assert.deepEqual(h.state.events,['warning','insert']);
   assert.match(h.state.warnings[0].text,/Обрізаних операцій пропущено: 1/);
   assert.match(h.state.replies[0][1],/Записано операцій: 5\. Обрізаних операцій пропущено: 1/);
-  assert.equal(h.state.requests.length,1);
+  assert.equal(h.state.requests.length,2);
 });
 
 test('Oschad rows retain group dates and report another row only when its required amount is clipped',async()=>{
@@ -693,4 +693,44 @@ test('Claude receipt single, batch and confirmed receipt close the obligation wi
  const pending={kind:'receipt',parts:[{path:'u/a.jpg',update_id:42}],items_sum:250,description:'Claude',date:'2026-10-18',account_id:7,expires:'2099-01-01T00:00:00Z'};
  const confirmed=harness([],{fixed,pending});await confirmed.api.confirmPending(1,'u');
  assert.equal(confirmed.state.rows[0]?.fixed_id,41);assert.equal(confirmed.state.rows[0]?.payment_due_date,'2026-10-19');
+});
+
+ test('selected source applies to every row despite counterparty bank; exact card beats guessed bank',async()=>{
+ const accounts=[{id:1,name:'Source',bank:'privat',card_last4:'0678',kind:'debit',active:true},{id:2,name:'Other',bank:'oschad',card_last4:'7654',kind:'debit',active:true}];
+ const rows=Array.from({length:6},(_,i)=>transaction({amount:11+i,description:'Example '+i,bank:'oschad',card_last4:'7654'}));
+ const h=harness([{...batch(rows),account_scope:'selected',selected_bank:'privat',selected_card_last4:'0678'}],{accounts});await h.run();assert.equal(h.state.rows.length,6);assert.ok(h.state.rows.every(r=>r.account_id===1));
+ const exact=harness([batch([transaction({bank:'oschad',card_last4:'0678'})])],{accounts});await exact.run();assert.equal(exact.state.rows[0]?.account_id,1);
+ });
+ test('all-accounts screen cannot propagate an arbitrary top-level card',async()=>{
+ const h=harness([{...batch([transaction()]),account_scope:'all',bank:'privat',card_last4:'0678'}],{accounts:[{id:1,name:'Source',bank:'privat',card_last4:'0678',kind:'debit',active:true}]});await h.run();assert.equal(h.state.rows[0]?.account_id,null);
+ });
+test('ambiguous identical suffix remains manual unless source bank distinguishes it',async()=>{
+ const accounts=[{id:1,name:'First',bank:'privat',card_last4:'0678',kind:'debit',active:true},{id:2,name:'Second',bank:'mono',card_last4:'0678',kind:'debit',active:true}];
+ const ambiguous=harness([batch([transaction({card_last4:'0678'})])],{accounts});await ambiguous.run();assert.equal(ambiguous.state.rows[0]?.account_id,null);
+ const unique=harness([batch([transaction({card_last4:'0678',bank:'mono'})])],{accounts});await unique.run();assert.equal(unique.state.rows[0]?.account_id,2);
+ const invalid=harness([{...batch([transaction({card_last4:'0678',bank:'privat'})]),account_scope:'selected',selected_card_last4:'678',selected_bank:'privat'}],{accounts});await invalid.run();assert.equal(invalid.state.rows[0]?.account_id,null);
+});
+test('all-accounts recipient suffix repeated in top-level OCR cannot select the recipient account',async()=>{
+ const accounts=[{id:1,name:'Source',bank:'oschad',card_last4:'0678',kind:'debit',active:true},{id:2,name:'Recipient',bank:'privat',card_last4:'1234',kind:'debit',active:true}];
+ const h=harness([{...batch([transaction({description:'**1234',bank:'privat',card_last4:'1234'})]),account_scope:'all',bank:'privat',card_last4:'1234'}],{accounts});
+ await h.run();assert.equal(h.state.rows[0]?.account_id,null);
+});
+test('valid cheap batch must be verified; strong group dates are authoritative',async()=>{
+ const first=batch([transaction({description:'Example service',date_text:'17 June 2026',date:'2026-06-17'})]);
+ const verified=batch([transaction({description:'Example service',date_text:'18.06.2026',date:'2026-06-18'})]);
+ // Use fully valid dates in both answers: structural validation alone cannot identify the wrong group.
+ first.transactions[0].date_text='17.06.2026';
+ const h=harness([first,verified],{today:'2026-06-19'});await h.run();
+ assert.equal(h.state.requests.length,2);assert.notEqual(h.state.requests[0].model,h.state.requests[1].model);
+ assert.equal(h.state.rows[0]?.date,'2026-06-18');
+ await h.run();assert.equal(h.state.requests.length,2);assert.equal(h.state.inserts.length,1);
+});
+test('failed strong verification never saves an otherwise valid cheap batch or creates pending writes',async()=>{
+ for(const strong of [null,{error:'unavailable'},single,{...batch(),complete:false},batch([transaction({amount:-1})]),batch([transaction({date_text:''})])]){
+  const h=harness([batch(),strong]);await h.run();
+  assert.equal(h.state.requests.length,2);assert.equal(h.state.inserts.length,0);assert.equal(h.state.pending,null);assert.equal(h.state.txReplies.length,0);
+ }
+});
+test('valid ordinary receipt still uses one cheap request',async()=>{
+ const h=harness([single]);await h.run();assert.equal(h.state.requests.length,1);assert.equal(h.state.inserts.length,1);
 });

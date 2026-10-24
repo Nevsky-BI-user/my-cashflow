@@ -368,6 +368,49 @@ export function formatWeek(m: WeekModel): string {
   return lines.join('\n');
 }
 
+// ---------- Фактичні витрати сьогодні ----------
+export type TodayExpense = { id: number | string | null; cents: number; description: string; category: string; account: string };
+export type TodayExpensesModel = { date: string; totalCents: number; count: number; rows: TodayExpense[] };
+
+export function todayExpensesModel(txs: Tx[], cats: P[], accounts: P[], today: string): TodayExpensesModel {
+  const categories = new Map((cats || []).map((c) => [String(c.id), String(c.name || '')]));
+  const accountNames = new Map((accounts || []).map((a) => [String(a.id), String(a.name || '')]));
+  // Перекази визначає явний звʼязок, а не випадковий збіг сум. Обовʼязкові платежі лишаються витратами.
+  const list = uniq(txs).filter((t) => t.type === 'expense' && t.transfer_id == null &&
+    String(t.date || '').slice(0, 10) === today && Number.isFinite(Number(t.amount)) && Number.isSafeInteger(cents(t.amount)) && cents(t.amount) > 0);
+  list.sort((a, b) => (Date.parse(b.created_at || '') || 0) - (Date.parse(a.created_at || '') || 0) ||
+    (Number.isFinite(Number(a.id)) && Number.isFinite(Number(b.id)) ? Number(b.id) - Number(a.id) : String(b.id || '').localeCompare(String(a.id || ''))));
+  const rows = list.map((t) => ({
+    id: t.id ?? null, cents: cents(t.amount), description: String(t.description || '').trim() || 'Без опису',
+    category: (t.category_id != null && categories.get(String(t.category_id))) || 'Без категорії',
+    account: (t.account_id != null && accountNames.get(String(t.account_id))) || (t.account_id == null ? 'Рахунок не вибрано' : 'Невідомий рахунок'),
+  }));
+  const totalCents = rows.reduce((sum, row) => sum + row.cents, 0);
+  if (!Number.isSafeInteger(totalCents)) throw new RangeError('today expense total exceeds safe cents');
+  return { date: today, totalCents, count: rows.length, rows };
+}
+
+// Кожна сторінка містить загальний підсумок; усі операції вміщуються в окремі HTML-повідомлення Telegram.
+export function formatTodayExpenses(m: TodayExpensesModel): string[] {
+  const title = `🧾 Витрати за сьогодні · ${m.date.split('-').reverse().join('.')}`;
+  const summary = `Разом: <b>${money(m.totalCents)}</b> · Операцій: ${m.count}`;
+  if (!m.rows.length) return [`${title}\n${summary}\n\nСьогодні витрат ще немає.`];
+  const label = (value: string, max: number) => {
+    const text = Array.from(value.replace(/[\r\n\t]+/g, ' '));
+    return esc(text.length > max ? text.slice(0, max - 1).join('') + '…' : text.join(''));
+  };
+  const bodies: string[] = [];
+  let body = '';
+  m.rows.forEach((row, index) => {
+    const line = `${index + 1}. ${label(row.description, 200)} — <b>${money(row.cents)}</b>\n` +
+      `   ${label(row.category, 60)} · ${label(row.account, 60)}`;
+    if (body && body.length + line.length + 2 > 3300) { bodies.push(body); body = ''; }
+    body += (body ? '\n\n' : '') + line;
+  });
+  if (body) bodies.push(body);
+  return bodies.map((page, index) => `${title}\n${summary}\n\n${page}` + (bodies.length > 1 ? `\n\nСторінка ${index + 1}/${bodies.length}` : ''));
+}
+
 // ---------- Місяць: поточний календарний місяць проти того самого відрізка минулого ----------
 // Погашення кредитки (дохід на кредитний рахунок і парна витрата з власного рахунку тієї ж суми ±1 день) не рахуються
 // ні витратою, ні доходом: це переказ між своїми рахунками.

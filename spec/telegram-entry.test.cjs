@@ -1,4 +1,4 @@
-const {test}=require('node:test');
+const {test,before}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -9,14 +9,17 @@ const kbCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/bot-kb
 const kb=new Function(kbCode+';return {KB_BTN,MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB,APP_URL};')();
 const fixedCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/fixedmatch.ts'),'utf8').replace(/^export /gm,''));
 const fixedApi=new Function(fixedCode+';return {fixedCandidates,fixedOccurrence,fixedOccurrenceKey};')();
+let todayReports;
+before(async()=>{todayReports=await import(require('node:url').pathToFileURL(path.join(root,'_shared/bot-reports.ts')).href)});
 const code=stripTypeScriptTypes(source.replace(/^import[\s\S]*?from\s+['"][^'"]+['"];\r?\n/gm,''));
 const NOW=Date.parse('2026-10-21T10:00:00Z');
 class Clock extends Date{constructor(...args){super(...(args.length?args:[NOW]))}static now(){return NOW}}
 const entry=(type='income',input='text')=>({kind:'entry',type,input,expires:new Date(NOW+600000).toISOString()});
 const receipt=(transactions=[{amount:150,type:'income',currency:'UAH',description:'Переказ',date:'2026-10-20'}])=>({kind:'transactions',complete:true,readable:'good',transactions});
 function harness(options={}){
-  const state={pending:options.pending??null,rows:[...(options.rows??[])],messages:[],photos:[],requests:[],reports:[],events:[],writes:0};
+  const state={pending:options.pending??null,rows:[...(options.rows??[])],messages:[],photos:[],requests:[],reports:[],events:[],reportEvents:[],delays:[],writes:0};
   let handler;
+  let reportResponse=0;
   const sb={storage:{from:()=>({upload:async()=>({error:options.uploadError?{message:'synthetic'}:null}),download:async()=>({data:{arrayBuffer:async()=>new Uint8Array([1]).buffer}})})},
     from(table){
       const q={filters:[],one:false,mode:'read'};
@@ -57,6 +60,12 @@ function harness(options={}){
     if(url.includes('/file/'))return {ok:true,arrayBuffer:async()=>new Uint8Array(options.imageBytes??[1]).buffer};
     if(url.includes('/sendMessage')){
       const message=JSON.parse(init.body);state.messages.push(message);
+      if(message.text.startsWith('🧾')||message.text.startsWith('⚠️ Звіт')){
+        state.reportEvents.push(message.text);
+        const response=options.reportResponses?.[reportResponse++]??{status:200,body:{ok:true}};
+        if(response.network)throw new Error('synthetic transport failure');
+        return {ok:response.status>=200&&response.status<300,status:response.status,json:async()=>response.body};
+      }
       if(message.text.startsWith('⚠️')){
         state.events.push('warning');
         if(options.warningError==='network')throw new Error('synthetic');
@@ -68,9 +77,12 @@ function harness(options={}){
   };
   const bindings={salaryOptions:async()=>({choices:[]}),...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
     creditPaid:()=>[],matchCredit:()=>null,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
+    todayExpensesModel:todayReports.todayExpensesModel,formatTodayExpenses:m=>options.todayPages??todayReports.formatTodayExpenses(m),
+    setTimeout:(fn,ms)=>{state.delays.push(ms);state.reportEvents.push('pause:'+ms);fn();return 0},
+    __finance:()=>({projection:{},today:options.reportToday??'2026-10-21',txs:state.rows,cats:options.categories??[],accounts:options.accounts??[]}),
     formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({})};
   // Підставляємо лише фінансовий вміст: реальні reply/sendPhoto формують Telegram payload.
-  new Function(...Object.keys(bindings),code+`;balance=async(chat)=>reply(chat,'Баланс');last=async(chat)=>reply(chat,'Останні');chartReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Графік','chart.png');budgetReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Бюджет','budget.png');withFinance=async(chat,fn)=>{__track('finance');await fn(chat,{projection:{},today:'2026-10-21',txs:[],cats:[],accounts:[]})};`)(...Object.values(bindings));
+  new Function(...Object.keys(bindings),code+`;balance=async(chat)=>reply(chat,'Баланс');last=async(chat)=>reply(chat,'Останні');chartReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Графік','chart.png');budgetReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Бюджет','budget.png');withFinance=async(chat,fn)=>{__track('finance');await fn(chat,__finance())};`)(...Object.values(bindings));
   let next=1;
   const send=async(text,extra={})=>{
     const update={update_id:extra.update_id??next++,message:{chat:{id:1,type:'private'},from:{id:1},date:NOW/1000,...(text?{text}:{}),...extra}};
@@ -154,7 +166,7 @@ test('unauthorized messages perform no financial action',async()=>{
 });
 
 test('all navigation buttons preserve confirmations but clear entry and app uses an ordinary URL',async()=>{
-  for(const key of ['balance','chart','budget','week','month','last','help','app','menu']){
+  for(const key of ['balance','chart','budget','week','month','today','last','help','app','menu']){
     const h=harness({pending:entry()});await h.send(kb.KB_BTN[key]);
     assert.equal(h.state.pending,null,key);assert.equal(h.state.rows.length,0,key);
     if(key==='app')assert.equal(h.state.messages.at(-1).reply_markup.inline_keyboard[0][0].url,kb.APP_URL);
@@ -163,6 +175,67 @@ test('all navigation buttons preserve confirmations but clear entry and app uses
     const h=harness({pending:entry()});await h.send(cancel);assert.equal(h.state.pending,null);
   }
   const start=harness();await start.send('/start');assert.deepEqual(start.state.messages.at(-1).reply_markup,kb.MAIN_KB);
+});
+
+test('today button and command show the finance day expenses and refresh the keyboard without writes',async()=>{
+ for(const text of [kb.KB_BTN.today,'/today']){
+  const rows=[{id:1,type:'expense',amount:1.25,date:'2026-11-01',description:'<Покупка>&'},
+   {id:2,type:'expense',amount:10,date:'2026-10-31',description:'Вчора'},
+   {id:3,type:'income',amount:100,date:'2026-11-01',description:'Дохід'},
+   {id:4,type:'expense',amount:50,date:'2026-11-01',transfer_id:'pair',description:'Переказ'}];
+  const h=harness({pending:entry('expense','image'),rows,reportToday:'2026-11-01'});await h.send(text);
+  assert.equal(h.state.pending,null);assert.deepEqual(h.state.rows,rows);assert.deepEqual(h.state.reports,['finance']);
+  const report=h.state.messages.find(m=>m.text.startsWith('🧾 Витрати за сьогодні'));
+  assert.ok(report);assert.match(report.text,/01\.11\.2026/);assert.match(report.text,/1,25 ₴/);assert.match(report.text,/Операцій: 1/);
+  assert.match(report.text,/&lt;Покупка&gt;&amp;/);assert.ok(!report.text.includes('Вчора')&&!report.text.includes('Переказ'));
+  assert.equal(report.parse_mode,'HTML');assert.deepEqual(report.reply_markup,kb.MAIN_KB);
+  assert.ok(!report.reply_markup.keyboard.flat().some(b=>b.text===kb.KB_BTN.month));
+ }
+});
+
+test('today report preserves a financial confirmation and cannot record a new transaction',async()=>{
+ const pending={amount:150,type:'income',description:'Дохід',date:'2026-10-21',source_id:'tg:99',expires:new Date(NOW+600000).toISOString()};
+ for(const text of [kb.KB_BTN.today,'/today']){
+  const h=harness({pending});await h.send(text);assert.deepEqual(h.state.pending,pending);
+  assert.equal(h.state.rows.length,0);assert.equal(h.state.writes,0);assert.deepEqual(h.state.reports,['finance']);
+  assert.match(h.state.messages.at(-1).text,/Сьогодні витрат ще немає/);
+  assert.deepEqual(h.state.messages.at(-1).reply_markup.keyboard,[[{text:kb.KB_BTN.yes},{text:'Ні, не додавати'}]]);
+  await h.send(kb.KB_BTN.yes);assert.equal(h.state.rows.length,1);assert.equal(h.state.pending,null);
+ }
+});
+
+test('today report paces pages and retries a rate-limited page before advancing',async()=>{
+ const pages=['🧾 Перша сторінка','🧾 Друга сторінка','🧾 Третя сторінка'];
+ const ok={status:200,body:{ok:true}};
+ const limited={status:429,body:{ok:false,error_code:429,parameters:{retry_after:2}}};
+ const h=harness({todayPages:pages,reportResponses:[ok,limited,ok,ok]});await h.send('/today');
+ assert.deepEqual(h.state.reportEvents,[pages[0],'pause:1000',pages[1],'pause:2000',pages[1],'pause:1000',pages[2]]);
+ assert.deepEqual(h.state.delays,[1000,2000,1000]);assert.equal(h.state.writes,0);
+ const single=harness({todayPages:[pages[0]]});await single.send('/today');
+ assert.deepEqual(single.state.delays,[]);assert.deepEqual(single.state.reportEvents,[pages[0]]);
+});
+
+test('today report aborts after permanent or exhausted delivery failure and explains incomplete output',async()=>{
+ const pages=['🧾 Перша сторінка','🧾 Друга сторінка','🧾 Третя сторінка'];
+ const ok={status:200,body:{ok:true}},limited={status:429,body:{ok:false,error_code:429,parameters:{retry_after:1}}};
+ for(const failures of [[{status:200,body:{ok:false,error_code:400}}],[{status:500,body:{ok:false}}],[{network:true}],
+   [{status:429,body:{ok:false,parameters:{retry_after:11}}}],[limited,limited]]){
+  const h=harness({todayPages:pages,reportResponses:[ok,...failures]});await h.send(kb.KB_BTN.today);
+  assert.ok(!h.state.messages.some(m=>m.text===pages[2]));assert.equal(h.state.writes,0);
+  const error=h.state.messages.at(-1);assert.match(error.text,/Звіт про витрати надіслано не повністю/);
+  assert.deepEqual(error.reply_markup,kb.MAIN_KB);assert.ok(h.state.delays.every(ms=>ms>=1000&&ms<=10000));
+  assert.equal(h.state.messages.filter(m=>m.text===pages[1]).length,failures.length);
+ }
+});
+
+test('today delivery bounds page count and rejects oversized messages without silent truncation',async()=>{
+ const pages=Array.from({length:60},(_,i)=>'🧾 Сторінка '+i);
+ const h=harness({todayPages:pages});await h.send('/today');
+ assert.equal(h.state.messages.filter(m=>m.text.startsWith('🧾')).length,50);
+ assert.match(h.state.messages.at(-1).text,/не повністю/);assert.equal(h.state.writes,0);
+ const invalid=harness({todayPages:['🧾 Нормальна','🧾'+'x'.repeat(4096),'🧾 Не надсилати']});await invalid.send('/today');
+ assert.equal(invalid.state.messages.filter(m=>m.text.startsWith('🧾')).length,1);
+ assert.match(invalid.state.messages.at(-1).text,/не повністю/);
 });
 test('expense images allow complete retail receipts and reject missing totals',async()=>{
   const h=harness({pending:entry('expense','image'),ocr:{has_total:true,amount:50,items_sum:50,date:'2026-10-20',readable:'good'}});
@@ -248,8 +321,10 @@ test('receipt continuation keeps confirmation buttons and supports confirmation 
   await h.send(kb.KB_BTN.yes);assert.equal(h.state.rows.length,1);assert.equal(h.state.pending,null);
 });
 test('duplicate image update does not call OCR again or add another row',async()=>{
-  const h=harness({pending:entry('income','image')});await h.photo({update_id:99});await h.photo({update_id:99});
-  assert.equal(h.state.rows.length,1);assert.equal(h.state.requests.length,1);
+  const h=harness({pending:entry('income','image')});await h.photo({update_id:99});
+  const initialRequests=h.state.requests.length;assert.equal(initialRequests,2);
+  await h.photo({update_id:99});
+  assert.equal(h.state.rows.length,1);assert.equal(h.state.requests.length,initialRequests);
 });
 
 const accounts=[{id:7,name:'Основна',kind:'debit',bank:'privat',is_salary:true,active:true,card_last4:'1234'},
