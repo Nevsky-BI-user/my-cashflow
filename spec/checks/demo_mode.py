@@ -22,7 +22,7 @@ storage:{from:b=>{rec('storage:'+b);return{createSignedUrls:()=>Promise.resolve(
 channel:n=>{rec('channel:'+n);const c={on:()=>c,subscribe:()=>c};return c},removeChannel:()=>Promise.resolve('ok')}}}})()"""
 # рядки демо-даних, які мають бути на вкладках (вигадані назви з demoSeed)
 MARKS = {0: ['Ощадбанк', 'monobank'], 1: ['Їжа', 'Транспорт'], 2: ['Аванс'], 3: [], 4: ['Подушка безпеки']}
-# Платежі: на телефоні календар із подіями вибраного дня, тому досить однієї назви з демо-платежів або позначок подій у днях
+# Платежі: на телефоні обираємо позначений день і перевіряємо назву платежу в його деталях.
 PAYS = ['Пральна машина', 'Ноутбук для навчання', 'Смартфон', 'Оренда квартири', 'Садочок', 'Інтернет', 'Мобільний звʼязок', 'Стрімінги', 'Комунальні', 'Спортзал', 'Страховка авто']
 
 
@@ -74,8 +74,24 @@ def _tabs(page, tag):
         miss = [m for m in marks if m not in txt]
         check(not miss, f'вкладка {i + 1}: немає демо-рядків {miss}')
         if i == 3:
-            names = [m for m in PAYS if m in txt]
-            check(len(names) >= 3 or (names and txt.count('•') >= 5), f'вкладка 4: немає демо-платежів ({names}, {txt.count("•")} позначок подій)')
+            if page.viewport_size['width'] < 1024:
+                days = page.locator('.cm-calendar .cal-cell:has(.cm-count)')
+                check(days.count() > 0, 'вкладка 4: немає днів із демо-подіями')
+                names = []
+                for n in range(days.count()):
+                    day = days.nth(n)
+                    day.click()
+                    page.wait_for_timeout(100)
+                    check('sel' in (day.get_attribute('class') or '').split(), 'натискання дня не змінило вибір календаря')
+                    detail = page.locator('.cm-details').inner_text()
+                    names = [m for m in PAYS if m in detail]
+                    if names:
+                        break
+                check(names, 'вкладка 4: позначені дні не показують демо-платежів у деталях')
+                shot(page, f'demo-{tag}-{i + 1}.jpg', full=False)
+            else:
+                names = [m for m in PAYS if m in txt]
+                check(len(names) >= 3 or (names and txt.count('•') >= 5), f'вкладка 4: немає демо-платежів ({names}, {txt.count("•")} позначок подій)')
         check(page.locator('.skel-page').count() == 0, f'вкладка {i + 1}: скелетон замість даних')
 
 

@@ -15,7 +15,7 @@ class Clock extends Date{constructor(...args){super(...(args.length?args:[NOW]))
 const entry=(type='income',input='text')=>({kind:'entry',type,input,expires:new Date(NOW+600000).toISOString()});
 const receipt=(transactions=[{amount:150,type:'income',currency:'UAH',description:'Переказ',date:'2026-10-20'}])=>({kind:'transactions',complete:true,readable:'good',transactions});
 function harness(options={}){
-  const state={pending:options.pending??null,rows:[...(options.rows??[])],messages:[],photos:[],requests:[],reports:[],writes:0};
+  const state={pending:options.pending??null,rows:[...(options.rows??[])],messages:[],photos:[],requests:[],reports:[],events:[],writes:0};
   let handler;
   const sb={storage:{from:()=>({upload:async()=>({error:options.uploadError?{message:'synthetic'}:null}),download:async()=>({data:{arrayBuffer:async()=>new Uint8Array([1]).buffer}})})},
     from(table){
@@ -43,7 +43,7 @@ function harness(options={}){
             if(options.insertError)return {data:null,error:{message:'synthetic'}};
             const rows=(Array.isArray(q.payload)?q.payload:[q.payload]).map((r,i)=>({...r,id:state.rows.length+i+1}));
             if(rows.some(r=>state.rows.some(old=>r.source_id===old.source_id)))return {data:null,error:{code:'23505'}};
-            state.rows.push(...rows);return {data:q.one?rows[0]:rows,error:null};
+            state.rows.push(...rows);state.events.push('insert');return {data:q.one?rows[0]:rows,error:null};
           }
           const rows=state.rows.filter(r=>q.filters.every(([k,v])=>r[k]===v)&&(!q.min||r[q.min[0]]>=q.min[1])&&(!q.max||r[q.max[0]]<=q.max[1]));
           return {data:q.one?rows[0]??null:rows,error:null};
@@ -54,8 +54,15 @@ function harness(options={}){
   const fetch=async(url,init)=>{
     if(url.includes('anthropic')){state.requests.push(JSON.parse(init.body));return {ok:!options.ocrError,json:async()=>({stop_reason:'end_turn',content:[{type:'text',text:JSON.stringify(options.ocr??receipt())}]})};}
     if(url.includes('/getFile'))return {json:async()=>({ok:true,result:{file_path:'photo.jpg'}})};
-    if(url.includes('/file/'))return {ok:true,arrayBuffer:async()=>new Uint8Array([1]).buffer};
-    if(url.includes('/sendMessage'))state.messages.push(JSON.parse(init.body));
+    if(url.includes('/file/'))return {ok:true,arrayBuffer:async()=>new Uint8Array(options.imageBytes??[1]).buffer};
+    if(url.includes('/sendMessage')){
+      const message=JSON.parse(init.body);state.messages.push(message);
+      if(message.text.startsWith('⚠️')){
+        state.events.push('warning');
+        if(options.warningError==='network')throw new Error('synthetic');
+        return {ok:options.warningError!=='http',json:async()=>({ok:options.warningError!=='api'})};
+      }
+    }
     if(url.includes('/sendPhoto'))state.photos.push(init.body);
     return {ok:true,json:async()=>({ok:true})};
   };
@@ -101,12 +108,11 @@ test('wizard accepts grouped thousands and decimals without truncating the amoun
     assert.equal(h.state.rows.length,0,text);assert.equal(h.state.pending.kind,'entry');
   }
 });
-test('image income requires all valid income rows and keeps mode after rejection',async()=>{
+test('image income requires valid bank rows and keeps mode after unknown dates, direction or retail receipts',async()=>{
   const h=harness();await h.send(kb.KB_BTN.income);await h.send(kb.KB_BTN.image);await h.photo();
   assert.equal(h.state.rows[0]?.type,'income');assert.equal(h.state.pending,null);
-  for(const ocr of [receipt([{amount:10,type:'expense',currency:'UAH',description:'Кава',date:'2026-10-20'}]),
-    receipt([{amount:10,type:'income',currency:'UAH',description:'Переказ',date:null}]),
-    {...receipt(),transactions:[...receipt().transactions,{amount:20,type:'expense',currency:'UAH',description:'Кава',date:'2026-10-20'}]},
+  for(const ocr of [receipt([{amount:10,type:'income',currency:'UAH',description:'Переказ',date:null}]),
+    receipt([{amount:10,type:null,currency:'UAH',description:'Переказ',date:'2026-10-20'}]),
     {has_total:true,amount:150,items_sum:150,date:'2026-10-20',readable:'good'}]){
     const bad=harness({pending:entry('income','image'),ocr});await bad.photo();
     assert.equal(bad.state.rows.length,0);assert.equal(bad.state.pending.input,'image');assert.deepEqual(bad.state.messages.at(-1).reply_markup,kb.ENTRY_INPUT_KB);
@@ -158,11 +164,70 @@ test('all navigation buttons preserve confirmations but clear entry and app uses
   }
   const start=harness();await start.send('/start');assert.deepEqual(start.state.messages.at(-1).reply_markup,kb.MAIN_KB);
 });
-test('expense images allow complete retail receipts and reject income without coercion',async()=>{
+test('expense images allow complete retail receipts and reject missing totals',async()=>{
   const h=harness({pending:entry('expense','image'),ocr:{has_total:true,amount:50,items_sum:50,date:'2026-10-20',readable:'good'}});
   await h.photo();assert.equal(h.state.rows[0]?.type,'expense');assert.equal(h.state.pending,null);
-  for(const ocr of [receipt(),{has_total:false,amount:null,items_sum:50,date:'2026-10-20',readable:'good'}]){
+  for(const ocr of [{has_total:false,amount:null,items_sum:50,date:'2026-10-20',readable:'good'}]){
     const bad=harness({pending:entry('expense','image'),ocr});await bad.photo();assert.equal(bad.state.rows.length,0);assert.equal(bad.state.pending.kind,'entry');
+  }
+});
+
+test('both image entry modes preserve visible directions in mixed and opposite-type bank screenshots',async()=>{
+  const income=receipt().transactions[0];
+  const expense={amount:20,type:'expense',currency:'UAH',description:'Кава',date:'2026-10-20'};
+  for(const type of ['income','expense']){
+    for(const transactions of [[income,expense],type==='income'?[expense]:[income]]){
+      const h=harness({pending:entry(type,'image'),ocr:receipt(transactions)});await h.photo();
+      assert.deepEqual(h.state.rows.map(r=>r.type),transactions.map(t=>t.type));
+      assert.equal(h.state.pending,null);assert.deepEqual(h.state.events,['warning','insert']);
+      const warning=h.state.messages.find(m=>m.text.startsWith('⚠️')).text;
+      assert.match(warning,/Доходів: \d\. Витрат: \d/);
+      assert.match(warning,transactions.length===2?/На скриншоті є доходи й витрати/:/Тип операцій визначено за зображенням/);
+    }
+  }
+});
+
+test('type and clipping warning is combined and failed delivery keeps image entry without inserts',async()=>{
+  const ocr={...receipt(),omitted:[{reason:'clipped',description:'Обрізаний рядок'}]};
+  const h=harness({pending:entry('expense','image'),ocr});await h.photo();
+  const warnings=h.state.messages.filter(m=>m.text.startsWith('⚠️'));
+  assert.equal(warnings.length,1);assert.match(warnings[0].text,/Обрізаних операцій пропущено: 1/);
+  assert.match(warnings[0].text,/Доходів: 1\. Витрат: 0/);assert.deepEqual(h.state.events,['warning','insert']);
+  for(const warningError of ['network','http','api']){
+    const bad=harness({pending:entry('expense','image'),ocr,warningError});await bad.photo();
+    assert.equal(bad.state.rows.length,0);assert.equal(bad.state.pending.input,'image');
+    assert.deepEqual(bad.state.events,['warning']);
+    assert.match(bad.state.messages.at(-1).text,/Нічого не записано/);
+  }
+});
+
+test('image entry hint describes automatic row directions without a single-type restriction',async()=>{
+  for(const type of ['income','expense']){
+    const h=harness();await h.send(kb.KB_BTN[type]);await h.send(kb.KB_BTN.image);
+    assert.match(h.state.messages.at(-1).text,/доходи й витрати визначу окремо за знаком/);
+    assert.doesNotMatch(h.state.messages.at(-1).text,/лише доходи|лише витрати/);
+  }
+});
+
+test('PNG and JPEG documents use the photo OCR path in direct and guided image entry',async()=>{
+  for(const [mime_type,imageBytes] of [['image/png',[137,80,78,71,13,10,26,10]],['image/jpeg',[255,216,255,224]]]){
+    for(const pending of [null,entry('income','image')]){
+      const h=harness({pending,imageBytes});
+      await h.send(null,{document:{file_id:'image-document',mime_type,file_size:1024}});
+      assert.equal(h.state.rows.length,1);assert.equal(h.state.pending,null);
+      assert.equal(h.state.requests[0].messages[0].content[0].source.media_type,mime_type);
+    }
+  }
+});
+
+test('unrelated documents and invalid or oversized image files never call OCR or change pending state',async()=>{
+  for(const document of [{file_id:'pdf',mime_type:'application/pdf',file_size:1024},
+    {file_id:'image',mime_type:'image/png',file_size:20*1024*1024+1},
+    {file_id:'image',mime_type:'image/jpeg'},{file_id:'image',mime_type:'image/png',file_size:-1}]){
+    const pending=entry('income','image');const h=harness({pending});await h.send(null,{document});
+    assert.equal(h.state.rows.length,0);assert.equal(h.state.requests.length,0);assert.deepEqual(h.state.pending,pending);
+    if(document.mime_type==='application/pdf')assert.equal(h.state.messages.length,0);
+    else assert.match(h.state.messages.at(-1).text,/до 20 МБ/);
   }
 });
 test('OCR, storage and insert failures keep image mode with retry keyboard',async()=>{
