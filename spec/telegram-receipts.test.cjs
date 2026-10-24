@@ -73,9 +73,9 @@ test('active account query selects card suffix and filters active accounts',asyn
   assert.ok(columns.split(',').includes('card_last4'));assert.equal(active,true);
 });
 function harness(responses, options={}) {
-  const state={rows:[...(options.existing??[])],inserts:[],replies:[],txReplies:[],categories:[],requests:[],accountLoads:[],pending:options.pending??null};
+  const state={rows:[...(options.existing??[])],inserts:[],replies:[],txReplies:[],categories:[],requests:[],accountLoads:[],uploads:[],warnings:[],events:[],pending:options.pending??null};
   const sb={
-    storage:{from:()=>({upload:async()=>({error:null}),download:async()=>({data:{arrayBuffer:async()=>new Uint8Array([1]).buffer}})})},
+    storage:{from:()=>({upload:async(...args)=>{state.uploads.push(args);return {error:null}},download:async()=>({data:{arrayBuffer:async()=>new Uint8Array([1]).buffer}})})},
     from(table) {
       const q={filters:[],payload:null,mode:'read',one:false};
       q.select=()=>q;
@@ -94,7 +94,7 @@ function harness(responses, options={}) {
           return {data:{telegram_pending:state.pending},error:null};
         }
         if(q.mode==='insert'){
-          state.inserts.push(q.payload);
+          state.inserts.push(q.payload);state.events.push('insert');
           if(options.insertError)return {data:null,error:options.insertError};
           const rows=(Array.isArray(q.payload)?q.payload:[q.payload]).map((r,i)=>({...r,id:state.rows.length+i+1}));
           if(rows.some(r=>state.rows.some(old=>old.source_id===r.source_id)))return {data:null,error:{code:'23505'}};
@@ -119,8 +119,13 @@ function harness(responses, options={}) {
       const response=responses[Math.min(next++,responses.length-1)];
       return {ok:true,json:async()=>({stop_reason:options.stopReason??'end_turn',content:[{type:'text',text:JSON.stringify(response)}]})};
     }
+    if(url.includes('sendMessage')){
+      state.warnings.push(JSON.parse(init.body));state.events.push('warning');
+      if(options.warningError==='network')throw new Error('synthetic');
+      return {ok:options.warningError!=='http',json:async()=>({ok:options.warningError!=='api'})};
+    }
     if(url.includes('getFile'))return {json:async()=>({ok:true,result:{file_path:'photo.jpg'}})};
-    return {ok:true,arrayBuffer:async()=>new Uint8Array([1,2]).buffer};
+    return {ok:true,arrayBuffer:async()=>new Uint8Array(options.imageBytes??[1,2]).buffer};
   };
   const accs=options.accounts??[{id:7,name:'Готівка'}];
   const linkReceiptRows=new Function('fixedContext','fixedCandidates','fixedOccurrenceKey',receiptLinkCode+';return linkReceiptRows;')(
@@ -497,6 +502,147 @@ test('duplicate inside screenshot rejects whole batch without any insert',async(
   const h=harness([batch([transaction({date:'2026-10-18'}),transaction({date:'2026-10-20'})])]);
   await h.run();assert.equal(h.state.inserts.length,0);
   assert.match(h.state.replies.at(-1)[1],/На зображенні є схожі операції/);
+});
+
+test('Bank rows preserve separate payment times and dates when another row has a clipped required field',async()=>{
+  const response={...batch([
+    transaction({amount:147.23,description:'Тестовий сервіс',date_text:'Вчора',time:'14:42'}),
+    transaction({amount:147.23,description:'Тестовий сервіс',date_text:'Вчора',time:'14:18'}),
+    transaction({amount:312.4,description:'Автоплатіж',date_text:'Вчора',time:'10:25'}),
+    transaction({amount:58.91,description:'Тестова крамниця',date_text:'Вчора',time:'01:08'}),
+    transaction({amount:6300,type:'income',description:'Тестове надходження',date_text:'Ср, 17 червня',time:'17:35'}),
+  ]),bank:'privat',card_last4:'2468',omitted:[{reason:'clipped',description:'Тестове надходження — обрізана сума'}]};
+  const h=harness([response],{today:'2026-06-19',messageDate:Date.parse('2026-06-18T21:25:00Z')/1000,
+    accounts:[{id:88,bank:'privat',name:'Картка',card_last4:'2468'}]});
+  await h.run();
+  assert.equal(h.state.rows.length,5);
+  assert.deepEqual(h.state.rows.map(r=>r.date),['2026-06-18','2026-06-18','2026-06-18','2026-06-18','2026-06-17']);
+  assert.deepEqual(h.state.rows.map(r=>r.amount),[147.23,147.23,312.4,58.91,6300]);
+  assert.ok(h.state.rows.every(r=>r.account_id===88));
+  assert.match(h.state.rows[0].description,/ · 14:42$/);assert.match(h.state.rows[1].description,/ · 14:18$/);
+  assert.deepEqual(h.state.events,['warning','insert']);
+  assert.match(h.state.warnings[0].text,/Обрізаних операцій пропущено: 1/);
+  assert.match(h.state.replies[0][1],/Записано операцій: 5\. Обрізаних операцій пропущено: 1/);
+  assert.equal(h.state.requests.length,1);
+});
+
+test('Oschad rows retain group dates and report another row only when its required amount is clipped',async()=>{
+  const response={...batch([
+    transaction({amount:75,description:'**1234',date_text:'18 червня'}),
+    transaction({amount:125,description:'**5678',date_text:'18 червня'}),
+    transaction({amount:260,description:'Тестова майстерня',date_text:'17 червня'}),
+  ]),bank:'oschad',omitted:[{reason:'clipped',description:'Тестове кафе — обрізана сума'}]};
+  const h=harness([response],{today:'2026-06-19',messageDate:Date.parse('2026-06-18T21:26:00Z')/1000,
+    accounts:[{id:43,bank:'oschad',name:'Картка',card_last4:'1357'}]});
+  await h.run();
+  assert.deepEqual(h.state.rows.map(r=>[r.amount,r.date,r.account_id]),[[75,'2026-06-18',43],[125,'2026-06-18',43],[260,'2026-06-17',43]]);
+  assert.match(h.state.warnings[0].text,/Тестове кафе/);
+  assert.match(receiptSystem,/Суми картки «Аналітика» це підсумки місяця, не операції/);
+  assert.match(receiptSystem,/Номер отримувача.*не є карткою власника/);
+});
+
+test('clipped decoration or optional time does not omit readable amounts and group dates',async()=>{
+  assert.match(receiptSystem,/Обрізані іконка, категорія, спосіб оплати, необов’язковий час.*НЕ заважають включити операцію/);
+  assert.match(receiptSystem,/обрізали саме обов’язкове поле операції\. Лише тоді пропусти рядок/);
+  const options={today:'2026-06-19',messageDate:Date.parse('2026-06-18T21:26:00Z')/1000};
+  const response={...batch([
+    transaction({amount:75,description:'**1234',date_text:'18 червня'}),
+    transaction({amount:125,description:'**5678',date_text:'18 червня'}),
+    transaction({amount:260,description:'Тестова майстерня',date_text:'17 червня'}),
+    transaction({amount:85,description:'Тестове кафе',date_text:'17 червня',time:null}),
+  ]),bank:'oschad',omitted:[]};
+  const h=harness([response],options);await h.run();
+  assert.deepEqual(h.state.rows.map(r=>[r.amount,r.date]),[[75,'2026-06-18'],[125,'2026-06-18'],[260,'2026-06-17'],[85,'2026-06-17']]);
+  assert.equal(h.state.warnings.length,0);
+  const bottom=harness([{...batch([transaction({amount:2750,type:'income',description:'Тестове надходження',date_text:'Ср, 17 червня',time:null})]),omitted:[]}],options);
+  await bottom.run();assert.equal(bottom.state.rows[0]?.amount,2750);assert.equal(bottom.state.rows[0]?.date,'2026-06-17');
+  assert.equal(bottom.state.warnings.length,0);
+});
+
+test('explicit screenshot capture date anchors yesterday and yearless groups instead of resend day',async()=>{
+  for(const caption of ['дата скриншота: 2026-06-17','ДАТА СКРИНШОТУ: 17.06.2026']){
+    const h=harness([batch([transaction({amount:75,date_text:'Вчора'}),transaction({amount:125,date_text:'17 червня'})])],
+      {today:'2026-06-19',messageDate:Date.parse('2026-06-18T21:01:00Z')/1000});
+    await h.run(70,caption);
+    assert.deepEqual(h.state.rows.map(r=>r.date),['2026-06-16','2026-06-17']);
+    assert.match(h.state.requests[0].system,/2026-06-17/);
+  }
+  const unknown=harness([batch([transaction({date_text:null})])],{today:'2026-06-19',messageDate:Date.parse('2026-06-18T21:01:00Z')/1000});
+  await unknown.run(70,'дата скриншота: 2026-06-17');assert.equal(unknown.state.inserts.length,0);
+});
+
+test('invalid explicit capture date blocks before storage or OCR and arbitrary caption dates do not anchor',async()=>{
+  const options={today:'2026-06-20',messageDate:Date.parse('2026-06-18T21:01:00Z')/1000};
+  for(const caption of ['дата скриншота:','дата скриншота: невідомо','дата скриншота: 2026-02-30',
+    'дата скриншота: 2026-06-20','дата скриншота: 2026-06-17abc','дата скриншота: 2026-06-17; дата скриншоту: 2026-06-18']){
+    const h=harness([batch()],options);await h.run(70,caption);
+    assert.equal(h.state.inserts.length,0);assert.equal(h.state.uploads.length,0);assert.equal(h.state.requests.length,0);
+    assert.match(h.state.replies.at(-1)[1],/Некоректна дата скриншота/);
+  }
+  const h=harness([batch([transaction({date_text:'Вчора'})])],options);
+  await h.run(70,'готівка, повернення за 2026-06-17');
+  assert.equal(h.state.rows[0].date,'2026-06-18');assert.equal(h.state.rows[0].account_id,7);
+});
+
+test('multipart keeps first explicit capture reference across midnight and later valid captions',async()=>{
+  const options={today:'2026-06-20',messageDate:Date.parse('2026-06-18T20:59:00Z')/1000};
+  const h=harness([{...single,has_total:false,amount:null,date_text:'Вчора'},{...single,date_text:'Вчора'}],options);
+  await h.run(70,'дата скриншота: 2026-06-17');
+  assert.equal(h.state.pending.reference,'2026-06-17');
+  options.messageDate=Date.parse('2026-06-18T21:01:00Z')/1000;
+  await h.run(71,'дата скриншота: 2026-06-18');
+  assert.equal(h.state.rows[0].date,'2026-06-16');
+  assert.match(h.state.requests.at(-1).system,/2026-06-17/);
+});
+
+test('recipient suffix cannot select a source account even when OCR reports it as owner metadata',async()=>{
+  for(const description of ['**1234','Переказ на картку **1234','Переказ на картку 1234','Отримувач •••• 1234',
+    'Переказ на картку','Переказ на рахунок','Отримувач','Одержувач']){
+    const response={...batch([transaction({description,bank:'oschad',card_last4:'1234',card_network:'visa'})]),bank:'oschad',card_last4:null};
+    const h=harness([response],{accounts:[{id:3,name:'Джерело',bank:'oschad',card_last4:'2468'},{id:4,name:'Інша картка',bank:'oschad',card_last4:'1234'}]});
+    await h.run();assert.equal(h.state.rows[0]?.account_id,null,description);
+    const unique=harness([response],{accounts:[{id:3,name:'Джерело',bank:'oschad',card_last4:'2468'}]});
+    await unique.run();assert.equal(unique.state.rows[0]?.account_id,3,description);
+  }
+  for(const owner of ['2468','1234']){
+    const h=harness([{...batch([transaction({description:'Переказ на картку **1234',bank:'oschad',card_last4:'1234',card_network:'visa'})]),bank:'oschad',card_last4:owner}],
+      {accounts:[{id:3,name:'Джерело',bank:'oschad',card_last4:'2468'},{id:4,name:'Інша картка',bank:'oschad',card_last4:'1234'}]});
+    await h.run();assert.equal(h.state.rows[0]?.account_id,owner==='2468'?3:4);
+  }
+});
+
+test('only explicit clipped omissions are accepted and a failed warning prevents every write',async()=>{
+  for(const omitted of [null,{},[{reason:'unknown_date',description:'x'}],[{reason:'clipped',description:''}]]){
+    const h=harness([{...batch(),omitted}]);await h.run();
+    assert.equal(h.state.inserts.length,0);assert.equal(h.state.warnings.length,0);
+  }
+  for(const warningError of ['network','http','api']){
+    const h=harness([{...batch(),omitted:[{reason:'clipped',description:'Обрізаний рядок'}]}],{warningError});await h.run();
+    assert.equal(h.state.inserts.length,0);assert.equal(h.state.categories.length,0);
+    assert.match(h.state.replies.at(-1)[1],/Нічого не записано/);
+  }
+});
+
+test('time evidence only separates same-day rows and never disables existing-transaction checks',async()=>{
+  for(const fields of [{time:null},{time:'14:42'},{time:'25:01'},{date:'2026-10-18',time:'14:18'}]){
+    const h=harness([batch([transaction({time:'14:42'}),transaction(fields)])]);await h.run();
+    assert.equal(h.state.inserts.length,0,JSON.stringify(fields));
+  }
+  for(const description of ['Магазин','Магазин · 14:42']){
+    const h=harness([batch([transaction({time:'14:18'})])],{existing:[{id:1,amount:120.5,type:'expense',date:'2026-10-19',description,account_id:null}]});
+    await h.run();assert.equal(h.state.inserts.length,0);
+    assert.match(h.state.replies.at(-1)[1],/Схожа операція вже записана/);
+  }
+});
+
+test('PNG and JPEG byte signatures retain matching vision and private-storage media types',async()=>{
+  for(const [imageBytes,type,ext] of [[[137,80,78,71,13,10,26,10],'image/png','.png'],[[255,216,255,224],'image/jpeg','.jpg']]){
+    const h=harness([single],{imageBytes});await h.run();
+    assert.equal(h.state.rows.length,1);
+    assert.equal(h.state.requests[0].messages[0].content[0].source.media_type,type);
+    assert.equal(h.state.uploads[0][2].contentType,type);
+    assert.ok(h.state.rows[0].receipt_url.endsWith(ext));
+  }
 });
 test('single and multipart final receipt also check existing transactions',async()=>{
   const existing=[{id:1,amount:250,type:'expense',date:'2026-10-19',account_id:null,description:'Чек'}];
