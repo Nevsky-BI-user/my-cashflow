@@ -80,7 +80,7 @@ DAYS = "[...document.querySelectorAll('.p-flow.desk .flow-group .flow-day span:f
 CHIPS = """(()=>{const bar=document.querySelector('.p-flow.desk .flow-bar').getBoundingClientRect();const box=document.querySelector('.flow-cats');
 return {sw:box.scrollWidth,cw:box.clientWidth,bar:{l:bar.left,r:bar.right,t:bar.top,b:bar.bottom},
 chips:[...box.querySelectorAll('.flow-chip')].map(e=>{const r=e.getBoundingClientRect();return {t:e.innerText.trim(),l:r.left,r:r.right,t0:r.top,b:r.bottom,sw:e.scrollWidth,cw:e.clientWidth,h:r.height}}),
-names:BCAT.map(b=>b.name)}})()"""
+names:BCAT.filter(b=>!['debt_card','debt_installment'].includes(b.budget_role)).map(b=>b.name)}})()"""
 CHIPS_N = "document.querySelectorAll('.flow-cats .flow-chip').length - 1"
 
 
@@ -138,14 +138,14 @@ def sort_chips(page):
 
 def all_chips(page):
     """Усі штатні й чотири додаткові категорії видно одразу без кнопки «ще N» / «згорнути»."""
-    base_names = page.evaluate('BCAT.map(b=>b.name)')
+    base_names = page.evaluate("BCAT.filter(b=>!['debt_card','debt_installment'].includes(b.budget_role)).map(b=>b.name)")
     expected = len(base_names) + 4
     extra = ''.join("{id:'x%d',name:'Тест %d',limit:100,color:'#999999',icon:'*'}," % (i, i) for i in range(4))
     freeze(page, '2026-10-08', patch=[('const BCAT=[', 'const BCAT=[' + extra)])
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(300)
     go_tab(page, 2)
-    names = page.evaluate('BCAT.map(b=>b.name)')
+    names = page.evaluate("BCAT.filter(b=>!['debt_card','debt_installment'].includes(b.budget_role)).map(b=>b.name)")
     check(len(names) == expected, f'у фікстурі {len(names)} категорій, а не {expected}')
     check(page.locator('.flow-cats .flow-more').count() == 0, 'є кнопка «ще N» / «згорнути»')
     shown = page.evaluate(CHIPS_N)

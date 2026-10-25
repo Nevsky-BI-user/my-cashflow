@@ -95,6 +95,7 @@ def desktop(page):
     # і нерозподіленого залишку, а не старий мінімум 15 000 ₴.
     saved=page.evaluate("window.__financeInput.monthly_budgets[0]")
     savings_ids={str(c['id']) for c in page.evaluate('BCAT') if str(c['id'])=='savings' or c['name'].strip().casefold()=='заощадження'}
+    debt_ids={str(c['id']) for c in page.evaluate('BCAT') if c.get('budget_role') in ('debt_card','debt_installment')}
     check(pb['start'][:7]=='2026-10' and pb['end'][:7]=='2026-10','fixture period moved outside October')
     first=date.fromisoformat(pb['start']).day-1
     stop=date.fromisoformat(pb['end']).day-1
@@ -103,13 +104,14 @@ def desktop(page):
     parts.append(pool-sum(parts))
     planned=sum(amount*stop//31-amount*first//31 for amount in parts)
     savings_part=sum(amount*stop//31-amount*first//31 for cid,amount in saved['allocations'].items() if str(cid) in savings_ids)
+    debt_part=sum(amount*stop//31-amount*first//31 for cid,amount in saved['allocations'].items() if str(cid) in debt_ids)
     check(pb['savingsTargetCents']==savings_part,'savings reserve differs from monthly category slices')
     check(pb['A']==pb['ownAt']-pb['reserve']-pb['repay']-savings_part,'spendable payout allocation formula changed')
-    check(pb['budget']==planned-savings_part,'consumable target includes savings category slices')
+    check(pb['budget']==planned-savings_part-debt_part,'consumable target includes savings or debt category slices')
     check(pb['avail']==page.evaluate('window.__financeProjection.currentPeriod.spendableRemainingCents'),'spendable ignores remaining monthly caps')
     go_tab(page,1)
     check(page.locator('.bud-kpis .bud-kpi').count()==4,'four monthly KPIs')
-    net_total=(pool-sum(amount for cid,amount in saved['allocations'].items() if str(cid) in savings_ids))/100
+    net_total=(pool-sum(amount for cid,amount in saved['allocations'].items() if str(cid) in savings_ids|debt_ids))/100
     check(num(kpi(page,'bud-pool'))==saved['total_cents']/100,'gross monthly funding envelope changed')
     raw=page.evaluate("txDemo(2026,9)")
     valid=[t for t in raw if t['type']=='expense' and t.get('fixed_id') is None and t.get('credit_id') is None and '2026-10-01'<=t['date'][:10]<=DAY]

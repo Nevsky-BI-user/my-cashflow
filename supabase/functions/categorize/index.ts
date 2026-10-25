@@ -86,14 +86,14 @@ Deno.serve(async (req) => {
   // Категорії сімейні (RLS віддає обом усе), тому беремо всі, фільтруємо за типом
   const { data: cats, error: catErr } = await sb
     .from('categories')
-    .select('id, name, is_income, hint');
+    .select('id, name, is_income, hint, budget_role');
   if (catErr) {
     console.error('categorize: categories lookup failed', { txId, catErr });
     return json({ error: 'categories_lookup_failed' }, 500);
   }
   const wantIncome = tx.type === 'income';
   // is_income null вважаємо витратою
-  const pool = (cats || []).filter((c) => (c.is_income === true) === wantIncome);
+  const pool = (cats || []).filter((c) => (c.is_income === true) === wantIncome && !['debt_card', 'debt_installment'].includes(c.budget_role));
   if (pool.length === 0) return giveUp(txId, 'no_categories');
   const poolIds = new Set(pool.map((c) => c.id));
 

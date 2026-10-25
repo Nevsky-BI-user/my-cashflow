@@ -55,7 +55,7 @@ export async function loadFinance(sb: any, today: string): Promise<FinanceData> 
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
     // v153: усі колонки, з ними budget_manual (ручний бюджет періоду, міграція 30); до застосування міграції запит не падає
     sb.from('salary_config').select('*').order('id').limit(1).maybeSingle(),
-    sb.from('categories').select('id,name,color,is_income,budget_limit,limit_abs,sort_order,group_id').order('id'),
+    sb.from('categories').select('id,name,color,is_income,budget_limit,limit_abs,sort_order,group_id,budget_role').order('id'),
   ]);
   if (acc.error || fix.error || cred.error || sal.error || cats.error) throw new Error('bot finance lookup failed');
   const monthly_budgets=await loadMonthlyBudgets(sb);
@@ -75,5 +75,5 @@ export async function loadFinance(sb: any, today: string): Promise<FinanceData> 
   const categories = (cats.data || []).map((c: any) => ({ ...c, type: c.is_income ? 'income' : 'expense' }));
   const input = { monthly_budgets, accounts, fixed: fix.data || [], credits: cred.data || [], salary: sal.data, categories, transactions: txs };
   const projection = financeProjection(input, { asof: today, through: shift(today, 120) });
-  return { today, projection, txs, accounts, fixed: fix.data || [], credits: cred.data || [], cats: categories, salary: sal.data, firstOwnDate, input };
+  return { today, projection, txs, accounts, fixed: fix.data || [], credits: cred.data || [], cats: categories.filter((c:any)=>!c.budget_role), salary: sal.data, firstOwnDate, input };
 }

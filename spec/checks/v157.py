@@ -14,6 +14,16 @@ from helpers import ROOT, check, freeze, go_tab, num, open_payout, settle
 
 DAY = '2026-10-13'
 FIX = ROOT / 'spec' / 'fixtures' / 'overview-cur.json'
+
+
+def _expected():
+    """Числа v156 незмінні; сучасний підпис явно називає невикористаний кредит."""
+    data = json.loads(FIX.read_text(encoding='utf-8'))
+    for snapshot in data.values():
+        funds = snapshot.get('kpis', {}).get('kpi-funds', {})
+        funds['rows'] = ['Невикористаний кредит' + row[len('Кредитні'):] if row.startswith('Кредитні') else row
+                         for row in funds.get('rows', [])]
+    return data
 VP = {'desktop': (1440, 900), 'mobile': (390, 844)}
 
 # усе видиме на Огляді, що залежить від періоду: плитки KPI з рядками, шапка бюджету, кільце, «Найближче», підсумок графіка
@@ -61,7 +71,7 @@ def _open(page, vp):
 def current_matches(page):
     vp = 'desktop' if page.viewport_size['width'] >= 1024 else 'mobile'
     snap = os.environ.get('V157_SNAP') == '1'
-    data = json.loads(FIX.read_text(encoding='utf-8')) if FIX.exists() else {}
+    data = _expected() if FIX.exists() else {}
     # обидва режими перемикача: між виплатами і календарний місяць (поточний місяць теж випадок А)
     for mode in ('period', 'month'):
         page.evaluate('m=>localStorage.setItem("per_mode",m)', mode)
@@ -321,7 +331,7 @@ def future_periods(page):
     page.wait_for_timeout(300)
     check(page.locator('.pp-now:visible').count() == 1, 'після «До поточного» немає позначки «зараз»')
     check(page.locator('.ov-per:visible').count() == 0, 'після «До поточного» лишився рядок не поточного періоду')
-    exp = json.loads(FIX.read_text(encoding='utf-8'))[vp]
+    exp = _expected()[vp]
     got = _snap(page)
     for k in exp:
         check(got.get(k) == exp[k], f'{vp}: після «До поточного» «{k}» не як у v156: {got.get(k)}')
@@ -443,7 +453,7 @@ def month_mode(page):
     page.locator('.ov-back:visible').click()
     page.wait_for_timeout(300)
     check(page.locator('.ov-per:visible').count() == 0, f'{vp} місяць: після «До поточного» лишився рядок не поточного періоду')
-    expc = json.loads(FIX.read_text(encoding='utf-8'))[vp + '-month']
+    expc = _expected()[vp + '-month']
     gotc = _snap(page)
     for k in expc:
         check(gotc.get(k) == expc[k], f'{vp} місяць: після «До поточного» «{k}» не як у v156: {gotc.get(k)}')

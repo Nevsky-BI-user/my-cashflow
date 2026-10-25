@@ -1354,7 +1354,7 @@ async function freeBlock(today: string): Promise<string> {
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
     // v153: усі колонки, з ними budget_manual (ручний бюджет періоду, міграція 30); до застосування міграції запит не падає
     sb.from('salary_config').select('*').order('id').limit(1).maybeSingle(),
-    sb.from('categories').select('id,name,is_income,budget_limit,limit_abs,sort_order,group_id').order('id'),
+    sb.from('categories').select('id,name,is_income,budget_limit,limit_abs,sort_order,group_id,budget_role').order('id'),
   ]);
   if (acc.error || fix.error || cred.error || sal.error || cats.error) throw new Error('budget data lookup failed');
   const manual = (acc.data || []).filter((a) => !a.mono_account_id && a.balance_updated_at);
@@ -1516,14 +1516,14 @@ async function onPaid(cq: any, chatId: number, msgId: number, userId: string, p:
   const [recent, range, cats] = await Promise.all([
     sb.from('transactions').select('id,date,payment_due_date,type,category_id,fixed_id,credit_id').eq(col, Number(p.id)).order('date', { ascending: false }).limit(50),
     sb.from('transactions').select('id,date,payment_due_date,type,category_id,fixed_id,credit_id').eq(col, Number(p.id)).or(`and(payment_due_date.gte.${from},payment_due_date.lt.${to}),and(payment_due_date.is.null,date.gte.${from},date.lt.${to})`),
-    sb.from('categories').select('id,name,is_income'),
+    sb.from('categories').select('id,name,is_income,budget_role'),
   ]);
   if (recent.error || range.error || cats.error) {
     console.error('paid: lookup error:', recent.error || range.error || cats.error);
     return answer('Помилка, спробуйте ще раз');
   }
   const head = String(cq?.message?.text || '').split('\n')[0];
-  const plan = payPlan({ kind: p.kind, item, eventDate: p.date, today: todayKyiv(), history: [...(range.data || []), ...(recent.data || [])], cats: cats.data || [] });
+  const plan = payPlan({ kind: p.kind, item, eventDate: p.date, today: todayKyiv(), history: [...(range.data || []), ...(recent.data || [])], cats: (cats.data || []).filter((c) => !['debt_card', 'debt_installment'].includes(c.budget_role)) });
   if (plan.status === 'already') {
     await answer(`Уже оплачено ${ddmm(plan.date)}`);
     return tgCall('editMessageText', { chat_id: chatId, message_id: msgId, text: `${head}\n✅ Уже оплачено ${ddmm(plan.date)}` });
