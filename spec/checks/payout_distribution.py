@@ -48,7 +48,7 @@ def verify_amounts(page):
     check(expected['sources'] == expected['arrears'] + expected['carry'] + expected['own'], 'source conservation')
     check(expected['own'] == expected['reserve'] + expected['repay'] + expected['prepay'] + savings + free, 'pool conservation')
     check(d.locator('[data-row=savings]').count() == 1, 'savings not shown as one final amount')
-    gap = q['reserveCents'] - funded_reserve
+    gap = max(q['reserveCents'], q['mandatoryCents']) - funded_reserve
     gap_cell = d.locator('[data-row=reserve-gap] .pd-money')
     check((int(gap_cell.get_attribute('data-cents')) if gap_cell.count() else 0) == gap, 'mandatory shortfall hidden or counted as funded reserve')
     check(free == expected['cash'] + expected['mono'], 'placement counted twice')
@@ -176,7 +176,102 @@ def unavailable(page):
     check(d.locator('.pd-money').count() == 0, 'unavailable allocation shown as financial zero')
 
 
+def compact_tabs(page):
+    # Перевіряємо CSS-пікселі після масштабування, обидві теми та вузькі екрани.
+    freeze(page, DAY)
+    for theme in ('dark', 'light'):
+        page.evaluate("t=>document.documentElement.dataset.theme=t", theme)
+        for width, height in ((1060, 640), (1280, 720), (1440, 900), (320, 812), (390, 844)):
+            page.set_viewport_size(dict(width=width, height=height))
+            d = open_card(page)
+            verify_amounts(page)
+            panel = d.get_by_role('tabpanel')
+            geo = d.evaluate("""d=>{const p=d.querySelector('.pd-panel:not([hidden])'),r=d.getBoundingClientRect();return{height:d.clientHeight,scroll:d.scrollHeight,left:r.left,right:r.right,top:r.top,bottom:r.bottom,body:p.clientHeight,bodyScroll:p.scrollHeight,close:d.querySelector('.pd-close').getBoundingClientRect().width}}""")
+            check(geo['scroll'] <= geo['height'] + 1 and geo['close'] >= 44, f'{theme}/{width}: dialog scroll or close target {geo}')
+            check(geo['left'] >= 7 and geo['top'] >= 7 and geo['right'] <= width - 7 and geo['bottom'] <= height - 7, f'{theme}/{width}: dialog touches viewport {geo}')
+            if width >= 960:
+                check(geo['bodyScroll'] <= geo['body'] + 1, f'{theme}/{width}: summary needs vertical scrolling {geo}')
+            else:
+                check(panel.locator('.pd-group-pool').evaluate("e=>e.getBoundingClientRect().top") < panel.locator('.pd-group-budget').evaluate("e=>e.getBoundingClientRect().top") < panel.locator('.pd-group-sources').evaluate("e=>e.getBoundingClientRect().top"), 'mobile summary order')
+                panel.evaluate('e=>e.scrollTop=e.scrollHeight')
+                last = panel.locator('[data-row=mono]')
+                check(last.evaluate("e=>{const r=e.getBoundingClientRect(),p=e.closest('.pd-panel').getBoundingClientRect();return r.bottom<=p.bottom&&r.top>=p.top}"), 'mobile final placement inaccessible')
+            tabs = d.get_by_role('tab')
+            check(tabs.count() == 3 and tabs.nth(0).get_attribute('aria-selected') == 'true', 'reopen did not reset summary')
+            for i in range(3):
+                target = tabs.nth(i).get_attribute('aria-controls')
+                check(d.locator('#' + target).get_attribute('aria-labelledby') == tabs.nth(i).get_attribute('id'), 'tab/panel linkage')
+            tabs.nth(0).focus()
+            for key, expected in [('ArrowRight', 1), ('End', 2), ('ArrowRight', 0), ('ArrowLeft', 2), ('Home', 0)]:
+                page.keyboard.press(key)
+                check(tabs.nth(expected).get_attribute('aria-selected') == 'true' and tabs.nth(expected).evaluate('e=>e===document.activeElement'), f'{key}: tab selection/focus')
+            page.screenshot(path=str(OUT / f'payout-compact-{theme}-{width}x{height}.png'))
+            tabs.nth(2).click()
+            page.keyboard.press('Escape')
+            check(trigger(page).evaluate('e=>e===document.activeElement'), 'tabbed dialog did not restore trigger focus')
+
+
+    # Дефіцит: реальні сирі дані рушія, а не підміна фінансових результатів.
+    from checks.finance import FIXTURE, fixture
+    import copy
+    page.set_viewport_size(dict(width=1060, height=640))
+    for extra_arrears in (False, True):
+        data = copy.deepcopy(FIXTURE)
+        data['monthly_budgets'] = []
+        data['accounts'][0]['balance'] = 0
+        data['salary']['advance_amount'] = 1000
+        if extra_arrears:
+            data['fixed'].append(dict(id=3, name='Попередня нестача', type='expense', amount=200000, day_of_month=11))
+        fixture(page, data)
+        d = open_card(page)
+        verify_amounts(page)
+        for key in ('reserve-gap', 'arrears-left'):
+            check(int(d.locator(f'[data-row={key}] .pd-money').get_attribute('data-cents')) > 0, 'deficit fixture lacks ' + key)
+        panel = d.get_by_role('tabpanel')
+        check(panel.evaluate('p=>p.scrollHeight<=p.clientHeight+1'), 'deficit summary needs desktop scrolling')
+        check(panel.locator('.pd-money').evaluate_all("els=>els.every(e=>{const r=e.getBoundingClientRect(),p=e.closest('.pd-panel').getBoundingClientRect();return r.left>=p.left&&r.right<=p.right&&r.top>=p.top&&r.bottom<=p.bottom})"), 'deficit money clipped')
+        page.screenshot(path=str(OUT / f'payout-deficit-{extra_arrears}.png'))
+        d.locator('.pd-close').click()
+        page.unroute(page.url)
+    # Сумісність рендерера зі старим адаптерним carry: явно задані 4 рядки,
+    # без зміни чи тверджень про поточні формули рушія.
+    freeze(page, DAY, [("const v=p.view,dlg=React.useRef(null)", "const v=p.view&&p.view.status==='available'?Object.assign({},p.view,{carry:{total:1234567,repay:1000000,prepay:200000,savings:34567}}):p.view,dlg=React.useRef(null)")])
+    d = open_card(page)
+    for key, cents in {'carry': 1234567, 'carry-repay': 1000000, 'carry-prepay': 200000, 'carry-savings': 34567}.items():
+        cell = d.locator(f'[data-row={key}] .pd-money')
+        check(int(cell.get_attribute('data-cents')) == cents and abs(num(cell.inner_text()) * 100 - cents) < .01, 'carry renderer lost value ' + key)
+    panel = d.get_by_role('tabpanel')
+    check(panel.evaluate('p=>p.scrollHeight<=p.clientHeight+1'), 'carry summary needs desktop scrolling')
+    check(panel.locator('.pd-money').evaluate_all("els=>els.every(e=>{const r=e.getBoundingClientRect(),p=e.closest('.pd-panel').getBoundingClientRect();return r.left>=p.left&&r.right<=p.right&&r.top>=p.top&&r.bottom<=p.bottom})"), 'carry money clipped')
+    page.screenshot(path=str(OUT / 'payout-legacy-carry-1060x640.png'))
+    d.locator('.pd-close').click()
+
+
+def long_details(page):
+    # Синтетичні довгі списки перевіряють лише межі UI; суми підсумку звіряємо з ядром.
+    freeze(page, DAY, [
+        ('v.categories.map(function(c)', "v.categories.concat(Array.from({length:70},function(_,i){return{id:'stress-'+i,name:'Додаткова категорія '+i,cents:101+i}})).map(function(c)"),
+        ('v.schedule.map(function(d)', "v.schedule.concat(Array.from({length:70},function(_,i){return{date:fcIsoAdd('2027-01-01',i),cents:101+i}})).map(function(d)"),
+    ])
+    for width, height in ((1060, 640), (320, 812), (390, 844)):
+        page.set_viewport_size(dict(width=width, height=height))
+        d = open_card(page)
+        verify_amounts(page)
+        for label in ('Категорії', 'По днях'):
+            d.get_by_role('tab', name=label, exact=True).click()
+            panel = d.get_by_role('tabpanel')
+            check(panel.evaluate('e=>e.scrollHeight>e.clientHeight'), f'{width}/{label}: missing local list scroll')
+            panel.evaluate('e=>e.scrollTop=e.scrollHeight')
+            last = panel.locator('.pd-row').last
+            check(last.evaluate("e=>{const r=e.getBoundingClientRect(),p=e.closest('.pd-panel').getBoundingClientRect();return r.top>=p.top&&r.bottom<=p.bottom+1}"), f'{width}/{label}: last detail row unreachable')
+            check(d.evaluate('d=>d.scrollHeight<=d.clientHeight+1') and d.locator('.pd-close').is_visible(), 'detail expanded whole modal')
+            page.screenshot(path=str(OUT / f'payout-long-{width}-{label}.png'))
+        d.locator('.pd-close').click()
+
+
 CHECKS = [
+    ('payout_distribution: compact summary tabs themes and keyboard', 'desktop', compact_tabs),
+    ('payout_distribution: bounded long category and day lists', 'desktop', long_details),
     ('payout_distribution: desktop geometry and monetary parity', 'desktop', responsive),
     ('payout_distribution: mobile geometry and monetary parity', 'mobile', responsive),
     ('payout_distribution: keyboard reduced motion and no writes', 'desktop', keyboard_motion),
