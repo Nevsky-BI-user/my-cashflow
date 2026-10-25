@@ -8,7 +8,7 @@ const {pathToFileURL}=require('node:url');
 const root=path.resolve(__dirname,'..');
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
 const line=name=>{const l=html.split(/\r?\n/).find(l=>l.startsWith('function '+name+'('));assert.ok(l,'немає '+name);return l;};
-const F=new Function([...['pastOwnSeries','balShift','balanceNowCents','balanceAfterCents','balancePast','kpiFunds'].map(line),
+const F=new Function([...['pastOwnSeries','balShift','balanceNowCents','balanceAfterCents','balancePast','spendableFunds','kpiFunds'].map(line),
  'return {pastOwnSeries,balShift,balanceNowCents,balanceAfterCents,balancePast,kpiFunds};'].join('\n'))();
 const stamp='2026-10-12T07:00:00Z',ASOF='2026-10-12';
 const salary={rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:51000,salary_amount:51000};
