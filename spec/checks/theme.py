@@ -52,7 +52,7 @@ def fonts_cards_buttons(page):
     page.evaluate("document.documentElement.setAttribute('data-theme','dark')")
     page.wait_for_timeout(300)
     bg = page.evaluate("()=>{const s=getComputedStyle(document.body),b=getComputedStyle(document.body,'::before');return {radial:(s.backgroundImage.match(/radial-gradient\\(/g)||[]).length,glass:b.backgroundImage}}")
-    check(bg['radial'] == 3 and 'linear-gradient' in bg['glass'], f'немає градієнтного liquid glass фону: {bg}')
+    check(bg['radial'] == 2 and bg['glass'] == 'none', f'темне тло має зберігати два делікатні градієнти без білого серпанку: {bg}')
     shot(page, 'ov-dark-1920.jpg', full=False)
 
 

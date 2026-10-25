@@ -2,11 +2,13 @@
 import json
 from pathlib import Path
 from helpers import check, finance_ref, freeze, go_tab
+from checks.a11y import CONTRAST
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'spec/.out'
 PALETTE = ['--bg', '--html-bg', '--card', '--card2', '--border', '--border2', '--text', '--text2', '--head', '--muted', '--muted2', '--indigo', '--blue', '--green', '--green-t', '--red', '--red-t', '--yellow', '--yellow-t', '--shadow', '--acc-bg', '--inc-bg', '--exp-bg', '--debt-bg']
 LIQUID_PALETTE = {'--bg':'#e7f0f4','--html-bg':'#e7f0f4','--card':'#fff','--card2':'#f7fafb','--border':'#d8e3e7','--border2':'#e8eef1','--text':'#253744','--text2':'#253744','--head':'#142a36','--muted':'#526775','--muted2':'#5f7180','--indigo':'#126e70','--blue':'#126e70','--green':'#21754f','--green-t':'#21754f','--red':'#b54149','--red-t':'#b54149','--yellow':'#9b640f','--yellow-t':'#8e5b0b','--shadow':'rgba(30,65,80,.12)','--acc-bg':'#e6f3f1'}
+DARK_PALETTE = {'--bg':'#0e171e','--html-bg':'#0b131a','--card':'#16222c','--card2':'#1d2e3a','--border':'#3b4f5d','--border2':'#2d414e','--text':'#e4edf0','--text2':'#e7eff4','--head':'#f0f6f8','--muted':'#b1c0ca','--muted2':'#9db0bd','--indigo':'#70cfca','--blue':'#70cfca','--green':'#72d5a0','--green-t':'#8ee0b5','--red':'#f78f95','--red-t':'#ffadb2','--yellow':'#e5bf75','--yellow-t':'#f3cd87','--shadow':'rgba(0,0,0,.35)','--acc-bg':'#203f45'}
 GEOMETRY = """({height:document.documentElement.scrollHeight,width:document.documentElement.scrollWidth,viewport:innerHeight,cards:[...document.querySelectorAll('.panel.desk > *, .dv-cols > *, .ck-cols > *, .bud-cols > *, .goals-cols > *')].map(e=>({cls:e.className,y:Math.round(e.getBoundingClientRect().y),h:Math.round(e.getBoundingClientRect().height)}))})"""
 
 
@@ -22,12 +24,16 @@ def audit(page):
             page.set_viewport_size({'width': width, 'height': height})
             page.evaluate('(theme)=>document.documentElement.dataset.theme=theme', theme)
             page.wait_for_timeout(100)
-            expected = {**palettes[('desktop' if width >= 1024 else 'mobile') + '-' + theme], **LIQUID_PALETTE}
+            expected = {**palettes[('desktop' if width >= 1024 else 'mobile') + '-' + theme], **(LIQUID_PALETTE if theme == 'light' else DARK_PALETTE)}
             palette = page.evaluate("""expected=>{const now=getComputedStyle(document.documentElement);return Object.entries(expected).filter(([k,v])=>now.getPropertyValue(k).trim()!==v).map(([k,v])=>[k,v,now.getPropertyValue(k)])}""", expected)
             check(not palette, f'Змінено палітру {theme}/{width}: {palette}')
             for i, tab in enumerate(('overview', 'budget', 'operations', 'payments', 'savings')):
                 go_tab(page, i)
                 geometry = page.evaluate(GEOMETRY)
+                title = page.locator('.dtitle h1:visible' if width >= 1024 else '.header .pp-t:visible,.budget-mobile-head h1:visible').first
+                check(title.count() == 1, f'{theme}/{width}/{tab}: page heading missing')
+                contrast = title.evaluate('(e,fn)=>eval(fn)(e)', CONTRAST)
+                check(contrast['r'] >= 4.5, f'{theme}/{width}/{tab}: heading contrast below 4.5: {contrast}')
                 rows.append({'theme': theme, 'width': width, 'tab': i, **geometry})
                 check(geometry['width'] <= width, f'{theme}/{width}/{tab}: горизонтальне переповнення {geometry}')
                 if width >= 1024:

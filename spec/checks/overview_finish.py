@@ -1,5 +1,6 @@
 """Overview fits the browser viewport and respects motion preferences."""
 from helpers import check, freeze, go_tab, settle
+from checks.a11y import CONTRAST
 
 
 def viewport_fit(page):
@@ -60,9 +61,14 @@ def surface_layers(page):
           canvas:getComputedStyle(document.body).backgroundImage,
           glass:getComputedStyle(document.querySelector('.side')).backdropFilter
         }}""")
-        check(material['shadow'] != 'none' and material['background'] == 'rgb(255, 255, 255)'
+        expected_background = 'rgb(255, 255, 255)' if theme == 'light' else 'rgb(22, 34, 44)'
+        check(material['shadow'] != 'none' and material['background'] == expected_background
               and 'radial-gradient' in material['canvas'] and 'blur' in material['glass'],
               f'{theme}: missing layered panel material {material}')
+        heading = panel.locator('.fc-title').first
+        check(heading.count() == 1, f'{theme}: forecast heading missing')
+        contrast = heading.evaluate('(e,fn)=>eval(fn)(e)', CONTRAST)
+        check(contrast['r'] >= 4.5, f'{theme}: forecast text contrast below 4.5: {contrast}')
         check('overview-arrive' in material['animation'] and material['opacity'] == '1',
               f'{theme}: entrance animation missing or does not finish {material}')
 
