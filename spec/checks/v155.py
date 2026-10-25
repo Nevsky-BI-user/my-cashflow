@@ -1,6 +1,7 @@
-"""Спільна система: білі картки на liquid glass градієнті, акцент #126e70.
+"""Спільна система: світлі та темні картки, бірюзовий акцент теми.
 Колір грошей та перевірки фінансової поведінки збережено."""
 from helpers import check, freeze, go_tab, settle
+from checks.a11y import CONTRAST
 
 # Огляд на ПК: багатошарові поверхні за явними --ov-* токенами.
 # Попередні правила пласких карток лишаються для телефона й інших вкладок.
@@ -63,9 +64,10 @@ def one_system(page):
     for theme in ('light', 'dark'):
         page.evaluate('t=>document.documentElement.dataset.theme=t', theme)
         seen_tiles, borders = 0, {}
-        # Три радіальні плями body та прозорий світловий шар ::before.
+        # Світла тема: три плями й світловий шар; темна: дві плями без білого відблиску.
         bg = page.evaluate(r"()=>{const s=getComputedStyle(document.body,'::before'),b=getComputedStyle(document.body);return {d:s.display,c:s.content,glass:s.backgroundImage,n:(b.backgroundImage.match(/radial-gradient\(/g)||[]).length}}")
-        check(bg['d'] != 'none' and bg['c'] != 'none' and bg['n'] == 3 and 'linear-gradient' in bg['glass'], f'{tag}/{theme}: немає liquid glass фону: {bg}')
+        material_ok = bg['n'] == 3 and 'linear-gradient' in bg['glass'] if theme == 'light' else bg['n'] == 2 and bg['glass'] == 'none'
+        check(bg['d'] != 'none' and bg['c'] != 'none' and material_ok, f'{tag}/{theme}: немає фону теми: {bg}')
         for i, name in TABS:
             go_tab(page, i)
             page.mouse.move(2, 2)
@@ -73,8 +75,12 @@ def one_system(page):
             settle(page)
             r = page.evaluate(SCAN)
             w = f'{tag}/{theme}/{name}'
-            exp = '#126e70'
+            exp = '#126e70' if theme == 'light' else '#70cfca'
             check(r['acc'].lower() == exp, f'{w}: акцент {r["acc"]}, а не спільний бірюзовий {exp}')
+            accent_text = page.locator('.side-item[aria-current=page]:visible,.tab-btn[aria-current=page] span:visible').first
+            check(accent_text.count() == 1, f'{w}: active navigation missing')
+            contrast = accent_text.evaluate('(e,fn)=>eval(fn)(e)', CONTRAST)
+            check(contrast['r'] >= 4.5, f'{w}: navigation contrast below 4.5: {contrast}')
             check(not r['grads'], f'{w}: градієнти поза картками банків і акцентом: {r["grads"]}')
             check(all(t['ok'] for t in r['tiles']), f'{w}: KPI-плитка з кольоровою підкладкою або фоном не картки: {[t for t in r["tiles"] if not t["ok"]]}')
             check(not r['texts'], f'{w}: насичений колір тексту без змісту (не акцент, зелений, червоний чи помаранчевий): {r["texts"]}')
@@ -88,10 +94,10 @@ def one_system(page):
         _bank_cards(page, f'{tag}/{theme}', desk)
 
 
-# v181: на Огляді ПК картки в градієнтах банків; у Налаштуваннях білі без градієнта та відблиску, з кольоровими краями.
+# v181: Огляд ПК зберігає градієнти банків; Налаштування мають нейтральне тло теми й кольорові краї.
 BANKS = r"""()=>[...document.querySelectorAll('.bcard[class*=" bk-"]')].filter(e=>e.offsetParent).map(e=>{const s=getComputedStyle(e),b=getComputedStyle(e,'::before');
  const probe=(p,v)=>{const d=document.createElement('div');d.style[p]=v;e.appendChild(d);const c=getComputedStyle(d)[p];d.remove();return c};
- const layered=!!e.closest('.shell.overview-active .p-overview.desk'),bi=s.backgroundImage;return {cls:e.className.split(' ').find(c=>c.startsWith('bk-')),layered,tokenOk:bi==='none'&&s.backgroundColor==='rgb(255, 255, 255)'&&s.borderTopColor===probe('borderTopColor','var(--bank-edge)'),grad:bi.includes('gradient'),edge:s.borderTopColor,bi,head:(bi.match(/^[a-z-]+\([^,]*/)||[''])[0],n:(bi.match(/-gradient\(/g)||[]).length,
+ const layered=!!e.closest('.shell.overview-active .p-overview.desk'),bi=s.backgroundImage,light=document.documentElement.dataset.theme==='light';return {cls:e.className.split(' ').find(c=>c.startsWith('bk-')),layered,tokenOk:bi==='none'&&s.backgroundColor===(light?'rgb(255, 255, 255)':'rgb(22, 34, 44)')&&s.borderTopColor===probe('borderTopColor','var(--bank-edge)'),grad:bi.includes('gradient'),edge:s.borderTopColor,bi,head:(bi.match(/^[a-z-]+\([^,]*/)||[''])[0],n:(bi.match(/-gradient\(/g)||[]).length,
  pos:(bi.match(/\d+(\.\d+)?%/g)||[]).map(parseFloat),glare:b.content!=='none'&&b.backgroundImage!=='none'}})"""
 
 
@@ -110,6 +116,9 @@ def _bank_cards(page, w, desk):
     page.get_by_text('Рахунки', exact=True).first.click()
     page.wait_for_timeout(400)
     sm = page.evaluate(BANKS)
+    for text in page.locator('.bcard:visible .bcard-sum').all():
+        contrast = text.evaluate('(e,fn)=>eval(fn)(e)', CONTRAST)
+        check(contrast['r'] >= 4.5, f'{w}: Settings account contrast below 4.5: {contrast}')
     check(len(sm) >= 3, f'{w}: у Налаштуваннях → Рахунки замало карток банків: {len(sm)}')
     layered = [c for c in cards if c['layered']]
     if desk:
