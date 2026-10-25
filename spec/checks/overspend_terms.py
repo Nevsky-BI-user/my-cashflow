@@ -37,6 +37,9 @@ def amount(page, loc, over, label, what, red=True):
 
 def surfaces(page, over, tag):
     by, valid = facts(page)
+    savings_ids={str(c['id']) for c in page.evaluate('BCAT') if str(c['id'])=='savings' or c['name'].strip().casefold()=='заощадження'}
+    # Загальний конверт незмінний; KPI витрат виключає ще не виконаний резерв заощаджень.
+    total=TOTAL-max(0,PLAN*len(savings_ids)-sum(by.get(cid,0) for cid in savings_ids))
     seen = []
     go_tab(page, 1)
     expand_groups(page)
@@ -63,13 +66,13 @@ def surfaces(page, over, tag):
         check(abs(v - abs(plan - fact)) < .005, f'{tag} група {ids}: {v} != |{plan} - {fact}|')
         seen.append(('group', o))
     fact = round(sum(by.values()), 2)
-    o = fact > TOTAL
-    check(o == over, f'{tag}: сценарій не дав очікуваного знака ({fact} проти {TOTAL})')
+    o = fact > total
+    check(o == over, f'{tag}: сценарій не дав очікуваного знака ({fact} проти {total})')
     # KPI
     card = page.locator('.bud-avail')
     check(('Перевитрата бюджету' if o else 'Залишок бюджету') in card.text_content(), f'{tag}: підпис KPI {card.text_content()!r}')
     v = amount(page, card.locator('.bud-kpi-v'), o, '', f'{tag} KPI')
-    check(abs(v - abs(TOTAL - fact)) < .005, f'{tag} KPI: {v} != |{TOTAL} - {fact}|')
+    check(abs(v - abs(total - fact)) < .005, f'{tag} KPI: {v} != |{total} - {fact}|')
     seen.append(('kpi', o))
     # readout графіка і підпис на графіку
     rd = page.locator('.bud-chart-readout')
@@ -77,12 +80,12 @@ def surfaces(page, over, tag):
         lab = 'Перевитрата' if o else 'Залишок'
         part = rd.locator('[data-over]') if o else rd
         v = amount(page, part, o, lab + ':', f'{tag} readout')
-        check(abs(v - abs(TOTAL - fact)) < .005, f'{tag} readout: {v} != |{TOTAL} - {fact}|')
+        check(abs(v - abs(total - fact)) < .005, f'{tag} readout: {v} != |{total} - {fact}|')
         check(not MINUS.search(rd.text_content()), f'{tag} readout: мінус {rd.text_content()!r}')
         lbl = page.locator('.bud-lbl-rest')
         t = lbl.text_content()
         check(t.startswith('перевитрата' if o else 'залишок') and not MINUS.search(t), f'{tag} підпис графіка {t!r}')
-        check(abs(num(lbl.locator('tspan').nth(1).text_content()) - abs(TOTAL - fact)) < .005, f'{tag} підпис графіка {t!r}')
+        check(abs(num(lbl.locator('tspan').nth(1).text_content()) - abs(total - fact)) < .005, f'{tag} підпис графіка {t!r}')
         if o:
             check(lbl.locator('tspan').nth(1).get_attribute('fill') == 'var(--red-t)', f'{tag} підпис графіка не червоний')
         seen.append(('chart', o))
@@ -99,15 +102,16 @@ def surfaces(page, over, tag):
         page.keyboard.press('Escape')
         page.wait_for_timeout(350)
     shot(page, f'overspend-terms-{tag}-budget.jpg', full=False)
-    # Огляд: плитка «Бюджет періоду», ряд avail; еталон: план періоду мінус факт періоду з сирих операцій
+    # Огляд: назва, знак і колір відображають перевитрату або залишок у межах місячних категорій.
     go_tab(page, 0)
     pb = page.evaluate('window.__periodBudget')
-    pfact = sum(round(t['amount'] * 100) for t in valid if pb['start'] <= t['date'][:10] <= DAY)
-    raw = pb['budget'] - pfact
+    pfact = sum(round(t['amount'] * 100) for t in valid if pb['start'] <= t['date'][:10] <= DAY and str(t.get('category_id')) not in savings_ids)
+    check(pb['spent']==pfact, f'{tag}: consumable facts include savings')
+    raw = -pb['overrun'] if pb['overrun'] > 0 else pb['avail']
     po = raw < 0
     row = page.locator('.kpi-row[data-r=avail]').first
     v = amount(page, row, po, 'Перевитрата' if po else 'Доступно', f'{tag} Огляд', red=False)
-    check(abs(v * 100 - abs(raw)) < .5, f'{tag} Огляд: {v} != |{pb["budget"]} - {pfact}| / 100')
+    check(abs(v * 100 - abs(raw)) < .5, f'{tag} Огляд: {v} != |{raw}| / 100')
     if po:
         check(row.locator('.kpi-rv').evaluate(RED), f'{tag} Огляд: сума не червона')
     seen.append(('overview', po))

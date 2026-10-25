@@ -28,7 +28,7 @@ export function formatFinanceMessage(p: FinanceMessage, unassigned: {count: numb
   const lines: string[] = [];
   const plan = p.nextPlan;
   // Порядок: бюджет на початок періоду, залишок бюджету на день, нестача до виплати, власні, баланс (власні мінус борг карток)
-  if (plan) lines.push(`Бюджет на початок періоду: ${money(plan.targetCents)} · ${money(plan.averageDailyCents)}/день (${day(plan.start)}-${day(plan.end)})`);
+  if (plan) lines.push(`Бюджет на початок періоду: ${money(plan.spendableTargetCents ?? plan.targetCents)} · ${money(plan.averageDailyCents)}/день (${day(plan.start)}-${day(plan.end)})`);
   else lines.push('Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
   // v186: залишок бюджету поточного періоду на день; власні мінус обовʼязкові до виплати лише як попередження про нестачу
   if (budget) lines.push(budgetLeftLine(budget));
