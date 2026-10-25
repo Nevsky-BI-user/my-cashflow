@@ -273,7 +273,8 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
   const topOver = rows.filter((r) => r.over).sort((a, b) => (b.fact - b.plan) - (a.fact - a.plan)).slice(0, 3);
   return {
     start: cp.start, end: cp.end, poolCents: pb.budget, spentCents: pb.spent,
-    leftCents: pb.avail, dailyCents: pb.daily, leftDays: Math.max(0, isoDiff(cp.start > today ? cp.start : today, cp.end)), rows, topOver,
+    leftCents: cp.monthlyBudget?.covered && cp.signedSpendableRemainingCents != null ? cp.signedSpendableRemainingCents : pb.avail,
+    dailyCents: pb.daily, leftDays: Math.max(0, isoDiff(cp.start > today ? cp.start : today, cp.end)), rows, topOver,
   };
 }
 
