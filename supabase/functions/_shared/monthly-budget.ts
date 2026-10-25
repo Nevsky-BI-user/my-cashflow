@@ -30,23 +30,26 @@ export function monthlyPeriodBudget(rows:any[],start:string,end:string,options:{
  return {targetCents,savingsTargetCents,debtBudgetTargetCents,spendableTargetCents:targetCents-savingsTargetCents-debtBudgetTargetCents,savingsCategoryIds,debtCategoryIds,categories,unallocatedCents,segments,sourceMonths:[...new Set(segments.map(s=>s.sourceMonth).filter(Boolean))],estimated:segments.some(s=>s.estimated),legacy:segments.some(s=>s.legacy),covered};
 }
 
-// Місячний резерв зменшується лише фактичним переказом у категорію заощаджень.
+// Заощадження є умовним залишком після боргів, а не резервом фактичних коштів.
 export function monthlySavingsReserve(rows:any[],categories:any[],transactions:any[],asof:string){
  const start=asof.slice(0,7)+'-01',d=new Date(start+'T00:00:00Z'),end=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,1)).toISOString().slice(0,10),plan=monthlyPeriodBudget(rows,start,end,{categories});
  const ids=new Set(plan.savingsCategoryIds),seen=new Set<string>();let factCents=0;
  for(const t of transactions||[]){const date=String(t.date||t.created_at||'').slice(0,10),id=t.id==null?null:String(t.id);if(id!=null){if(seen.has(id))continue;seen.add(id);}if(t.type!=='expense'||t.transfer_id!=null||t.fixed_id!=null||t.credit_id!=null||date<start||date>=end||date>asof||!ids.has(String(t.category_id)))continue;const n=Number(t.amount);if(Number.isFinite(n)&&n>0)factCents+=Math.round(n*100);}
- const plannedCents=plan.covered?plan.savingsTargetCents:0;return{plannedCents,factCents,reserveCents:Math.max(0,plannedCents-factCents),sourceMonths:plan.sourceMonths,estimated:plan.estimated};
+ const plannedCents=plan.covered?plan.savingsTargetCents:0;return{plannedCents,factCents,reserveCents:0,provisional:true,sourceMonths:plan.sourceMonths,estimated:plan.estimated};
 }
 // Авторозподіл змінює лише системні резерви боргу; факт рахунків не змінюється.
 export function autoDebtAllocations(row:any,categories:any[],capacity:{cardDebtCents:number;installmentRemainingCents:number;installments?:{creditId:string;date:string;amountCents:number}[]},priority:string[]=['debt_card','debt_installment']){
  const nonnegative=(v:any)=>{const n=Number(v);if(!Number.isSafeInteger(n)||n<0)throw new RangeError('Invalid debt budget cents');return n;};
  const allocations:Record<string,number>={...row.allocations},roles=['debt_card','debt_installment'],ids:Record<string,string>={};
  for(const c of categories||[])if(roles.includes(c.budget_role)){const id=String(c.id);if(ids[c.budget_role])throw new Error('Duplicate debt budget role');ids[c.budget_role]=id;delete allocations[id];}
+ const savingsIds=(categories||[]).filter(c=>!c.is_income&&!c.isIncome&&c.type!=='income'&&(String(c.id)==='savings'||String(c.name||'').normalize('NFKC').trim().toLocaleLowerCase('uk-UA')==='заощадження')).map(c=>String(c.id));for(const id of savingsIds)delete allocations[id];
  const mandatory=(row.mandatory_items||[]).reduce((n:number,x:any)=>n+nonnegative(x.amount_cents),0),mandatoryInstallmentTotalCents=(row.mandatory_items||[]).filter((x:any)=>x.kind==='installment').reduce((n:number,x:any)=>n+nonnegative(x.amount_cents),0);
  const outstanding=new Map<string,number>();for(const x of capacity.installments||[]){const key=String(x.creditId)+'|'+x.date;outstanding.set(key,(outstanding.get(key)||0)+nonnegative(x.amountCents));}
  const mandatoryInstallmentCents=capacity.installments==null?mandatoryInstallmentTotalCents:(row.mandatory_items||[]).filter((x:any)=>x.kind==='installment').reduce((n:number,x:any)=>{const key=String(x.key).split(':')[1]+'|'+String(x.date),amount=Math.min(nonnegative(x.amount_cents),outstanding.get(key)||0);outstanding.set(key,(outstanding.get(key)||0)-amount);return n+amount;},0);
  let left=Math.max(0,nonnegative(row.total_cents)-mandatory-Object.values(allocations).reduce((n,v)=>n+nonnegative(v),0));
- const limits:Record<string,number>={debt_card:nonnegative(capacity.cardDebtCents),debt_installment:Math.max(0,nonnegative(capacity.installmentRemainingCents)-mandatoryInstallmentCents)};
- const order=[...new Set([...priority,...roles])].filter(r=>roles.includes(r));for(const role of order){if(!ids[role])continue;const n=Math.min(left,limits[role]);allocations[ids[role]]=n;left-=n;}
- return{row:{...row,allocations},allocations,debtCardCents:allocations[ids.debt_card]||0,debtInstallmentCents:allocations[ids.debt_installment]||0,unallocatedCents:left,mandatoryInstallmentCents,mandatoryInstallmentTotalCents};
+ // Пріоритет незмінний: кредитки, потім умовні заощадження; перед заощадженнями також достроково погашаємо розстрочки.
+ if(ids.debt_card){const n=Math.min(left,nonnegative(capacity.cardDebtCents));allocations[ids.debt_card]=n;left-=n;}
+ if(ids.debt_installment){const n=Math.min(left,Math.max(0,nonnegative(capacity.installmentRemainingCents)-mandatoryInstallmentCents));allocations[ids.debt_installment]=n;left-=n;}
+ const savingsCents=savingsIds.length?left:0;if(savingsIds.length){allocations[savingsIds[0]]=savingsCents;left=0;}
+ return{row:{...row,allocations},allocations,debtCardCents:allocations[ids.debt_card]||0,debtInstallmentCents:allocations[ids.debt_installment]||0,unallocatedCents:left,savingsCents,savingsProvisional:true,mandatoryInstallmentCents,mandatoryInstallmentTotalCents};
 }

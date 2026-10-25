@@ -61,10 +61,10 @@ test('manual budget without debt: the difference goes exactly into savings; empt
  const r=both(clean(15000)),p=at(r,'2026-10-21');
  assert.equal(p.targetCents,1500000);assert.equal(p.repayCents,0);
  // v153 доповнення 7: накопичення відкладаються з залишку періоду в день наступної виплати (06.11), а не з цієї виплати
- assert.deepEqual([p.savingsCents,pa.savingsCents],[0,0],'з нової виплати накопичень немає');
+ assert.deepEqual([p.savingsCents,pa.savingsCents],[4500000,4000000],'60 000 мінус захищений бюджет 15/20 тисяч');
  const n=at(r,'2026-11-06'),na=at(a,'2026-11-06');
  assert.equal(n.savingsCents-na.savingsCents,pa.targetCents-p.targetCents,'накопичення 06.11 більше рівно на різницю бюджетів 21.10');
- assert.deepEqual([n.savingsCents,na.savingsCents],[n.openingCashCents,na.openingCashCents],'накопичення = залишок періоду (власні на початок дня виплати)');
+ assert.deepEqual([n.savingsCents,na.savingsCents],[3800000,3300000],'60 000 мінус оренда 7 000 і бюджет 15/20 тисяч');
  assert.deepEqual(both(clean('')),a,'порожнє поле = авто');
  assert.deepEqual(both(clean(undefined)),a,'немає поля = авто');
 });

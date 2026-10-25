@@ -29,25 +29,25 @@ test('unfunded savings reservations do not become zero-value income rows in cash
 test('reserve deducts only positive own funds; negative baseline and unused credit preserved',()=>{
  for(const [own,credit,saved,deduction,total]of [[1000000,200000,310000,310000,890000],[100000,200000,310000,100000,200000],[-100000,200000,310000,0,100000],[-100000,200000,0,0,100000],[100000,200000,-310000,0,300000]])assert.deepEqual(spendableFunds(own,credit,saved),{deduction,total});
 });
-test('monthly allocation drives available and daily with empty ledger; journal-only stays informational',async()=>{
+test('provisional monthly savings affects daily allocation but never deducts actual available funds',async()=>{
  const {monthlySavingsReserve}=await load('monthly-budget'),{financeProjection}=await load('budget'),{budgetModel}=await load('bot-reports');
  const options={asof:'2026-10-25',through:'2026-12-01'},before=data(0),after=data(),a=financeProjection(before,options),b=financeProjection(after,options);
- const reserve=monthlySavingsReserve(after.monthly_budgets,categories,[],'2026-10-25');assert.equal(reserve.reserveCents,310000);
- assert.equal(kpiFunds(a).total-kpiFunds(b,reserve.reserveCents).total,310000);assert.deepEqual(a.snapshot,b.snapshot);
+ const reserve=monthlySavingsReserve(after.monthly_budgets,categories,[],'2026-10-25');assert.equal(reserve.reserveCents,0);assert.equal(reserve.plannedCents,310000);
+ assert.equal(kpiFunds(a).total-kpiFunds(b,reserve.reserveCents).total,0);assert.deepEqual(a.snapshot,b.snapshot);
  assert.equal(a.currentPeriod.targetCents,b.currentPeriod.targetCents);assert.ok(b.currentPeriod.spendableRemainingCents<a.currentPeriod.spendableRemainingCents);
  const ma=budgetModel(a,[],categories,options.asof,before,before.accounts),mb=budgetModel(b,[],categories,options.asof,after,after.accounts);
  assert.ok(mb.dailyCents<ma.dailyCents);assert.equal(mb.leftCents,b.currentPeriod.spendableRemainingCents);assert.ok(!mb.rows.some(r=>r.id==='77'));
  assert.equal(monthlySavingsReserve([],categories,[],'2026-10-25').reserveCents,0);
  assert.doesNotMatch(html,/fundsSavingsCents=savingsAtCents|saved=savingsAtCents/);
 });
-test('saving facts release reserve without double deduction; duplicates and nonexpense links excluded',async()=>{
+test('saving facts are recorded once without a preemptive reserve; duplicates and links excluded',async()=>{
  const {monthlySavingsReserve:f}=await load('monthly-budget');const tx={id:1,date:'2026-10-24',type:'expense',category_id:77,amount:1000};
  const rows=[tx,tx,...['transfer_id','fixed_id','credit_id'].map((key,i)=>({...tx,id:i+2,[key]:9})),{...tx,id:8,date:'2026-10-26'}];
- const p=f([row()],categories,rows,'2026-10-25');assert.equal(p.factCents,100000);assert.equal(p.reserveCents,210000);
- assert.equal(spendableFunds(1000000,200000,310000).total,spendableFunds(900000,200000,p.reserveCents).total);
+ const p=f([row()],categories,rows,'2026-10-25');assert.equal(p.factCents,100000);assert.equal(p.reserveCents,0);
+ assert.equal(spendableFunds(1000000,200000,0).total-spendableFunds(900000,200000,p.reserveCents).total,100000);
  assert.equal(f([row()],categories,[{...tx,amount:5000}],'2026-10-25').reserveCents,0);
  assert.equal(f([row()],categories,rows,'2026-10-23').factCents,0);
- assert.equal(f([row()],categories,[],'2026-11-25').reserveCents,310000);
+ assert.equal(f([row()],categories,[],'2026-11-25').plannedCents,310000);assert.equal(f([row()],categories,[],'2026-11-25').reserveCents,0);
  assert.equal(f([row()],categories,[],'2026-09-25').reserveCents,0);
 });
 test('monthly saving prefixes conserve cents for 28/29/30/31 days, inherited and zero plans',async()=>{
@@ -61,7 +61,7 @@ test('monthly saving prefixes conserve cents for 28/29/30/31 days, inherited and
 test('savings projected own-only and funded amount reported; TS/Python parity including low funds',async()=>{
  const {financeProjection}=await load('budget');const cases=[0,50000].map(balance=>({data:{...data(),accounts:[{id:1,kind:'debit',balance,debt:0},{id:2,kind:'credit',balance:0,debt:0,credit_limit:10000}]},options:{asof:'2026-10-25',through:'2026-12-01'}}));
  const py=spawnSync(path.resolve('.venv/Scripts/python.exe'),['scripts/budget_pool.py','--finance'],{input:JSON.stringify(cases),encoding:'utf8',env:{...process.env,PYTHONUTF8:'1'}});assert.equal(py.status,0,py.stderr);const expected=JSON.parse(py.stdout);
- cases.forEach((c,i)=>{const p=financeProjection(c.data,c.options);assert.deepEqual(p,expected[i]);const ev=p.events.filter(e=>e.budgetSavings);assert.ok(ev.length);for(const e of ev){assert.equal(e.kind,'savings');assert.equal(e.amountCents,e.fundedCents);assert.equal(e.cashDeltaCents,0-e.fundedCents);assert.equal(e.debtDeltaCents,0);assert.equal(e.plannedCents,e.fundedCents+e.unfundedCents)}assert.ok(!p.events.some(e=>e.kind==='variable'&&String(e.categoryId)==='77'));});
+ cases.forEach((c,i)=>{const p=financeProjection(c.data,c.options);assert.deepEqual(p,expected[i]);assert.equal(p.events.filter(e=>e.budgetSavings).length,0);const ev=p.events.filter(e=>e.kind==='savings');assert.equal(new Set(ev.map(e=>e.date)).size,ev.length);for(const e of ev){assert.equal(e.cashDeltaCents,0-e.amountCents);assert.equal(e.debtDeltaCents,0);assert.ok(p.events.some(x=>x.kind==='payout'&&x.date===e.date))}assert.ok(!p.events.some(e=>e.kind==='variable'&&String(e.categoryId)==='77'));});
 });
 
 test('last day before payout retains consumable remainder today without forecasting today again',async()=>{

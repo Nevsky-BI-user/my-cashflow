@@ -169,7 +169,7 @@ export function periodBudgetStart(pr: P, fi: P, txs: Tx[], allIds: string[], own
   const inc = (txs || []).reduce((n, t) => String(t.date || '').slice(0, 10) === s && t.transfer_id == null && t.type === 'income' && ow.has(key(t)) ? n + cents(t.amount) : n, 0);
   const at = financeProjection({ ...fi, transactions: (fi.transactions || []).filter((t: Tx) => String(t.date || '').slice(0, 10) < s) } as any, { asof: prev, through: e }) as P;
   // v154: резерв = лише білі (credit_ok=false) обовʼязкові й комісії, як резерв виплати в рушії; обовʼязкові з кредитки не резервуються; без платежів із картки за сценарієм
-  const reserved = (x: P) => x.kind === 'fee' || (x.kind === 'mandatory' && x.creditEligible !== true && x.funding !== 'credit');
+  const reserved = (x: P) => x.kind === 'fee' || x.kind === 'mandatory';
   const ownAt = own + inc;
   const reserve = Math.min(Math.max(0, ownAt), (at.events || []).filter((x: P) => x.date >= s && x.date < e && reserved(x)).reduce((n: number, x: P) => n + x.amountCents, 0));
   const m0 = s.slice(0, 7) + '-01', pm = addMonths(m0, -1).slice(0, 7), repayDay = repayDate(pm, '') === s;
@@ -182,7 +182,7 @@ export function periodBudgetStart(pr: P, fi: P, txs: Tx[], allIds: string[], own
   const dbt = Math.max(0, debt), due = repayDay ? Math.max(0, Math.min(dbt, dbt - crNew)) : 0;
   // v153: ручний бюджет періоду з налаштувань виплат (salary_config.budget_manual, гривні; null: авто), той самий, що бере рушій
   const monthly=cp.monthlyBudget;
-  const bm = monthly?.covered?monthly.rawTargetCents/100:fi && fi.salary ? fi.salary.budget_manual : null;
+  const bm = monthly?.covered?monthly.rawSpendableTargetCents/100:fi && fi.salary ? fi.salary.budget_manual : null;
   const manual = bm != null && bm !== '' && isFinite(Number(bm)) && Number(bm) >= 0 ? Math.round(Number(bm) * 100) : null;
   // v152: кожна виплата гасить борг максимум (як рушій), належне лише в день погашення; v153: погашення лише після резерву й бюджету
   const plan = payoutBudget(ownAt, reserve, dbt, due, true, manual), budget = monthly?.covered ? cp.spendableTargetCents : plan.targetCents;
@@ -198,7 +198,7 @@ export function planSplit(total: number, cats: P[]): PlanRow[] {
   const cmp = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
   const ct = (v: unknown) => Math.round((Number(v == null ? 0 : v) || 0) * 100);
   type Row = { id: string; name: string; weight: number; limitAbsCents?: number; wc: number };
-  const ex = (cats || []).filter((c) => c.active !== false && c.type === 'expense' && !c.budget_role);
+  const ex = (cats || []).filter((c) => c.active !== false && c.type === 'expense' && !c.budget_role && !(String(c.id)==='savings'||String(c.name||'').normalize('NFKC').trim().toLocaleLowerCase('uk-UA')==='заощадження'));
   let rows: Row[] = ex.map((c): Row => c.limit_abs != null
     ? { id: String(c.id), name: c.name || '', weight: 0, limitAbsCents: Math.max(0, ct(c.limit_abs)), wc: 0 }
     : { id: String(c.id), name: c.name || '', weight: Math.max(0, ct(c.budget_limit != null ? c.budget_limit : c.limit)) / 100, wc: Math.max(0, ct(c.budget_limit != null ? c.budget_limit : c.limit)) })

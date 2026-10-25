@@ -34,13 +34,13 @@ const okEv=e=>e.kind==='mandatory'&&e.creditEligible===true&&e.funding!=='credit
 const debitEv=e=>e.kind==='fee'||(e.kind==='mandatory'&&e.creditEligible!==true&&e.funding!=='credit');
 const debtBefore=(r,d)=>r.days.filter(x=>x.date<d).pop().debtCents;
 
-test('v154: each payout reserves only white mandatory payments and fees; credit_ok payments are not reserved',()=>{
+test('each payout protects both debit-only and credit-eligible mandatory payments and fees',()=>{
  const r=both(covered());
  const pays=r.periods.filter(p=>p.payoutCents>0);
  assert.ok(pays.length>=6,'виплат '+pays.length);
  let withOk=0;
  for(const p of pays){
-  assert.equal(p.reserveCents,Math.min(p.ownCents,sumOf(r,p.start,p.end,debitEv)),p.start+': резерв лише білих');
+  assert.equal(p.reserveCents,Math.min(p.ownCents,sumOf(r,p.start,p.end,e=>debitEv(e)||okEv(e))),p.start+': резерв лише білих');
   if(sumOf(r,p.start,p.end,okEv)>0)withOk++;
  }
  assert.ok(withOk>=4,'періодів з credit_ok '+withOk+', перевірка не показова');
@@ -49,7 +49,7 @@ test('v154: each payout reserves only white mandatory payments and fees; credit_
  for(const d of r.days)assert.ok(d.closingCashCents>=0&&d.minCashCents>=0&&d.arrearsCents===0,d.date);
 });
 
-test('v154: the surplus over the white reserve and the budget repays cards on the payout day, card debt falls immediately',()=>{
+test('surplus after all mandatory and living repays cards on the payout day',()=>{
  const r=both(covered());
  const p=r.periods.find(p=>p.start==='2026-10-21'),before=debtBefore(r,p.start);
  assert.ok(before>0,'боргу перед 21.10 немає, перевірка не показова');
@@ -59,7 +59,7 @@ test('v154: the surplus over the white reserve and the budget repays cards on th
  assert.equal(sumOf(r,p.start,p.end,e=>e.kind==='repay'&&e.date===p.start),p.repayCents);
 });
 
-test('v154: Privat is repaid in full first, Mono partially, one repayment event per account, credit_ok then goes to free own and the card',()=>{
+test('cards repay in priority order only after all upcoming mandatory payments are protected',()=>{
  // як у власника 21.10: Приват (не Mono) 9 257 належний 21.10, Mono 29 722; аванс 65 450; білі до 06.11: оренда 16 500 і комісія 400;
  // credit_ok до 06.11: садочок 9 640 (22-го) і підписка 10 800 (25-го)
  const d={accounts:[{id:1,name:'Ощадбанк',kind:'debit',balance:0,debt:0,min_spend:0,balance_updated_at:stamp},
@@ -73,10 +73,10 @@ test('v154: Privat is repaid in full first, Mono partially, one repayment event 
   credits:[],categories:[{id:'1',name:'Їжа',type:'expense',budget_limit:100}],transactions:[]};
  const r=both(d,'2026-10-20');
  const p=r.periods.find(p=>p.start==='2026-10-21');
- assert.equal(p.reserveCents,1690000,'резерв = оренда 16 500 + комісія 400, без credit_ok');
+ assert.equal(p.reserveCents,3734000,'резерв усіх: 16 500+400+9 640+10 800');
  const ev=r.events.filter(e=>e.date==='2026-10-21'&&e.kind==='repay'),by=id=>ev.filter(e=>String(e.accountId)===id).reduce((n,e)=>n+e.amountCents,0);
  const privBefore=925700,monoBefore=debtBefore(r,'2026-10-21')-privBefore;
- assert.equal(p.repayCents,6545000-1690000-1500000,'погашення = виплата − білий резерв − бюджет');
+ assert.equal(p.repayCents,6545000-3734000-1500000,'погашення = виплата − білий резерв − бюджет');
  assert.equal(by('2'),privBefore,'Приват повністю');
  assert.equal(by('3'),p.repayCents-privBefore,'Mono на решту');
  assert.ok(by('3')>0&&by('3')<monoBefore,'Mono частково');
@@ -90,22 +90,8 @@ test('v154: Privat is repaid in full first, Mono partially, one repayment event 
  for(const x of r.days)assert.ok(x.closingCashCents>=0,x.date);
 });
 
-test('B: savings come only from the previous period leftover at the next payout; credit_ok paid from own reduces that leftover',()=>{
- const r=both(covered());
- let saved=0,prev=null;
- for(const p of r.periods.filter(p=>p.payoutCents>0)){
-  // з нової виплати нічого; залишок періоду = власні на початок дня
-  assert.equal(p.savingsCents,p.leftoverSavingsCents,p.start+': накопичення лише із залишку');
-  assert.equal(p.leftoverCents,p.openingCashCents,p.start+': залишок = власні на початок дня');
-  // без боргів залишок = надлишок попередньої виплати понад бюджет мінус credit_ok, сплачені з власних у попередньому періоді
-  if(prev&&debtBefore(r,p.start)===0){const okOwn=r.events.filter(e=>e.date>=prev.start&&e.date<p.start&&okEv(e)).reduce((n,e)=>n-e.cashDeltaCents,0);
-   assert.equal(p.savingsCents,Math.max(0,prev.availableCents-prev.targetCents-okOwn),p.start+': накопичення');}
-  saved+=p.savingsCents;prev=p;
- }
- assert.ok(saved>0,'накопичень немає, перевірка не показова');
-});
-
-test('v154: a white payment keeps priority, a credit_ok payment takes only free own funds and then the card',()=>{
+test('savings is the combined own residual after all mandatory, living and debts',()=>{const r=both(covered());let saved=0;for(const p of r.periods.filter(p=>p.payoutCents>0)){assert.equal(p.leftoverSavingsCents,0);assert.equal(p.savingsCents,Math.max(0,p.availableCents-p.targetCents-p.prepayCents));assert.equal(p.ownCents,p.reserveCents+p.repayCents+p.prepayCents+p.savingsCents+p.cashOutCents+p.toMonoCents);saved+=p.savingsCents;}assert.ok(saved>0);});
+test('both mandatory kinds retain own funding despite an underfunded living budget',()=>{
  const d=covered();
  d.salary.advance_amount=24000;d.salary.salary_amount=24000;
  d.accounts[1].debt=0;d.accounts[1].debt_month=null;
@@ -113,13 +99,10 @@ test('v154: a white payment keeps priority, a credit_ok payment takes only free 
  d.fixed=[{id:1,name:'Оренда',type:'expense',amount:18000,day_of_month:10,credit_ok:false,active:true},{id:2,name:'Сервіс',type:'expense',amount:5000,day_of_month:8,credit_ok:true,active:true}];
  const r=both(d);
  const p=r.periods.find(p=>p.start==='2026-11-06');
- assert.equal(p.reserveCents,1800000,'резерв лише оренди');
+ assert.equal(p.reserveCents,2300000,'резерв оренди та сервісу');
  const svc=r.events.find(e=>e.id==='fixed:2:2026-11'),rent=r.events.find(e=>e.id==='fixed:1:2026-11');
  // власні понад білий резерв на 08.11 (після змінних 06-07.11) ідуть на сервіс, решта з кредитки; оренда покрита повністю з резерву
- const free=r.events.filter(e=>r.events.indexOf(e)<r.events.indexOf(svc)).pop().cashAfterCents-1800000;
- assert.equal(-svc.cashDeltaCents,Math.max(0,free));assert.ok(free>0,'вільних власних немає, перевірка не показова');
- assert.equal(svc.debtDeltaCents,svc.amountCents+svc.cashDeltaCents);
- assert.ok(svc.debtDeltaCents>0,'сервіс без кредитки, перевірка не показова');
+ assert.equal(svc.cashDeltaCents,-500000);assert.equal(svc.debtDeltaCents,0);
  assert.equal(rent.cashDeltaCents,-1800000);
  assert.equal(rent.debtDeltaCents,0);
  assert.ok(!rent.shortCents,'білий платіж з нестачею');

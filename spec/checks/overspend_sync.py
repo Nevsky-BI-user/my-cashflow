@@ -65,7 +65,7 @@ def check_views(page, signed, ordinary_fact, savings_fact=0):
     check(period['avail'] == max(0, signed), f'overview hid overspending in another category: {period["avail"]} vs {signed}')
     check(period['overrun'] == max(0, -signed), 'overview overrun is not the shared deficit')
     check(period['daily'] == round(max(0, signed) / 11), 'daily budget uses a category sum instead of shared remaining / 11 days')
-    check(month['savingsRemainingCents'] == max(0, 10000 - savings_fact), 'ordinary overspending consumed the savings reserve')
+    check(month['savingsRemainingCents'] == 0 and month['savingsTargetCents'] == 10000, 'provisional savings target became an upfront cash reserve')
     check(month['fact'] == ordinary_fact + savings_fact, 'snapshot facts differ between calendar and projection')
     check(page.evaluate('__liveMock.data.monthly_budgets[0].allocations.savings') == 10000, 'overspending edited the saved allocation')
 
@@ -124,7 +124,7 @@ def synchronization(page):
     # Та сама перевитрата з окремим резервом не повинна звільняти резерв для витрат.
     page.evaluate("row=>{__liveMock.data.monthly_budgets=[row];__liveMock.event('monthly_budgets')}", plan(10000))
     page.wait_for_function('__financeInput.monthly_budgets[0].allocations.savings===10000')
-    page.wait_for_function('__calendarBudget.savingsRemainingCents===10000')
+    page.wait_for_function('__calendarBudget.savingsTargetCents===10000&&__calendarBudget.savingsRemainingCents===0')
     check_views(page, 2000, 8000)
 
     # Зміни з іншого пристрою, коли відкрита сторінка Бюджету: add/edit/reclassify/delete.
@@ -147,15 +147,16 @@ def synchronization(page):
     replace_transactions(page, initial)
     check_views(page, 2000, 8000)
 
-    funds = page.evaluate('kpiFunds(__financeProjection,10000).total')
+    funds = page.evaluate('kpiFunds(__financeProjection).total')
     replace_transactions(page, initial + [expense(3, 'savings', 40, '2026-10-04')])
     check_views(page, 2000, 8000, 4000)
-    check(page.evaluate('kpiFunds(__financeProjection,6000).total') == funds, 'actual savings were deducted twice')
+    check(page.evaluate('kpiFunds(__financeProjection).total') == funds - 4000, 'actual savings were not deducted exactly once')
     page.get_by_role('button', name='Розподіл бюджету', exact=True).click()
     editor = page.get_by_role('dialog', name='Розподіл бюджету місяця')
     check(editor.get_by_role('textbox', name='Продукти, ₴', exact=True).input_value() == '50', 'overspending changed editor allocation A')
     check(editor.get_by_role('textbox', name='Інше, ₴', exact=True).input_value() == '50', 'overspending changed editor allocation B')
-    check(editor.get_by_role('textbox', name='Заощадження, ₴', exact=True).input_value() == '100', 'overspending changed editor reserve')
+    check(editor.get_by_role('textbox', name='Заощадження, ₴', exact=True).count() == 0, 'savings can still be distributed manually')
+    check(editor.locator('[data-auto-savings] output').get_attribute('data-cents') == '10000', 'debt-free surplus differs from one automatic savings amount')
     page.keyboard.press('Escape')
     check(page.evaluate('overspendSameDocument===true && __liveMock.channels===1'), 'updates required a reload or duplicate subscription')
     check(page.evaluate('__liveMock.writes.length') == 0, 'external read-only updates generated writes')
