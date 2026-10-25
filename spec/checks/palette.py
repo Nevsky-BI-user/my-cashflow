@@ -66,7 +66,7 @@ def categories(page):
     # кінець періоду: більшість категорій уже мають витрати
     freeze(page, '2026-10-19')
     pal = page.evaluate('CAT_PALETTE')
-    cats = page.evaluate("(()=>{const ex=BCAT.filter(c=>!c.isIncome);const cs=paintColors(ex);return ex.map((c,i)=>({id:c.id,name:c.name,color:cs[i]}))})()")
+    cats = page.evaluate("(()=>{const ex=BCAT.filter(c=>!c.isIncome);const cs=paintColors(ex);return ex.map((c,i)=>({id:c.id,name:c.name,color:cs[i],budget_role:c.budget_role})).filter(c=>!['debt_card','debt_installment'].includes(c.budget_role))})()")
     cols = [c['color'] for c in cats]
     print(f'      категорії ({len(cats)}): {[c["name"] + " " + c["color"] for c in cats]}')
     check(len(set(cols)) == len(cols), f'кольори категорій повторюються: {cols}')
@@ -83,7 +83,7 @@ def categories(page):
     rgb = lambda c: tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
     num3 = lambda s: tuple(int(float(x)) for x in s.replace('rgba(', '').replace('rgb(', '').replace(')', '').split(',')[:3])
     want = {c['name']: rgb(c['color']) for c in cats}
-    bud = {k: [rgb(x) for x in v] for k, v in page.evaluate("Object.fromEntries(BCAT.filter(c=>!c.isIncome).map(c=>[c.name,budPal(c.id,c.color)]))").items()}
+    bud = {k: [rgb(x) for x in v] for k, v in page.evaluate("Object.fromEntries(BCAT.filter(c=>!c.isIncome&&!['debt_card','debt_installment'].includes(c.budget_role)).map(c=>[c.name,budPal(c.id,c.color)]))").items()}
     check(len({v[0] for v in bud.values()}) == min(len(bud), page.evaluate('BUD_PAL.length')), f'перші кольори палітри бюджету повторюються: {bud}')
     seen = 0
     for r in rows:

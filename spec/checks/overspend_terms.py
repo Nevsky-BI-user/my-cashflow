@@ -38,8 +38,10 @@ def amount(page, loc, over, label, what, red=True):
 def surfaces(page, over, tag):
     by, valid = facts(page)
     savings_ids={str(c['id']) for c in page.evaluate('BCAT') if str(c['id'])=='savings' or c['name'].strip().casefold()=='заощадження'}
-    # Загальний конверт незмінний; KPI витрат виключає ще не виконаний резерв заощаджень.
-    total=TOTAL-max(0,PLAN*len(savings_ids)-sum(by.get(cid,0) for cid in savings_ids))
+    debt_ids={str(c['id']) for c in page.evaluate('BCAT') if c.get('budget_role') in ('debt_card','debt_installment')}
+    # seed_demo резервує по PLAN для кожної системної категорії; платежів боргу у фікстурі немає.
+    # Загальний конверт незмінний, але резерв боргу також не доступний для звичайних витрат.
+    total=TOTAL-max(0,PLAN*len(savings_ids)-sum(by.get(cid,0) for cid in savings_ids))-PLAN*len(debt_ids)
     seen = []
     go_tab(page, 1)
     expand_groups(page)

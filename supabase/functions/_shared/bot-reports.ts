@@ -198,7 +198,7 @@ export function planSplit(total: number, cats: P[]): PlanRow[] {
   const cmp = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
   const ct = (v: unknown) => Math.round((Number(v == null ? 0 : v) || 0) * 100);
   type Row = { id: string; name: string; weight: number; limitAbsCents?: number; wc: number };
-  const ex = (cats || []).filter((c) => c.active !== false && c.type === 'expense');
+  const ex = (cats || []).filter((c) => c.active !== false && c.type === 'expense' && !c.budget_role);
   let rows: Row[] = ex.map((c): Row => c.limit_abs != null
     ? { id: String(c.id), name: c.name || '', weight: 0, limitAbsCents: Math.max(0, ct(c.limit_abs)), wc: 0 }
     : { id: String(c.id), name: c.name || '', weight: Math.max(0, ct(c.budget_limit != null ? c.budget_limit : c.limit)) / 100, wc: Math.max(0, ct(c.budget_limit != null ? c.budget_limit : c.limit)) })
@@ -244,8 +244,8 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
   if (!cp || !q) return null;
   const h = histOf(txs, accounts), pb = periodBudgetStart(pr, fi, h.hist, h.allIds, h.ownIds, today);
   if (!pb) return null;
-  const savingsIds = new Set(cp.monthlyBudget?.covered ? cp.monthlyBudget.savingsCategoryIds : []);
-  const exp = (cats || []).filter((c) => !c.is_income && c.type !== 'income' && !savingsIds.has(String(c.id)));
+  const savingsIds = new Set(cp.monthlyBudget?.covered ? cp.monthlyBudget.savingsCategoryIds : []),excludedPlanIds=new Set([...savingsIds,...(cp.monthlyBudget?.debtCategoryIds||[])]);
+  const exp = (cats || []).filter((c) => !c.is_income && c.type !== 'income' && !c.budget_role && !savingsIds.has(String(c.id)));
   const fact: Record<string, number> = {};
   let none = 0;
   for (const t of uniq(txs)) {
@@ -258,7 +258,7 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
   const plan: Record<string, P> = {};
   const monthly=cp.monthlyBudget;
   const planned=monthly?.covered?[...monthly.rawCategories.map((c:any)=>({...c,name:cats.find(x=>String(x.id)===c.id)?.name||'Категорія '+c.id})),{id:'unallocated',name:'Не розподілено',totalCents:monthly.rawUnallocatedCents}]:planSplit(pb.budget,cats);
-  for (const c of planned) if(!savingsIds.has(String(c.id))) plan[String(c.id)] = c;
+  for (const c of planned) if(!excludedPlanIds.has(String(c.id))) plan[String(c.id)] = c;
   const rows: BudgetRow[] = [];
   const add = (id: string, name: string, color: string | null, f: number, p: number, noPlan = false) => {
     if (f <= 0 && p <= 0) return;
@@ -647,7 +647,7 @@ export function payDate(today: string, eventDate: string, weekly: boolean): stri
 
 // Категорія оплати як у застосунку (fixedCat / creditCat): як у попередній оплаті цього платежу, інакше за назвою, інакше «Інше»
 export function payCategory(kind: 'f' | 'c', item: P, history: Tx[], cats: P[]): number | null {
-  const act = (cats || []).filter((c) => !c.is_income && c.type !== 'income');
+  const act = (cats || []).filter((c) => !c.is_income && c.type !== 'income' && !c.budget_role);
   const has = (id: unknown) => act.some((c) => String(c.id) === String(id));
   const prev = (history || []).filter((t) => String(kind === 'f' ? t.fixed_id : t.credit_id) === String(item.id) && t.category_id != null && has(t.category_id))
     .sort((a, b) => String(a.date) < String(b.date) ? 1 : -1)[0];
