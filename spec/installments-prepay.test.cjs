@@ -36,16 +36,16 @@ test('savings stay 0 while a credit card has debt or any installment is not clos
  // скриптом із рушія: 21.10 і 06.11 гасять кредитку, 20.11 закриває її і починає дострокове, 07.12 закриває розстрочки, 21.12 перші накопичення
  // (v153 доповнення 7: накопичення 21.12 = залишок періоду 07.12-20.12, тобто надлишок виплати 07.12 після дострокових; з самої виплати 21.12 нуль)
  assert.deepEqual(['2026-10-21','2026-11-06','2026-11-20','2026-12-07','2026-12-21'].map(d=>[at(d).repayCents,at(d).prepayCents,at(d).savingsCents]),
-  [[3190000,0,0],[4030000,0,0],[2580000,110000,0],[0,2840000,0],[0,0,690000]]);
+  [[3190000,0,0],[4030000,0,0],[2580000,110000,0],[0,2840000,690000],[0,0,3000000]]);
  for(const p of r.periods.filter(p=>p.basis!=='current')){
   const instAhead=r.events.some(e=>e.id.startsWith('installment:')&&e.date>=p.end);
   if(debtAfterPayout(r,p.start)>0||instAhead)assert.equal(p.savingsCents,0,p.start+': накопичення при боргу кредитки або незакритій розстрочці');
   if(p.prepayCents>0)assert.equal(debtAfterPayout(r,p.start),0,p.start+': дострокове погашення розстрочки при боргу кредитки');
   // v153 доповнення 7: накопичення лише з залишку попереднього періоду (власні на початок дня виплати), з нової виплати нуль
-  assert.equal(p.savingsCents,p.leftoverSavingsCents,p.start);if(p.savingsCents>0)assert.equal(p.savingsCents,p.openingCashCents,p.start+': накопичення не дорівнюють залишку періоду');
+  assert.equal(p.leftoverSavingsCents,0,p.start);if(p.savingsCents>0)assert.equal(p.savingsCents,p.availableCents-p.targetCents-p.prepayCents,p.start+': funded residual after living and installment payoff');
  }
  const first=r.events.find(e=>e.kind==='savings');
- assert.equal(first.date,'2026-12-21','накопичення лише після закриття кредитки й розстрочок');
+ assert.equal(first.date,'2026-12-07','накопичення лише після закриття кредитки й розстрочок');
  assert.ok(!r.events.some(e=>(e.id.startsWith('installment:')||e.kind==='prepay')&&e.date>=at(first.date).end),'після перших накопичень лишились платежі розстрочок');
 });
 
@@ -73,26 +73,24 @@ test('a closed installment disappears from the forecast; the schedule is conserv
  assert.deepEqual(['2026-11-06','2026-12-07','2027-01-06'].map(left),[2710000,1100000,0]);
  assert.notEqual(left('2026-12-07')%310000,0,'залишок 11 000: три платежі по 3 100 і частковий 1 700');
  assert.deepEqual(q.events.filter(e=>e.id.startsWith('installment:3:')).map(e=>[e.date,e.amountCents]),[['2026-10-24',310000],['2026-11-24',310000],['2026-12-24',310000]],'після закриття 06.01 платежів Ноутбука немає');
- assert.equal(q.events.find(e=>e.kind==='savings').date>'2027-01-06',true);
+ assert.equal(q.events.find(e=>e.kind==='savings').date,'2027-01-06');
 });
 
 // v153 доповнення 7 (власник: «заощадження відкладаються в день заробітньої плати з того, що залишилося за поточний період, тобто в день
 // отримання заробітньої плати ми відкладаємо з авансу і навпаки»): без боргів накопичення в день виплати = власні перед виплатою (залишок
 // попереднього періоду), а з самої нової виплати нуль: її надлишок понад резерв і бюджет лишається у власних до наступної виплати.
-test('without debts the savings on a payout day equal own funds before the payout, and nothing is saved from the new payout itself',()=>{
+test('without debts each payout saves the combined own residual after upcoming rent and living',()=>{
  const d=data(0);d.credits=[];d.accounts[0].balance=12000;
  const r=both(d,'2026-10-12','2027-01-31'),ps=r.periods.filter(p=>p.basis!=='current');
  for(const p of ps){
   const before=r.days.find(x=>x.date===p.start).openingCashCents;
-  assert.equal(p.savingsCents,before,p.start+': накопичення не дорівнюють власним перед виплатою');
+  assert.equal(p.savingsCents,before+p.payoutCents-p.reserveCents-p.targetCents,p.start+': combined sources minus protected obligations and living');
   assert.equal(p.leftoverCents,before,p.start);
   // власні після розподілу = уся нова виплата (накопичень з неї немає, боргів немає)
   const after=r.events.filter(e=>e.date===p.start&&['payout','income','arrears','repay','prepay','savings'].includes(e.kind)).pop().cashAfterCents;
-  assert.equal(after,p.payoutCents,p.start+': з нової виплати щось пішло в накопичення');
+  assert.equal(after,p.reserveCents+p.targetCents,p.start+': protected own cash survives distribution');
  }
- assert.deepEqual(r.events.filter(e=>e.kind==='savings').map(e=>[e.date,e.name,e.amountCents]),
-  [['2026-11-06','У заощадження: залишок періоду 21.10-05.11',3000000],['2026-11-20','У заощадження: залишок періоду 06.11-19.11',4000000],
-   ['2026-12-07','У заощадження: залишок періоду 20.11-06.12',3000000],['2026-12-21','У заощадження: залишок періоду 07.12-20.12',4000000],
-   ['2027-01-06','У заощадження: залишок періоду 21.12-05.01',3000000],['2027-01-21','У заощадження: залишок періоду 06.01-20.01',4000000]]);
- assert.equal(ps[0].savingsCents,0,'21.10: залишок поточного періоду весь у бюджеті');
+ assert.deepEqual(r.events.filter(e=>e.kind==='savings').map(e=>[e.date,e.amountCents]),
+  [['2026-10-21',3000000],['2026-11-06',4000000],['2026-11-20',3000000],['2026-12-07',4000000],['2026-12-21',3000000],['2027-01-06',4000000],['2027-01-21',3000000]]);
+ assert.equal(ps[0].savingsCents,3000000,'60 000 payout minus 10 000 rent and 20 000 living');
 });

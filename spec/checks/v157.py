@@ -16,13 +16,31 @@ DAY = '2026-10-13'
 FIX = ROOT / 'spec' / 'fixtures' / 'overview-cur.json'
 
 
-def _expected():
-    """Числа v156 незмінні; сучасний підпис явно називає невикористаний кредит."""
+def _expected(page=None):
+    """Поточні числа v156; прогноз враховує погашення боргів перед заощадженнями."""
     data = json.loads(FIX.read_text(encoding='utf-8'))
     for snapshot in data.values():
         funds = snapshot.get('kpis', {}).get('kpi-funds', {})
         funds['rows'] = ['Невикористаний кредит' + row[len('Кредитні'):] if row.startswith('Кредитні') else row
                          for row in funds.get('rows', [])]
+    if page is not None:
+        # v195: борги гасяться перед єдиною сумою заощаджень. Історичні
+        # числа знімка незмінні; прогноз перевіряємо за сирими днями й подіями.
+        raw = page.evaluate("""()=>{const svg=[...document.querySelectorAll('.fc-svg')].find(e=>e.getBoundingClientRect().width>0);
+        const to=svg.dataset.to,from=window.__financeOptions.asof;
+        const p=financeProjection(window.__financeInput,Object.assign({},window.__financeOptions,{through:to}));
+        return {days:p.days.filter(d=>d.date>from&&d.date<=to).map(d=>({date:d.date,cents:d.netCents})),
+          savings:p.events.filter(e=>e.kind==='savings'&&e.date>from&&e.date<=to).reduce((s,e)=>s+e.amountCents,0)}}""")
+        peak = max(raw['days'], key=lambda d:d['cents'])
+        money = lambda cents: f'{int(abs(cents)/100+0.5):,}'.replace(',', ' ') + ' ₴'
+        for snapshot in data.values():
+            parts = snapshot['fc'].split(' · ')
+            # Фікстура має історичний мінімум; новий прогноз його не перевищує вниз.
+            check(min(d['cents'] for d in raw['days']) > -18982400, 'forecast crossed historical fixture minimum')
+            check(peak['cents'] > 750000, 'forecast maximum no longer exceeds fixture current balance')
+            parts[1] = 'макс. ' + ('−' if peak['cents'] < 0 else '+') + money(peak['cents']) + ' ' + _dm(peak['date'])
+            parts[-1] = 'у заощадження ' + ('+' if raw['savings'] > 0 else '') + money(raw['savings'])
+            snapshot['fc'] = ' · '.join(parts)
     return data
 VP = {'desktop': (1440, 900), 'mobile': (390, 844)}
 
@@ -82,7 +100,7 @@ def current_matches(page):
             data[key] = got
             print(f'      знімок {key}: плиток {len(got["kpis"])}, рядків кільця {len(got["ring"]["rows"])}, «Найближче» {len(got["nearRows"])}, бюджет «{got["bud"]}»')
             continue
-        exp = data[key]
+        exp = _expected(page)[key]
         for k in exp:
             check(got.get(k) == exp[k], f'{key}: поточний період змінився в «{k}»: було {exp[k]}, стало {got.get(k)}')
         print(f'      {key}: поточний період збігся з v156: {len(exp["kpis"])} плиток, бюджет «{exp["bud"]}», «Найближче» {len(exp["nearRows"])}')
@@ -331,7 +349,7 @@ def future_periods(page):
     page.wait_for_timeout(300)
     check(page.locator('.pp-now:visible').count() == 1, 'після «До поточного» немає позначки «зараз»')
     check(page.locator('.ov-per:visible').count() == 0, 'після «До поточного» лишився рядок не поточного періоду')
-    exp = _expected()[vp]
+    exp = _expected(page)[vp]
     got = _snap(page)
     for k in exp:
         check(got.get(k) == exp[k], f'{vp}: після «До поточного» «{k}» не як у v156: {got.get(k)}')
@@ -453,7 +471,7 @@ def month_mode(page):
     page.locator('.ov-back:visible').click()
     page.wait_for_timeout(300)
     check(page.locator('.ov-per:visible').count() == 0, f'{vp} місяць: після «До поточного» лишився рядок не поточного періоду')
-    expc = _expected()[vp + '-month']
+    expc = _expected(page)[vp + '-month']
     gotc = _snap(page)
     for k in expc:
         check(gotc.get(k) == expc[k], f'{vp} місяць: після «До поточного» «{k}» не як у v156: {gotc.get(k)}')

@@ -250,7 +250,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     }
   }
   // Категорія з limit_abs: сума в гривнях (budget_limit ігнорується), інакше вага budget_limit.
-  const expenseCats=(data.categories||[]).filter(c=>c.active!==false&&c.type==='expense'&&!c.budget_role);
+  const expenseCats=(data.categories||[]).filter(c=>c.active!==false&&c.type==='expense'&&!c.budget_role&&!(String(c.id)==='savings'||String(c.name||'').normalize('NFKC').trim().toLocaleLowerCase('uk-UA')==='заощадження'));
   const categories: {id:string;name:string;weight:number;limitAbsCents?:number}[]=expenseCats.map(c=>c.limit_abs!=null?{id:String(c.id),name:c.name||'',weight:0,limitAbsCents:Math.max(0,cents(c.limit_abs))}:{id:String(c.id),name:c.name||'',weight:Math.max(0,cents(c.budget_limit??c.limit))/100}).sort((a,b)=>cmp(a.id,b.id));
   if(new Set(categories.map(c=>c.id)).size!==categories.length)throw new RangeError('Duplicate category id');
   // Черга сум у гривнях: sort_order (null в кінці), при рівності id.
@@ -311,11 +311,11 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     }
     return {...m,remainingSegments,monthSignedSpendableCaps,monthDebtProgress,debtExtraOverrunCents:sum(Object.values(monthDebtProgress).map(p=>p.debtExtraOverrunCents)),signedSpendableRemainingCents:sum(remainingSegments.map(s=>s.signedSpendableRemainingCents)),rawCategories:m.categories,rawUnallocatedCents:m.unallocatedCents,rawTargetCents:m.targetCents,rawSavingsTargetCents:m.savingsTargetCents,debtBudgetTargetCents:m.debtBudgetTargetCents,rawSpendableTargetCents:m.spendableTargetCents,savingsTargetCents:sum(Object.entries(by).filter(([id])=>savingsIds.has(id)).map(([,n])=>n)),spendableTargetCents:sum(Object.entries(by).filter(([id])=>!savingsIds.has(id)).map(([,n])=>n)),targetCents:sum(Object.values(by)),categories:Object.entries(by).filter(([id])=>id!=='unallocated').map(([id,totalCents])=>({id,totalCents})),unallocatedCents:by.unallocated||0};
   };
-  const distribution=(target: number,start: string,end: string,available: number,caps?: number[],monthly?: any)=>{const count=distance(start,end),exact=monthly||monthlyPlan(start,end,target),chosen=exact?[...exact.categories.filter((c:any)=>!debtIds.has(c.id)),{id:'unallocated',totalCents:exact.unallocatedCents}]:null,{rows,totals}=chosen?{rows:chosen.map((c:any)=>({id:c.id,name:(data.categories||[]).find(x=>String(x.id)===c.id)?.name||(c.id==='unallocated'?'Не розподілено':'Категорія '+c.id),weight:0})),totals:chosen.map((c:any)=>c.totalCents)}:split(count>0?target:0,caps),remaining=totals.slice(),schedule=[];let balance=available;
+  const distribution=(target: number,start: string,end: string,available: number,caps?: number[],monthly?: any)=>{const count=distance(start,end),exact=monthly||monthlyPlan(start,end,target),chosen=exact?[...exact.categories.filter((c:any)=>!debtIds.has(c.id)&&!savingsIds.has(c.id)),{id:'unallocated',totalCents:exact.unallocatedCents}]:null,{rows,totals}=chosen?{rows:chosen.map((c:any)=>({id:c.id,name:(data.categories||[]).find(x=>String(x.id)===c.id)?.name||(c.id==='unallocated'?'Не розподілено':'Категорія '+c.id),weight:0})),totals:chosen.map((c:any)=>c.totalCents)}:split(count>0?target:0,caps),remaining=totals.slice(),schedule=[];let balance=available;
     const natural=chosen?monthlyPeriodBudget(monthlyRows,start,end,monthlyOptions):null,direct=natural?.covered&&natural.targetCents===sum(totals)&&rows.every((r,i)=>(r.id==='unallocated'?natural.unallocatedCents:natural.categories.find(c=>c.id===r.id)?.totalCents||0)===totals[i]);
     for(let i=0;i<count;i++){const effective=sum(totals),daily=direct?monthlyPeriodBudget(monthlyRows,plus(start,i),plus(start,i+1),monthlyOptions):null;let spendCents=Math.floor(effective/count)+(i<effective%count?1:0),amounts=chosen?totals.map((n,j)=>{if(daily)return rows[j].id==='unallocated'?daily.unallocatedCents:daily.categories.find(c=>c.id===rows[j].id)?.totalCents||0;const dt=plus(start,i),seg=exact.remainingSegments?.find((x:any)=>x.start<=dt&&x.end>dt);if(seg){const lo=seg.start>start?seg.start:start,hi=seg.end<end?seg.end:end,D=distance(lo,hi),k=distance(lo,dt),v=seg.categories.find((c:any)=>c.id===rows[j].id)?.totalCents||0;return Number(BigInt(v)*BigInt(k+1)/BigInt(D)-BigInt(v)*BigInt(k)/BigInt(D));}return Number(BigInt(n)*BigInt(i+1)/BigInt(count)-BigInt(n)*BigInt(i)/BigInt(count));}):i===count-1?remaining.slice():allocate(spendCents,remaining);if(chosen)spendCents=sum(amounts);amounts.forEach((n,j)=>remaining[j]-=n);balance=safe(balance-spendCents);schedule.push({date:plus(start,i),spendCents,remainingCents:balance,byCategory:rows.map((c,j)=>({id:c.id,name:c.name,amountCents:amounts[j],...(exact?.covered&&savingsIds.has(c.id)?{budgetSavings:true}:{})}))});}
-    const savingsTargetCents=exact?.covered?sum(rows.map((c,i)=>savingsIds.has(c.id)?totals[i]:0)):0;
-    return {categories:rows.map((c,i)=>({...c,totalCents:totals[i]})),schedule,savingsTargetCents,spendableTargetCents:sum(totals)-savingsTargetCents};
+    const savingsTargetCents=exact?.covered?exact.savingsTargetCents:0;
+    return {categories:rows.map((c,i)=>({...c,totalCents:totals[i]})),schedule,savingsTargetCents,spendableTargetCents:sum(totals)};
   };
   const between=(start: string,end: string)=>events.filter(e=>e.date>=start&&e.date<end&&e.kind!=='variable');
   const mandatory=(start: string,end: string)=>sum(between(start,end).filter(e=>e.kind==='mandatory'||e.kind==='fee').map(e=>e.amountCents));
@@ -409,7 +409,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     if(arrears>0&&own>0&&list.some(e=>e.kind==='payout'||e.kind==='income')){const n=Math.min(own,arrears);own-=n;arrears-=n;const e=make('arrears:'+d,d,'Сплата нестачі','arrears',n);events.push(e);gen.push(e);}
     const payout=list.filter(e=>e.kind==='payout'),end=payoutDates.find(v=>v>d)||'';
     if(payout.length&&end){
-      const monthly=monthlyPlan(d,end,manual??1500000),periodManual=monthly?monthly.targetCents:manual;
+      const monthly=monthlyPlan(d,end,manual??1500000),periodManual=monthly?monthly.spendableTargetCents:manual;
       // v153 доповнення 7 (власник: «заощадження відкладаються в день заробітньої плати з того, що залишилося за поточний період, тобто в день отримання
       // заробітньої плати ми відкладаємо з авансу і навпаки»): до розподілу нової виплати залишок попереднього періоду (власні на початок дня виплати) гасить
       // борг кредиток (належне першим, далі решта, Mono останнім), потім дострокове розстрочок (найменший залишок після цього періоду першим); що лишилось,
@@ -418,14 +418,9 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
       const byLeft=(x: {id:string;m:number;dates:string[];prepaid:number})=>[instFrom(x,end),x.id] as [number,string];
       const prepayBy=(budget: number,list: Record<string,any>[])=>{let left=budget,n0=0;for(const x of inst.slice().sort((a,b)=>byLeft(a)[0]-byLeft(b)[0]||cmp(a.id,b.id))){if(left<=0)break;const n=Math.min(left,instFrom(x,end));if(n<=0)continue;
         x.prepaid+=n;left-=n;n0+=n;instCut(x,d);pre[x.id]=(pre[x.id]||0)+n;list.push({creditId:x.id,name:x.name,cents:n});}return n0;};
-      {let left=leftover;
-        for(const a of accounts){if(left<=0)break;left-=repayFrom(a,left,d,true,out);}
-        for(const a of accounts.filter(a=>!a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}
-        for(const a of accounts.filter(a=>a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}
-        if(left>0&&debtAll()===0){leftoverPrepaid=prepayBy(left,leftoverPrepay);left-=leftoverPrepaid;}
-        if(left>0&&debtAll()===0&&!inst.some(x=>instFrom(x,end)>0))leftoverSavings=left;}
+      // Увесь власний залишок спершу захищає обовʼязкові платежі та життя наступного періоду.
       const leftoverRepay=sum(Object.values(out));own-=leftoverRepay+leftoverPrepaid+leftoverSavings;
-      const ownAt=own,rd=Math.min(own,debitBetween(d,end)),rc=0,reserve=rd;let repay=0,savings=leftoverSavings,cashOut=0,toMono=0,offset=0;
+      const ownAt=own,rd=Math.min(own,debitBetween(d,end)),rc=Math.min(Math.max(0,own-rd),Math.max(0,mandatory(d,end)-debitBetween(d,end))),reserve=rd+rc;let repay=0,savings=0,cashOut=0,toMono=0,offset=0;
       {let left=payoutBudget(own,reserve,debtAll(),dueOn(d),true,periodManual).repayCents;
         for(const a of accounts){if(left<=0)break;left-=repayFrom(a,left,d,true,out);}
         for(const a of accounts.filter(a=>!a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}
@@ -439,11 +434,13 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
       // v153 доповнення 5: борг кредиток 0, тоді надлишок понад бюджет (мінус нестача до виплати) іде в дострокове погашення розстрочок, найменший залишок
       // після цього періоду першим (платежі до наступної виплати вже в резерві). Накопичення лише коли кредитки й усі розстрочки закриті.
       const payoutPrepay: Record<string,any>[]=[];let prepaid=0;
-      if(debtAll()===0&&available-target>0&&inst.some(x=>instFrom(x,end)>0))prepaid=prepayBy(Math.min(sum(inst.map(x=>instFrom(x,end))),Math.max(0,available-target+lowWith(available-target))),payoutPrepay);
-      const free=available-prepaid;
+      const residual=Math.max(0,Math.min(available-target,available-target+lowWith(available-target)));
+      if(debtAll()===0&&arrears===0&&residual>0)prepaid=prepayBy(residual,payoutPrepay);
+      if(debtAll()===0&&arrears===0&&!inst.some(x=>instFrom(x,end)>0))savings=Math.max(0,residual-prepaid);
+      const free=available-prepaid-savings;
       {cashOut=Math.min(300000,Math.max(0,free));toMono=Math.max(0,free-cashOut);
         const cap=Math.min(toMono,Math.max(0,free-target));let left=cap;for(const a of accounts.filter(a=>a.mono_account_id)){if(left<=0)break;left-=repayFrom(a,left,d,false,out);}offset=cap-left;}
-      own-=repay+offset+prepaid;
+      own-=repay+offset+prepaid+savings;
       emitRepays(d,out,gen);
       // одна подія дострокового погашення на розстрочку за день (із залишку періоду і з виплати разом)
       const prepay=inst.filter(x=>pre[x.id]>0).sort((a,b)=>cmp(a.id,b.id)).map(x=>({creditId:x.id,name:x.name,cents:pre[x.id]}));
@@ -452,7 +449,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
       const dueShort=dueLeft(d),dueShortCents=sum(dueShort.map(x=>x.cents));
       if(dueShortCents>0&&d<=through)snapshot.warnings.push({kind:'due_short',date:d,shortCents:dueShortCents,accounts:dueShort});
       if(savings>0){const ps=payoutDates.filter(v=>v<d).pop()||asof,dm=(v: string)=>v.slice(8,10)+'.'+v.slice(5,7);
-        const e=make('savings:'+d,d,'У заощадження: залишок періоду '+dm(ps)+'-'+dm(plus(d,-1)),'savings',savings);events.push(e);gen.push(e);}
+        const e=make('savings:'+d,d,'У заощадження: вільний залишок після платежів і боргів','savings',savings);events.push(e);gen.push(e);}
       reserved=rd;reservedOk=rc;
       const rec: Record<string,any>={start:d,end,basis:head?'projected':'headline',openingCashCents:opening,payoutCents:sum(payout.map(e=>e.amountCents)),mandatoryCents:mandatory(d,end),debtReserveCents:leftoverRepay+repay+offset,availableCents:available,targetCents:target,gapCents:Math.max(0,target-available),ownCents:ownAt,reserveCents:reserve,repayCents:leftoverRepay+repay+offset,savingsCents:savings,cashOutCents:cashOut,toMonoCents:toMono,monoOffsetCents:offset,dueShortCents,dueShort,prepayCents:prepaid+leftoverPrepaid,prepay,leftoverCents:leftover,leftoverRepayCents:leftoverRepay,leftoverPrepayCents:leftoverPrepaid,leftoverPrepay,
         ...(monthly?{monthlyBudget:monthly,debtBudgetTargetCents:monthly.debtBudgetTargetCents,grossBudgetTargetCents:monthly.rawTargetCents}:{}),leftoverSavingsCents:leftoverSavings,payoutRepayCents:repay+offset,payoutPrepayCents:prepaid,payoutPrepay,installmentsLeft:inst.map(x=>({creditId:x.id,name:x.name,cents:instFrom(x,d)})).filter(x=>x.cents>0),...dist};
@@ -875,7 +872,7 @@ export function nextPeriodPlan(data: NextPeriodInput, asof: string) {
   const baseAvailableCents = sum([incoming, -reserved]);
   const targetCents = Math.max(1500000, baseAvailableCents), gapCents = sum([targetCents, -baseAvailableCents]);
   // Категорія з limit_abs: сума в гривнях (budget_limit ігнорується), інакше вага budget_limit.
-  const expenseCats = (data.categories || []).filter(c => c.active !== false && c.type === 'expense' && !c.budget_role);
+  const expenseCats = (data.categories || []).filter(c => c.active !== false && c.type === 'expense' && !c.budget_role && !(String(c.id)==='savings'||String(c.name||'').normalize('NFKC').trim().toLocaleLowerCase('uk-UA')==='заощадження'));
   const byId = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
   const categories: { id: string; name: string; weight: number; limitAbsCents?: number }[] = expenseCats.map(c => c.limit_abs != null ? { id: String(c.id), name: c.name ?? '', weight: 0, limitAbsCents: Math.max(0, cents(c.limit_abs)) } : { id: String(c.id), name: c.name ?? '', weight: Math.max(0, cents(c.budget_limit ?? c.limit)) / 100 }).sort((a,b) => byId(a.id, b.id));
   if (new Set(categories.map(c => c.id)).size !== categories.length) throw new RangeError('Duplicate category id');

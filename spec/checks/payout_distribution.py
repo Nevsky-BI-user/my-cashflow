@@ -24,24 +24,33 @@ def verify_amounts(page):
     events = [e for e in pr['events'] if e['date'] == q['start']]
     income = sum(e['amountCents'] for e in events if e['kind'] == 'income')
     payout = sum(e['amountCents'] for e in events if e['kind'] == 'payout')
-    free = q['availableCents'] - q['payoutPrepayCents'] - q['monoOffsetCents']
+    savings = q['savingsCents'] - q['leftoverSavingsCents']
+    funded_reserve = min(q['reserveCents'], q['ownCents'])
+    free = q['availableCents'] - q['payoutPrepayCents'] - q['monoOffsetCents'] - savings
     expected = {'opening': q['openingCashCents'], 'payout': payout, 'income': income,
                 'sources': q['openingCashCents'] + payout + income,
                 'arrears': sum(e['amountCents'] for e in events if e['kind'] == 'arrears'),
                 'carry': q['leftoverCents'], 'carry-repay': q['leftoverRepayCents'],
                 'carry-prepay': q['leftoverPrepayCents'], 'carry-savings': q['leftoverSavingsCents'],
-                'own': q['ownCents'], 'reserve': q['reserveCents'], 'repay': q['payoutRepayCents'],
-                'prepay': q['payoutPrepayCents'], 'free': free, 'budget': q['targetCents'],
+                'own': q['ownCents'], 'reserve': funded_reserve, 'repay': q['payoutRepayCents'],
+                'prepay': q['payoutPrepayCents'], 'savings': savings, 'free': free, 'budget': q['targetCents'],
                 'covered': min(q['targetCents'], free), 'gap': max(0, q['targetCents'] - free),
                 'surplus': max(0, free - q['targetCents']), 'cash': q['cashOutCents'],
                 'mono': q['toMonoCents'] - q['monoOffsetCents'], 'due-short': q['dueShortCents']}
     d = page.locator('.pd-dialog[open]')
     for key, cents in expected.items():
         cell = d.locator(f'[data-row="{key}"] .pd-money')
+        if key.startswith('carry') and q['leftoverCents'] == 0:
+            check(cell.count() == 0 and cents == 0, 'zero legacy carry still presented as a separate distribution')
+            continue
         check(int(cell.get_attribute('data-cents')) == cents, f'{key}: wrong raw cents')
         check(abs(num(cell.inner_text()) * 100 - cents) < .01, f'{key}: displayed money loses cents')
     check(expected['sources'] == expected['arrears'] + expected['carry'] + expected['own'], 'source conservation')
-    check(expected['own'] == expected['reserve'] + expected['repay'] + expected['prepay'] + free, 'pool conservation')
+    check(expected['own'] == expected['reserve'] + expected['repay'] + expected['prepay'] + savings + free, 'pool conservation')
+    check(d.locator('[data-row=savings]').count() == 1, 'savings not shown as one final amount')
+    gap = q['reserveCents'] - funded_reserve
+    gap_cell = d.locator('[data-row=reserve-gap] .pd-money')
+    check((int(gap_cell.get_attribute('data-cents')) if gap_cell.count() else 0) == gap, 'mandatory shortfall hidden or counted as funded reserve')
     check(free == expected['cash'] + expected['mono'], 'placement counted twice')
     check(trigger(page).get_attribute('data-date') == q['start'] and q['start'] > DAY, 'not strictly future payout')
     return expected

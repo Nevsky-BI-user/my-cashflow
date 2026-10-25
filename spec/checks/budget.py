@@ -106,7 +106,7 @@ def desktop(page):
     savings_part=sum(amount*stop//31-amount*first//31 for cid,amount in saved['allocations'].items() if str(cid) in savings_ids)
     debt_part=sum(amount*stop//31-amount*first//31 for cid,amount in saved['allocations'].items() if str(cid) in debt_ids)
     check(pb['savingsTargetCents']==savings_part,'savings reserve differs from monthly category slices')
-    check(pb['A']==pb['ownAt']-pb['reserve']-pb['repay']-savings_part,'spendable payout allocation formula changed')
+    check(pb['A']==pb['ownAt']-pb['reserve']-pb['repay'],'provisional savings must not reduce actual payout funds')
     check(pb['budget']==planned-savings_part-debt_part,'consumable target includes savings or debt category slices')
     check(pb['avail']==page.evaluate('window.__financeProjection.currentPeriod.spendableRemainingCents'),'spendable ignores remaining monthly caps')
     go_tab(page,1)

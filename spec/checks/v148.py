@@ -47,7 +47,7 @@ def alloc_units(page):
     sh = _open(page)
     txt = sh.inner_text()
     check('змінити: на Бюджеті' not in txt and sh.locator('.bud-abs-row').count() == 0, 'лишився окремий блок ₴-лімітів з написом «змінити: на Бюджеті»')
-    order = page.evaluate("BCAT.filter(c=>!c.isIncome&&!['debt_card','debt_installment'].includes(c.budget_role)).map(c=>String(c.id))")
+    order = page.evaluate("BCAT.filter(c=>!c.isIncome&&!['debt_card','debt_installment'].includes(c.budget_role)&&String(c.id)!=='savings'&&String(c.name||'').normalize('NFKC').trim().toLocaleLowerCase('uk-UA')!=='заощадження').map(c=>String(c.id))")
     rows = sh.locator('.bud-cat-row').evaluate_all('a=>a.map(e=>e.dataset.cat)')
     check(rows == order, f'категорії не в порядку sort_order: {rows} проти {order}')
     row = sh.locator('.bud-cat-row[data-cat=health]')
