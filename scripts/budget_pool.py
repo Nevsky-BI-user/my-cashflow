@@ -534,7 +534,7 @@ def finance_projection(data, options):
         lr,lt=split(legacy_target)
         m=monthly_period_budget(monthly_rows,start,end,{**monthly_options,'legacyTargetCents':legacy_target,'legacyAllocations':{c['id']:n for c,n in zip(lr,lt)}})
         if not m['covered']: return None
-        by={}; remaining_segments=[]
+        by={}; remaining_segments=[]; month_signed_caps={}
         for seg in m['segments']:
             year,month=map(int,seg['month'][:7].split('-')); year,month=ym(year*12+month); month_end=dt(year,month,1)
             full=monthly_period_budget(monthly_rows,seg['month'],month_end,monthly_options)
@@ -552,12 +552,20 @@ def finance_projection(data, options):
                 cap=float('inf') if seg['legacy'] else max(0,next((r['totalCents'] for r in full_rows if r['id']==c['id']),0)-spent-used)
                 values.append(min(max(0,c['totalCents']-part),cap))
             actual_part=total(cents(t.get('amount')) for t in fact if seg['start']<=txdate(t)<seg['end']) if subtract_actual else 0
-            cap=min(max(0,seg['targetCents']-actual_part),float('inf') if seg['legacy'] else max(0,full['targetCents']-total(cents(t.get('amount')) for t in fact)-total(e['amountCents'] for e in projected)))
-            if sum(values)>cap: values=allocate(cap,values)
+            savings_indexes=[i for i,c in enumerate(budget_rows) if not seg['legacy'] and c['id'] in savings_ids]
+            ordinary_indexes=[i for i in range(len(budget_rows)) if i not in savings_indexes]
+            savings_remaining=sum(values[i] for i in savings_indexes); candidates=[values[i] for i in ordinary_indexes]
+            full_savings_remaining=0 if seg['legacy'] else max(0,full['savingsTargetCents']-total(cents(t.get('amount')) for t in fact if cat(t) in savings_ids)-total(e['amountCents'] for e in projected if e.get('budgetSavings')))
+            month_signed=full['targetCents']-total(cents(t.get('amount')) for t in fact)-total(e['amountCents'] for e in projected)-full_savings_remaining
+            segment_signed=seg['targetCents']-actual_part-savings_remaining
+            signed_remaining=min(sum(candidates),segment_signed,float('inf') if seg['legacy'] else month_signed)
+            ordinary=allocate(max(0,signed_remaining),candidates)
+            for i,n in zip(ordinary_indexes,ordinary): values[i]=n
+            if not seg['legacy']: month_signed_caps[seg['month']]=month_signed
             if not subtract_actual or seg['end']>asof:
                 for c,n in zip(budget_rows,values): by[c['id']]=by.get(c['id'],0)+n
-                remaining_segments.append({**seg,'categories':[{'id':c['id'],'totalCents':n} for c,n in zip(budget_rows,values)],'targetCents':sum(values)})
-        return {**m,'remainingSegments':remaining_segments,'rawCategories':m['categories'],'rawUnallocatedCents':m['unallocatedCents'],'rawTargetCents':m['targetCents'],'rawSavingsTargetCents':m['savingsTargetCents'],'rawSpendableTargetCents':m['spendableTargetCents'],'savingsTargetCents':sum(v for k,v in by.items() if k in savings_ids),'spendableTargetCents':sum(v for k,v in by.items() if k not in savings_ids),'targetCents':sum(by.values()),'categories':[{'id':k,'totalCents':by[k]} for k in sorted(by, key=lambda k: (0,int(k)) if k.isascii() and k.isdigit() and str(int(k))==k and int(k)<4294967295 else (1,list(by).index(k))) if k!='unallocated'],'unallocatedCents':by.get('unallocated',0)}
+                remaining_segments.append({**seg,'categories':[{'id':c['id'],'totalCents':n} for c,n in zip(budget_rows,values)],'targetCents':sum(values),'savingsTargetCents':savings_remaining,'spendableTargetCents':sum(ordinary),'signedSpendableRemainingCents':signed_remaining})
+        return {**m,'remainingSegments':remaining_segments,'monthSignedSpendableCaps':month_signed_caps,'signedSpendableRemainingCents':sum(s['signedSpendableRemainingCents'] for s in remaining_segments),'rawCategories':m['categories'],'rawUnallocatedCents':m['unallocatedCents'],'rawTargetCents':m['targetCents'],'rawSavingsTargetCents':m['savingsTargetCents'],'rawSpendableTargetCents':m['spendableTargetCents'],'savingsTargetCents':sum(v for k,v in by.items() if k in savings_ids),'spendableTargetCents':sum(v for k,v in by.items() if k not in savings_ids),'targetCents':sum(by.values()),'categories':[{'id':k,'totalCents':by[k]} for k in sorted(by, key=lambda k: (0,int(k)) if k.isascii() and k.isdigit() and str(int(k))==k and int(k)<4294967295 else (1,list(by).index(k))) if k!='unallocated'],'unallocatedCents':by.get('unallocated',0)}
     def distribution(target,start,end,available,caps=None,monthly=None):
         count=distance(start,end); exact=monthly or monthly_plan(start,end,target)
         chosen=exact['categories']+[{'id':'unallocated','totalCents':exact['unallocatedCents']}] if exact else None
@@ -607,7 +615,8 @@ def finance_projection(data, options):
             dist=distribution(remaining,plus(asof,1),next_date,available,monthly=remaining_monthly if left_days>0 else {**remaining_monthly,'categories':[],'unallocatedCents':0})
         actual_savings=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and all(t.get(k) is None for k in ('transfer_id','fixed_id','credit_id')) and txdate(t)>=start and str(t.get('category_id')) in savings_ids) if current_monthly else 0
         savings_target=current_monthly['rawSavingsTargetCents'] if current_monthly else 0; savings_remaining=remaining_monthly['savingsTargetCents'] if remaining_monthly else 0
-        current_period={'start':start,'end':next_date,'actualVariableCents':actual,'actualSpendableCents':actual-actual_savings,'actualSavingsCents':actual_savings,'targetCents':target,'remainingTargetCents':remaining,'savingsTargetCents':savings_target,'spendableTargetCents':target-savings_target,'savingsRemainingCents':savings_remaining,'spendableRemainingCents':remaining-savings_remaining,'periodDays':period_days,'leftDays':left_days,'dailyCents':(remaining-savings_remaining)/max(1,distance(asof,next_date)) if current_monthly else (remaining-savings_remaining)/left_days if left_days>0 else 0,'futureSchedule':dist['schedule'],**({'monthlyBudget':current_monthly,'overrunCents':max(0,(actual-actual_savings)-(target-savings_target))} if current_monthly else {})}
+        signed_remaining=remaining_monthly['signedSpendableRemainingCents'] if remaining_monthly else remaining-savings_remaining; spendable_remaining=max(0,signed_remaining)
+        current_period={'start':start,'end':next_date,'actualVariableCents':actual,'actualSpendableCents':actual-actual_savings,'actualSavingsCents':actual_savings,'targetCents':target,'remainingTargetCents':remaining,'savingsTargetCents':savings_target,'spendableTargetCents':target-savings_target,'savingsRemainingCents':savings_remaining,'signedSpendableRemainingCents':signed_remaining,'spendableRemainingCents':spendable_remaining,'periodDays':period_days,'leftDays':left_days,'dailyCents':spendable_remaining/max(1,distance(asof,next_date)) if current_monthly else (remaining-savings_remaining)/left_days if left_days>0 else 0,'futureSchedule':dist['schedule'],**({'monthlyBudget':current_monthly,'overrunCents':max(0,-signed_remaining)} if current_monthly else {})}
         periods.append({'start':start,'end':next_date,'basis':'current','openingCashCents':cash,'payoutCents':0,'mandatoryCents':mandatory_now,'debtReserveCents':0,'availableCents':available,'targetCents':target,'gapCents':max(0,remaining-available),**dist,**({'monthlyBudget':current_monthly} if current_monthly else {})})
     # v151 (власник: «власні кошти не можуть бути мінусові»): послідовна симуляція, дзеркало budget.ts
     events[:]=[e for e in events if e['kind']!='repay']

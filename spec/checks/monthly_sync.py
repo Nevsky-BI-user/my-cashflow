@@ -40,7 +40,9 @@ def overspend(page):
     updated(page)
     values=page.evaluate('({ui:__periodBudget,cp:__financeProjection.currentPeriod})')
     check(values['ui']['avail']==61666 and values['ui']['avail']==values['cp']['remainingTargetCents'],'залишок ранньої частини місяця не враховано')
-    check(values['ui']['rawRemaining']==161666,'втрачено початковий план мінус факт')
+    # Спільний залишок: 100 ₴ жовтня плюс точна частка плану за 1–5 листопада.
+    signed=310000-300000+310000*5//30
+    check(values['ui']['rawRemaining']==signed==values['cp']['signedSpendableRemainingCents'],'Огляд не використовує спільний залишок з урахуванням ранніх перевитрат')
     check('616,66' in page.locator('.kpi-budget [data-r="avail"]').inner_text(),'плитка не показує обмежений залишок')
     check('38,54' in page.locator('.kpi-budget [data-r="daily"]').inner_text(),'плитка дня використовує старий залишок')
 
