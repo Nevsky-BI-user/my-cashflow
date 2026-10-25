@@ -185,8 +185,8 @@ export function periodBudgetStart(pr: P, fi: P, txs: Tx[], allIds: string[], own
   const bm = monthly?.covered?monthly.rawTargetCents/100:fi && fi.salary ? fi.salary.budget_manual : null;
   const manual = bm != null && bm !== '' && isFinite(Number(bm)) && Number(bm) >= 0 ? Math.round(Number(bm) * 100) : null;
   // v152: кожна виплата гасить борг максимум (як рушій), належне лише в день погашення; v153: погашення лише після резерву й бюджету
-  const plan = payoutBudget(ownAt, reserve, dbt, due, true, manual), budget = plan.targetCents;
-  const days = cp.periodDays || Math.max(1, isoDiff(s, e)), spent = cp.actualVariableCents || 0, avail = monthly?.covered ? cp.remainingTargetCents : budget - spent;
+  const plan = payoutBudget(ownAt, reserve, dbt, due, true, manual), budget = monthly?.covered ? cp.spendableTargetCents : plan.targetCents;
+  const days = cp.periodDays || Math.max(1, isoDiff(s, e)), spent = (monthly?.covered ? cp.actualSpendableCents : cp.actualVariableCents) || 0, avail = monthly?.covered ? cp.spendableRemainingCents : budget - spent;
   return { start: s, end: e, own, income: inc, ownAt, reserve, debt: dbt, due, repayDay, repay: plan.repayCents, dueShort: plan.dueShortCents, manual, A: plan.availableCents, budget, days,
     daily: perDayOf(avail, today, s, e), spent, avail };
 }
@@ -244,12 +244,13 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
   if (!cp || !q) return null;
   const h = histOf(txs, accounts), pb = periodBudgetStart(pr, fi, h.hist, h.allIds, h.ownIds, today);
   if (!pb) return null;
-  const exp = (cats || []).filter((c) => !c.is_income && c.type !== 'income');
+  const savingsIds = new Set(cp.monthlyBudget?.covered ? cp.monthlyBudget.savingsCategoryIds : []);
+  const exp = (cats || []).filter((c) => !c.is_income && c.type !== 'income' && !savingsIds.has(String(c.id)));
   const fact: Record<string, number> = {};
   let none = 0;
   for (const t of uniq(txs)) {
     const d = txDate(t);
-    if (t.type !== 'expense' || t.transfer_id != null || t.fixed_id != null || t.credit_id != null || d < cp.start || d > today) continue;
+    if (t.type !== 'expense' || t.transfer_id != null || t.fixed_id != null || t.credit_id != null || d < cp.start || d > today || savingsIds.has(String(t.category_id))) continue;
     const c = t.category_id != null ? exp.find((x) => String(x.id) === String(t.category_id)) : null;
     if (c) fact[String(c.id)] = (fact[String(c.id)] || 0) + cents(t.amount);
     else none += cents(t.amount);
@@ -257,7 +258,7 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
   const plan: Record<string, P> = {};
   const monthly=cp.monthlyBudget;
   const planned=monthly?.covered?[...monthly.rawCategories.map((c:any)=>({...c,name:cats.find(x=>String(x.id)===c.id)?.name||'Категорія '+c.id})),{id:'unallocated',name:'Не розподілено',totalCents:monthly.rawUnallocatedCents}]:planSplit(pb.budget,cats);
-  for (const c of planned) plan[String(c.id)] = c;
+  for (const c of planned) if(!savingsIds.has(String(c.id))) plan[String(c.id)] = c;
   const rows: BudgetRow[] = [];
   const add = (id: string, name: string, color: string | null, f: number, p: number, noPlan = false) => {
     if (f <= 0 && p <= 0) return;
@@ -569,7 +570,7 @@ const dueOn = (pr: P, date: string) => paymentDues(pr, date)
 export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string, budget: BudgetModel | null = null): string {
   const s = pr.snapshot, u = pr.untilPayout, tomorrow = plusDays(today, 1);
   const lines = [`☀️ Доброго ранку! ${day(today)}`, `Баланс: ${money(s.positiveOwnCents - s.creditDebtCents)}`];
-  if(pr.currentPeriod?.monthlyBudget?.covered)lines.push('Бюджет періоду: '+money(pr.currentPeriod.targetCents)+' · '+((pr.currentPeriod.overrunCents||0)>0?leftOrOver(-pr.currentPeriod.overrunCents):leftOrOver(pr.currentPeriod.remainingTargetCents,'залишок'))+(budget&&(pr.currentPeriod.overrunCents||0)<=0?dailyPart(budget):'')+(pr.currentPeriod.monthlyBudget.estimated?' (прогноз за останнім місячним планом)':''));
+  if(pr.currentPeriod?.monthlyBudget?.covered)lines.push('Бюджет періоду: '+money(pr.currentPeriod.spendableTargetCents)+' · '+((pr.currentPeriod.overrunCents||0)>0?leftOrOver(-pr.currentPeriod.overrunCents):leftOrOver(pr.currentPeriod.spendableRemainingCents,'залишок'))+(budget&&(pr.currentPeriod.overrunCents||0)<=0?dailyPart(budget):'')+(pr.currentPeriod.monthlyBudget.estimated?' (прогноз за останнім місячним планом)':''));
   else if (budget) lines.push(budgetLeftLine(budget));
   const short = u && u.days > 0 ? untilPayoutLine(u) : null;
   if (short) lines.push(short);

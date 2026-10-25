@@ -31,10 +31,11 @@ const repayOf=(r,id)=>r.events.filter(e=>e.kind==='repay'&&e.id.startsWith('repa
 
 // функції фронтенду рівно так, як вони лежать в index.html: вбудована копія рушія і обгортки, без копій правила
 function front(){
+ const monthly=html.split('/* CANONICAL MONTHLY PERIOD BUDGET */')[1].split('/* END CANONICAL MONTHLY PERIOD BUDGET */')[0];
  const canon=html.split('/* CANONICAL FINANCE PROJECTION */')[1].split('/* END CANONICAL FINANCE PROJECTION */')[0];
  const pick=re=>{const m=html.match(re);assert.ok(m,'не знайдено в index.html: '+re);return m[0];};
  const src=[pick(/const pbIso=[^;]+;/),pick(/const pbDate=v=>\{.*?\};/),pick(/const pbDiff=[^;]+;/),pick(/const pbDm=[^;]+;/),
-  pick(/^function cashBuckets\(.*$/m),pick(/^let REPAY_EV=.*$/m),pick(/^function repayKind\(.*$/m),pick(/^function debtDue\(.*$/m),pick(/^function dueCls\(.*$/m),pick(/^function cashRepayDate\(.*$/m),canon,
+  pick(/^function cashBuckets\(.*$/m),pick(/^let REPAY_EV=.*$/m),pick(/^function repayKind\(.*$/m),pick(/^function debtDue\(.*$/m),pick(/^function dueCls\(.*$/m),pick(/^function cashRepayDate\(.*$/m),monthly,canon,
   'const planRepayOf=function(now){'+pick(/const planRepay=function\(y,m,d\)\{.*?\};/)+'return planRepay};',
   'return {repayDate,financeProjection,setRepayEvents,debtDue,dueCls,cashRepayDate,pbDate,pbIso,pbDm,planRepayOf};'].join('\n');
  return new Function(src)();

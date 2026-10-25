@@ -1,5 +1,7 @@
 ﻿// Єдина сума змінного бюджету: збережений місячний план і точні цілі копійки.
-export function monthlyPeriodBudget(rows:any[],start:string,end:string,options:{legacyTargetCents?:number;legacyAllocations?:Record<string,number>}={}){
+export function monthlyPeriodBudget(rows:any[],start:string,end:string,options:{legacyTargetCents?:number;legacyAllocations?:Record<string,number>;categories?:any[]}={}){
+ const savingsCategoryIds=(options.categories||[]).filter(c=>!c.is_income&&!c.isIncome&&c.type!=='income'&&(String(c.id)==='savings'||String(c.name||'').normalize('NFKC').trim().toLocaleLowerCase('uk-UA')==='заощадження')).map(c=>String(c.id));
+ const saving=new Set(savingsCategoryIds);
  const parse=(s:string)=>new Date(s+'T00:00:00Z'),iso=(d:Date)=>d.toISOString().slice(0,10),days=(a:string,b:string)=>Math.round((+parse(b)-+parse(a))/86400000);
  const valid=(n:any)=>{const v=Number(n);if(!Number.isSafeInteger(v)||v<0)throw new RangeError('Invalid monthly budget cents');return v;};
  const prefix=(n:number,a:number,b:number,d:number)=>Number(BigInt(n)*BigInt(b)/BigInt(d)-BigInt(n)*BigInt(a)/BigInt(d));
@@ -20,8 +22,18 @@ export function monthlyPeriodBudget(rows:any[],start:string,end:string,options:{
   }
   const categories=Object.entries(allocation).sort(([a],[b])=>a.localeCompare(b)).map(([id,totalCents])=>({id,totalCents}));
   categories.forEach(c=>totals.set(c.id,(totals.get(c.id)||0)+c.totalCents));unallocatedCents+=unallocated;
-  segments.push({start:cursor,end:stop,month,sourceMonth,estimated,legacy:!row,targetCents:categories.reduce((n,c)=>n+c.totalCents,0)+unallocated,categories,unallocatedCents:unallocated});cursor=stop;
+  const savingsTargetCents=row?categories.filter(c=>saving.has(c.id)).reduce((n,c)=>n+c.totalCents,0):0,targetCents=categories.reduce((n,c)=>n+c.totalCents,0)+unallocated;
+  segments.push({start:cursor,end:stop,month,sourceMonth,estimated,legacy:!row,targetCents,savingsTargetCents,spendableTargetCents:targetCents-savingsTargetCents,categories,unallocatedCents:unallocated});cursor=stop;
  }
  const categories=[...totals].sort(([a],[b])=>a.localeCompare(b)).map(([id,totalCents])=>({id,totalCents}));
- return {targetCents:categories.reduce((n,c)=>n+c.totalCents,0)+unallocatedCents,categories,unallocatedCents,segments,sourceMonths:[...new Set(segments.map(s=>s.sourceMonth).filter(Boolean))],estimated:segments.some(s=>s.estimated),legacy:segments.some(s=>s.legacy),covered};
+ const targetCents=categories.reduce((n,c)=>n+c.totalCents,0)+unallocatedCents,savingsTargetCents=segments.reduce((n,s)=>n+s.savingsTargetCents,0);
+ return {targetCents,savingsTargetCents,spendableTargetCents:targetCents-savingsTargetCents,savingsCategoryIds,categories,unallocatedCents,segments,sourceMonths:[...new Set(segments.map(s=>s.sourceMonth).filter(Boolean))],estimated:segments.some(s=>s.estimated),legacy:segments.some(s=>s.legacy),covered};
+}
+
+// Місячний резерв зменшується лише фактичним переказом у категорію заощаджень.
+export function monthlySavingsReserve(rows:any[],categories:any[],transactions:any[],asof:string){
+ const start=asof.slice(0,7)+'-01',d=new Date(start+'T00:00:00Z'),end=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,1)).toISOString().slice(0,10),plan=monthlyPeriodBudget(rows,start,end,{categories});
+ const ids=new Set(plan.savingsCategoryIds),seen=new Set<string>();let factCents=0;
+ for(const t of transactions||[]){const date=String(t.date||t.created_at||'').slice(0,10),id=t.id==null?null:String(t.id);if(id!=null){if(seen.has(id))continue;seen.add(id);}if(t.type!=='expense'||t.transfer_id!=null||t.fixed_id!=null||t.credit_id!=null||date<start||date>=end||date>asof||!ids.has(String(t.category_id)))continue;const n=Number(t.amount);if(Number.isFinite(n)&&n>0)factCents+=Math.round(n*100);}
+ const plannedCents=plan.covered?plan.savingsTargetCents:0;return{plannedCents,factCents,reserveCents:Math.max(0,plannedCents-factCents),sourceMonths:plan.sourceMonths,estimated:plan.estimated};
 }
