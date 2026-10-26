@@ -5,7 +5,7 @@
 5) Кільце бюджету: росте лише сегмент категорії, без перемонтування.
 reduced-motion: без руху, одразу кінцевий стан."""
 import re
-from helpers import ROOT, check, dialog, freeze, go_tab, settle
+from helpers import ROOT, check, dialog, freeze, go_tab, settle, num
 
 DAY = '2026-10-13'
 
@@ -97,15 +97,19 @@ RING = r"""()=>{const b=document.querySelector('.dv-bud .bd, .bd');const ps=[...
 
 def tx_flash_ring(page):
     """Перше завантаження без спалаху; нова витрата: спалах її рядка в «Останні операції» (і в Потоці), сегмент категорії кільця росте 400 мс без перемонтування решти."""
-    _desk(page)
+    # Два сегменти: додавання до єдиної категорії не змінює кут повного кола.
+    _desk(page, patch=[('const TX_DEMO_ROWS=[', "const TX_DEMO_ROWS=[[28,'Друга категорія',1000,'out','manual',null,'cafe',0,'l1'],")])
     page.wait_for_timeout(800)
     check(page.evaluate('()=>window.__FLASH.length') == 0, 'спалах на першому завантаженні')
     ids0 = page.evaluate(RING)
+    check(len(ids0) >= 2 and 'food' in ids0 and 'cafe' in ids0, f'фікстура анімації має містити Продукти та Кафе: {ids0}')
+    total_before = num(page.locator('.dv-bud .bd-c b').inner_text())
     cat = page.evaluate("()=>String((CATEGORIES||[]).find(c=>c.name==='Продукти').id)") if page.evaluate("()=>typeof CATEGORIES!=='undefined'") else None
     n0 = page.evaluate('()=>window.__AN.length')
     page.evaluate(r"""()=>{window.__D=[];window.__G=[];const tick=()=>{if(!window.__RING)return;const g=document.querySelector('path.bd-seg.bd-grow');if(g){window.__G.push(g.getAttribute('data-id'));const d=g.getAttribute('d');if(window.__D[window.__D.length-1]!==d)window.__D.push(d)}if(window.__D.length<200)requestAnimationFrame(tick)};requestAnimationFrame(tick)}""")
     _new_tx(page, 700, 'Продукти')
     page.wait_for_timeout(1200)
+    check(num(page.locator('.dv-bud .bd-c b').inner_text()) == total_before + 700, 'нова витрата не збільшила факт кільця на 700')
     fl = page.evaluate('()=>window.__FLASH')
     nid = page.evaluate("()=>{const r=document.querySelector('.dv-recent [data-tx-id]');return r?r.getAttribute('data-tx-id'):null}")
     print(f'      спалахи: {fl}; новий рядок {nid}')

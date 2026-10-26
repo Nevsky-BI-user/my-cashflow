@@ -1,6 +1,6 @@
 # DESIGN.md п. 13 (власник 09.10.2026): постійний платіж закриває витрата з fixed_id у місяці платежу, змінна сума з «≈ середня».
 # Демо: Садочок (f2) 3 500 ₴ 10-го, у фікстурі змінний; сьогодні 08.10, оплата 3 400 ₴ раніше дати платежу.
-from helpers import check, finance_ref, finance_state, dialog, freeze, go_tab, shot
+from helpers import check, finance_ref, finance_state, dialog, freeze, go_tab, shot, open_calendar_day, num
 
 DAY = '2026-10-08'
 PATCH = [("{id:'f2',name:'Садочок',amount:3500,day_of_month:10,type:'payment',color:'#f6d06f',active:true,credit_ok:false}",
@@ -72,17 +72,20 @@ def calendar_paid(page):
     page.set_viewport_size({'width': 1920, 'height': 1080})
     freeze(page, DAY, PATCH)
     go_tab(page, 3)
-    ev = page.locator('.cal-ev', has_text='Садочок')
+    details = open_calendar_day(page, '2026-10-10')
+    ev = details.locator('.cal-day-events .cal-day-row', has_text='Садочок')
     check(ev.count() >= 1, 'у «Події і баланс» немає Садочка')
     check('≈ середня' in ev.first.inner_text(), f'немає «≈ середня»: {ev.first.inner_text()!r}')
     check(ev.first.locator('.pay-done').count() == 1, 'немає «Оплачено» в рядку Календаря')
+    page.keyboard.press('Escape')
     _pay(page)
     go_tab(page, 3)
-    ev = page.locator('.cal-ev', has_text='Садочок')
+    details = open_calendar_day(page, DAY)
+    ev = details.locator('.cal-day-events .cal-day-row', has_text='Садочок')
     texts = ev.all_inner_texts()
     print(f'      Календар після оплати: {texts}')
-    check(len(texts) == 1 and 'сплачено' in texts[0] and '3' in texts[0] and '400' in texts[0], f'немає «сплачено» з 3 400: {texts}')
-    check(ev.first.get_attribute('data-bal') is None, 'сплачений рядок має баланс')
+    check(len(texts) == 1 and 'сплачено' in texts[0].lower() and abs(num(ev.first.locator('.cal-day-amount').inner_text())) == PAID, f'немає «сплачено» з 3 400: {texts}')
+    check(ev.first.get_attribute('data-paid') == 'true', 'сплачений рядок не позначено')
     check(ev.first.locator('.pay-done').count() == 0, 'у сплаченого лишилось «Оплачено»')
     page.mouse.move(2, 2)
     shot(page, 'v141-cal-1920.jpg', full=False)
@@ -132,7 +135,7 @@ def phone_paid(page):
     page.wait_for_timeout(400)
     # Календар телефону: «≈» і «Оплачено» у списку місяця, після оплати «сплачено» з фактичною сумою
     go_tab(page, 3)
-    page.locator('.cal-cell[data-date="2026-10-10"]').click()
+    open_calendar_day(page, '2026-10-10')
     page.wait_for_timeout(200)
     btn = _btn(page)
     row = page.evaluate("()=>{let e=document.querySelector('[data-pick]');for(let k=0;k<6&&e&&!e.textContent.includes('≈');k++)e=e.parentElement;return e?e.textContent:''}")
@@ -146,11 +149,12 @@ def phone_paid(page):
     dlg.locator('.tx-save').click()
     page.wait_for_timeout(600)
     go_tab(page, 3)
-    page.locator('.cal-cell[data-date="2026-10-08"]').click()
+    details = open_calendar_day(page, '2026-10-08')
     page.wait_for_timeout(200)
-    paid = page.evaluate("()=>[...document.querySelectorAll('.cm-details .fx-paid')].map(e=>e.closest('.cm-event').textContent)")
+    paid_rows = details.locator('.cal-day-events .cal-day-row[data-paid="true"]', has_text='Садочок')
+    paid = paid_rows.all_inner_texts()
     print(f'      Календар телефону після оплати: {paid}')
-    check(any('Садочок' in x and '3' in x and '400' in x for x in paid), f'немає «сплачено» Садочка 3 400: {paid}')
+    check(paid_rows.count() == 1 and abs(num(paid_rows.locator('.cal-day-amount').inner_text())) == PAID, f'немає «сплачено» Садочка 3 400: {paid}')
     check(not page.evaluate(PICK, 'Садочок'), 'після оплати лишилось «Оплачено» Садочка')
 
 

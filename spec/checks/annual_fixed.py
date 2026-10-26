@@ -1,4 +1,4 @@
-﻿from helpers import check, dialog, freeze, go_tab, finance_state
+﻿from helpers import check, dialog, freeze, go_tab, finance_state, open_calendar_day, num
 
 
 def annual_form(page):
@@ -40,11 +40,11 @@ def early_payment(page):
     check('fixed:f2:2026-12' in ids,'грудень помилково закрито оплатою січня')
     check('fixed:f2:2027-01' not in ids,'січень не закрито достроковою оплатою')
     go_tab(page,3)
-    if page.viewport_size['width'] < 1024:
-        page.locator('.cal-cell[data-date="2026-12-08"]').click()
-        check(page.locator('.cm-details .fx-paid').count()>0,'early payment missing from actual calendar day')
-    else:
-        check(any('\u0441\u043f\u043b\u0430\u0447\u0435\u043d\u043e' in t for t in page.locator('.cal-ev',has_text='\u0421\u0430\u0434\u043e\u0447\u043e\u043a').all_inner_texts()),'early payment missing from actual calendar month')
+    details = open_calendar_day(page, '2026-12-08')
+    paid = details.locator('.cal-day-events .cal-day-row[data-paid="true"]', has_text='Садочок')
+    check(paid.count() == 1, 'early payment missing from actual calendar day')
+    check(abs(num(paid.locator('.cal-day-amount').inner_text())) == tx['amount'], 'early payment amount changed')
+    check(paid.locator('.pay-done').count() == 0, 'paid event can be paid twice')
 
 CHECKS=[('annual create/edit desktop','desktop',annual_form),('annual create/edit mobile','mobile',annual_form),('early Dec to Jan desktop','desktop',early_payment),('early Dec to Jan mobile','mobile',early_payment)]
 

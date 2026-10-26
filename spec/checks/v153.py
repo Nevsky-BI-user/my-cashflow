@@ -2,7 +2,7 @@
 відрізку кожного діапазону (0 теж показується), у підказці дня виплати рядок «У заощадження»; легенда кільця бюджету на ПК
 (власник: «поганий дизайн»): кожен пункт в один рядок однакової висоти, емодзі на лінії назви, суми й відсотки рівно праворуч,
 без стрілок перевитрати; телефон без переповнення рядків."""
-from helpers import check, freeze, go_tab
+from helpers import check, freeze, go_tab, open_calendar_day, num
 
 DAY = '2026-10-12'
 # як у v149: ще вісім категорій витрат у поточному періоді, кожна понад 3% факту, тож у легенді багато окремих пунктів
@@ -121,70 +121,38 @@ def legend(page):
 # v153 (власник: «чому після події не змінюється баланс? як ти гасиш кредитку, якщо на це немає білих грошей?»): «Події і баланс» на ПК
 MONO_DEBT = [("kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:0,debt_month:null",
               "kind:'credit',mono_account_id:'demo-mono',balance:0,debt:20000,credit_limit:30000,debt_month:pbIso(new Date(t.getFullYear(),t.getMonth(),1))")]
-EVROWS = r"""(()=>[...document.querySelectorAll('.ck-day .cal-tbl .cal-ev')].map(r=>({c:r.className,d:r.dataset.date||'',n:r.querySelector('.ce-n')?.textContent||'',
-a:r.querySelector('.ce-a')?.textContent||'',b:r.dataset.bal==null?null:Number(r.dataset.bal),debt:r.dataset.debt==null?null:Number(r.dataset.debt),
-dt:r.querySelector('.ce-dbt')?.textContent||''})))()"""
-ENG = r"""(()=>{const p=window.__financeProjection;return {events:p.events.map(e=>({date:e.date,kind:e.kind,funding:e.funding,cash:e.cashAfterCents,debt:e.debtAfterCents,
-cd:e.cashDeltaCents||0,amount:e.amountCents||0})),warnings:(p.snapshot.warnings||[]).filter(w=>w.kind==='due_short')}})()"""
-
-
-def _amt(t):
-    s = t.replace(' ', '').replace(' ', '').replace('₴', '').replace(',', '.')
-    v = float(''.join(ch for ch in s if ch.isdigit() or ch == '.') or 0)
-    return -v if '−' in t or '-' in t else v
-
-
 def events_own(page):
-    """ПК 1440x900, демо і демо з боргом Mono, три місяці «Події і баланс»: шапка «Власні після» і «Борг», підпис над таблицею;
-    після рядка погашення «Власні після» менше за попередній рядок того ж дня рівно на суму погашення, а борг менший на неї ж (з DOM);
-    жоден рядок погашення не лишає власних менше, ніж відтоки власних до наступної виплати (резерв обовʼязкових і щоденних витрат)."""
-    page.set_viewport_size({'width': 1440, 'height': 900})
-    pairs, guarded = [], []
-    for name, patch in (('демо', None), ('борг Mono', MONO_DEBT)):
-        freeze(page, DAY, patch)
-        go_tab(page, 3)
-        page.wait_for_selector('.p-credits.desk .cal-days .cal-cell')
-        hd = page.inner_text('.ck-day')
-        for s in ('Власні після', 'Борг'):
-            check(s in hd, f'{name}: немає «{s}» у «Події і баланс»')
-        check('Баланс після' not in hd, f'{name}: лишилась колонка «Баланс після»')
-        eng = page.evaluate(ENG)
-        evs = eng['events']
-        pays = sorted({e['date'] for e in evs if e['kind'] == 'payout'})
-        for k in range(3):
-            if k:
-                page.click('.ck-arr[aria-label="Наступний місяць"]')
-                page.wait_for_timeout(300)
-            rows = page.evaluate(EVROWS)
-            for i, r in enumerate(rows):
-                if not r['n'].startswith('Погашення') or r['b'] is None or ' paid' in r['c']:
-                    continue
-                prev = next((q for q in reversed(rows[:i]) if q['b'] is not None), None)
-                a = abs(_amt(r['a']))
-                if prev and prev['d'] == r['d']:
-                    # з DOM: власні після погашення = попередні власні мінус погашення; борг після = попередній борг мінус погашення
-                    check(abs(prev['b'] - a - r['b']) <= 1, f'{name} міс.{k + 1} {r["d"]} {r["n"]}: власні {prev["b"]} − {a} ≠ {r["b"]}')
-                    check(prev['debt'] is not None and r['debt'] is not None and abs(prev['debt'] - a - r['debt']) <= 1,
-                          f'{name} міс.{k + 1} {r["d"]} {r["n"]}: борг {prev["debt"]} − {a} ≠ {r["debt"]}')
-                    pairs.append(f'{r["d"][8:]}.{r["d"][5:7]} {prev["b"]:.0f}−{a:.0f}={r["b"]:.0f}')
-                # рушій: та сама подія погашення (дата, власні після, сума); відтоки власних після неї до наступної виплати
-                j = next((j for j, e in enumerate(evs) if e['kind'] == 'repay' and e['date'] == r['d'] and abs(e['cash'] / 100 - r['b']) <= 1 and abs(abs(e['amount']) / 100 - a) <= 1), None)
-                check(j is not None, f'{name} міс.{k + 1}: погашення {r["d"]} {r["n"]} {a} без події рушія')
-                nxt = next((d for d in pays if d > r['d']), '9999-12-31')
-                need = sum(max(0, -e['cd']) for e in evs[j + 1:] if e['date'] < nxt)
-                check(r['b'] * 100 >= need - 100, f'{name} {r["d"]} {r["n"]}: власні після {r["b"]} менше за відтоки до {nxt} {need / 100:.2f}')
-                guarded.append(f'{r["d"][8:]}.{r["d"][5:7]} {r["b"]:.0f}≥{need / 100:.0f}')
-            # витрата з кредитки не змінює власних: рядок «з кредитки» має власні як попередній рядок того ж дня
-            for i, r in enumerate(rows):
-                prev = rows[i - 1] if i else None
-                if prev and r['b'] is not None and prev['b'] is not None and prev['d'] == r['d'] and r['debt'] is not None and prev['debt'] is not None and r['debt'] > prev['debt'] + 0.5:
-                    check(abs(r['b'] - prev['b']) <= 1, f'{name} {r["d"]} {r["n"]}: витрата з кредитки змінила власні {prev["b"]} -> {r["b"]}')
-            # борг червоним у вузькій колонці, коли він є
-            red = page.evaluate("""[...document.querySelectorAll('.ck-day .cal-tbl .ce-dbt')].filter(e=>e.textContent.trim()).map(e=>{const c=getComputedStyle(e).color.match(/[\\d.]+/g).map(Number);return c[0]>c[1]+60&&c[0]>c[2]+60&&parseFloat(getComputedStyle(e).fontSize)>=13})""")
-            check(all(red), f'{name} міс.{k + 1}: борг не червоним або дрібніше 13px')
-    check(pairs, 'на демо немає жодного погашення після події того ж дня: перевірка нічого не перевіряє')
-    check(guarded, 'жодного рядка погашення з власними після: перевірка резерву нічого не перевіряє')
-    print(f'      погашення (власні до − сума = після): {pairs}; резерв до виплати: {guarded}')
+    """Preserve own/debt/reserve invariants; exact repayment amounts remain in day details.
+
+    Removed cumulative report columns are no longer a DOM contract.
+    """
+    from helpers import finance_ref
+    from checks.calendar import day_events
+    page.set_viewport_size({'width':1440,'height':900})
+    pairs=guarded=0
+    for name,patch in (('demo',None),('Mono debt',MONO_DEBT)):
+        freeze(page,DAY,patch)
+        go_tab(page,3)
+        projection=finance_ref(page,verify_ts=True)
+        events=projection['events']
+        pays=sorted({e['date'] for e in events if e['kind']=='payout'})
+        for i,event in enumerate(events):
+            if event['date']>'2026-12-31':continue
+            previous=events[i-1] if i else None
+            if event['kind']=='repay':
+                if previous and previous['date']==event['date']:
+                    check(previous['cashAfterCents']-event['amountCents']==event['cashAfterCents'],f'{name}: repayment own-funds chain changed')
+                    check(previous['debtAfterCents']-event['amountCents']==event['debtAfterCents'],f'{name}: repayment debt chain changed')
+                    pairs+=1
+                nxt=next((d for d in pays if d>event['date']),'9999-12-31')
+                need=sum(max(0,-e.get('cashDeltaCents',0)) for e in events[i+1:] if e['date']<nxt)
+                check(event['cashAfterCents']>=need,f'{name}: repayment consumed reserved expenses')
+                guarded+=1
+            if event['funding']=='credit' and event['kind']!='repay' and previous and previous['date']==event['date']:
+                check(event['cashAfterCents']==previous['cashAfterCents'],f'{name}: credit expense consumed own funds')
+        for month in ('2026-10','2026-11','2026-12'):
+            day_events(page,projection,month)
+    check(pairs>0 and guarded>0,'repayment invariants tested no events')
 
 
 def _bopen(page):
@@ -208,7 +176,7 @@ def budget_manual(page):
     sh = _bopen(page)
     inp = sh.locator('[data-k=bud-man]')
     check(inp.count() == 1 and sh.locator('[data-k=bud-auto]').get_attribute('aria-pressed') == 'true', 'немає поля суми або «Авто» не за замовчуванням')
-    check(abs(_amt(inp.input_value()) * 100 - a0['pb']) <= 100, f'у полі {inp.input_value()!r}, а бюджет періоду {a0["pb"]}')
+    check(abs(num(inp.input_value()) * 100 - a0['pb']) <= 100, f'у полі {inp.input_value()!r}, а бюджет періоду {a0["pb"]}')
     sh.locator('[data-k=bud-manual]').click()
     page.wait_for_timeout(200)
     check(sh.locator('[data-k=bud-manual]').get_attribute('aria-pressed') == 'true', '«Вручну» не ввімкнулось')

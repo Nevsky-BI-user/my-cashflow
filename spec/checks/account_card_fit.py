@@ -50,8 +50,10 @@ def _cards(page, width, theme, mobile):
     # Inline CountUp glyphs can extend beyond their line box; the card must contain their actual painted bounds.
     check(cards.evaluate_all('es=>es.every(e=>{const c=e.getBoundingClientRect();return [...e.querySelectorAll(".bcard-sum .cu")].every(x=>{const r=x.getBoundingClientRect();return r.top>=c.top&&r.bottom<=c.bottom&&getComputedStyle(x.parentElement).overflow==="visible"})})'), 'amount glyphs clipped by card')
     first = cards.first
-    check('зарплатна' in first.inner_text() and '0678' in first.inner_text() and 'оновлено' in first.inner_text(), 'salary/card/update identity missing')
-    check('42\xa0750' in first.inner_text() and '18\xa0000' in first.inner_text() and 'жовтні' in first.inner_text() and 'без комісії' in first.inner_text(), 'full monthly spending or status missing')
+    salary = first.locator('.bcard-badge.acc[aria-label="Зарплата надходить на цей рахунок"]')
+    check(salary.is_visible() and '0678' in first.inner_text() and 'оновлено 21.10' in first.inner_text(), 'salary/card/update identity missing')
+    month_text = first.inner_text() if mobile else first.locator('.ms-wrap').get_attribute('title')
+    check('42\xa0750' in first.inner_text() and '18\xa0000' in first.inner_text() and 'жовтні' in month_text and 'без комісії' in first.inner_text(), 'full monthly spending or status missing')
     check('ліміт' not in cards.nth(1).inner_text() and 'доступно' in cards.nth(1).inner_text() and 'погашення' in cards.nth(1).inner_text(), 'credit availability or repayment date missing')
     check('23\xa0125' in cards.nth(2).inner_text() and '31.10' in cards.nth(2).inner_text() and '600' in cards.nth(2).inner_text(), 'unmet spending warning missing data')
     check(page.evaluate('document.documentElement.scrollWidth<=innerWidth'), f'{width}/{theme}: outer page overflow')

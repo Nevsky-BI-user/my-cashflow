@@ -1,7 +1,7 @@
 """v154: підказка «Гроші в часі» без трикрапки (власник: назви подій обрізані): повна назва події, ширина росте до межі, далі
 перенос на другий рядок, сума праворуч по верхньому краю; підказка в межах графіка й екрана, зокрема біля правого краю і на 375 px.
 Демо з боргом Mono (два погашення в день виплати) і довгою назвою обовʼязкового платежу."""
-from helpers import check, freeze, go_tab
+from helpers import check, freeze, go_tab, open_calendar_day
 
 DAY = '2026-10-12'
 LONG = 'Підписки сервісів навчання дітей і родинний пакет хмарного сховища'
@@ -71,7 +71,7 @@ CHECKS = [
 CUT = r"""(()=>{const out=[];for(const e of document.querySelectorAll('body *')){if(!e.offsetParent||e.children.length>2)continue;const t=e.textContent;
 if(!(t.includes('Підписки сервісів')||/^Погашення /.test(t.trim())))continue;const s=getComputedStyle(e);
 const cut=(s.textOverflow==='ellipsis'&&s.overflow!=='visible'&&e.scrollWidth>e.clientWidth+1)||t.includes('…')||(s.webkitLineClamp!=='none'&&e.scrollHeight>e.clientHeight+1);
-/* клітинка сітки календаря: назва скорочена, повна в title рядка і в розкладі дня; поза скоупом v154, лише вимога title */const cell=e.closest('.cal-cell .cal-ln');if(cut&&cell&&(cell.title||'').includes(t.trim()))continue;if(cut)out.push({cls:e.className,t:t.slice(0,60),sw:e.scrollWidth,cw:e.clientWidth})}return out})()"""
+/* Повна назва доступна в підписі дня та його діалозі. */const cell=e.closest('.cal-cell');if(cut&&cell&&(cell.getAttribute('aria-label')||'').includes(t.trim()))continue;if(cut)out.push({cls:e.className,t:t.slice(0,60),sw:e.scrollWidth,cw:e.clientWidth})}return out})()"""
 
 
 def names_full(page):
@@ -85,6 +85,12 @@ def names_full(page):
         print(f'      {tag} {nm}: обрізаних назв {len(got)} {got[:6]}')
         bad += [(nm, g) for g in got]
     check(not bad, f'{tag}: назви подій обрізані: {bad[:6]}')
+    cells = page.locator('.cal-cell').evaluate_all('(es)=>es.filter(e=>(e.getAttribute("aria-label")||"").includes("Підписки сервісів")).map(e=>e.dataset.date)')
+    check(cells, 'довга назва відсутня в календарі')
+    for iso in cells:
+        details = open_calendar_day(page, iso)
+        row = details.locator('.cal-day-name', has_text=LONG)
+        check(row.count() >= 1 and row.evaluate_all('es=>es.every(e=>e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1)'), 'повна назва події обрізана в подробицях дня')
 
 
 CHECKS += [

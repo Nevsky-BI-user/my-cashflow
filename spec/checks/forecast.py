@@ -7,7 +7,7 @@ import subprocess
 import sys
 from datetime import date, timedelta
 
-from helpers import ROOT, check, finance_ref, finance_state, go_tab, num, shot
+from helpers import ROOT, check, finance_ref, finance_state, go_tab, num, shot, open_calendar_day
 
 # v149: ± календарних місяців від сьогодні (назад, уперед); «Уся історія» від першої операції і 3 місяці вперед
 RANGES = {'m': (1, 1), 'm2': (2, 2), 'q': (3, 3), 'y': (12, 12), 'all': (None, 3)}
@@ -157,15 +157,13 @@ def calendar(page):
           'у сітці місяця немає бейджів виплат А і З')
     t = date.fromisoformat(day)
     projection = finance_ref(page)
-    for e in projection['events']:
-        if e['kind'] == 'repay' and e['date'][:7] == t.isoformat()[:7]:
-            check(page.locator('.cal-tbl .cal-ev[data-date="' + e['date'] + '"]', has_text=re.compile(r'Погашення .+? · (обовʼязкове|додатково|прострочене)')).count() >= 1, 'погашення відсутнє на плановій даті')
-    evs = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(e=>({d:e.dataset.date,p:e.classList.contains('past'),td:e.classList.contains('today'),b:e.dataset.bal}))")
-    check(evs, 'у календарі немає таблиці подій')
-    iso = t.isoformat()
+    from checks.calendar import day_events
+    day_events(page, projection, day[:7])
+    evs = page.locator('.cal-cell').evaluate_all("es=>es.map(e=>({d:e.dataset.date,p:e.classList.contains('past'),td:e.classList.contains('today'),b:!!e.querySelector('.cal-bal')}))")
+    check(evs, 'у календарі немає днів')
     for e in evs:
-        check(e['p'] == (e['d'] < iso) and e['td'] == (e['d'] == iso), f'подія календаря: минуле/сьогодні не відповідає даті: {e}')
-        check(e['b'] is None or e['d'] >= iso, f'баланс після в минулому рядку: {e}')
+        check(e['p'] == (e['d'] < day) and e['td'] == (e['d'] == day), f'ознака дати календаря неправильна: {e}')
+        check(not e['b'] or e['d'] >= day, f'прогноз балансу на минулій даті: {e}')
     if t.day < 28:
         check(cal.locator('.cal-cell.future').count() > 0, 'майбутні дні в сітці не приглушені')
     page.mouse.move(2, 2)

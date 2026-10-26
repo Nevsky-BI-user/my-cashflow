@@ -6,7 +6,7 @@
 import json
 import time
 
-from helpers import check, expand_groups, go_tab, num, settle, shot
+from helpers import check, expand_groups, go_tab, num, settle, shot, open_calendar_day
 
 LIB = '<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>'
 ANCHOR = '<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>'
@@ -74,24 +74,18 @@ def _tabs(page, tag):
         miss = [m for m in marks if m not in txt]
         check(not miss, f'вкладка {i + 1}: немає демо-рядків {miss}')
         if i == 3:
-            if page.viewport_size['width'] < 1024:
-                days = page.locator('.cm-calendar .cal-cell:has(.cm-count)')
-                check(days.count() > 0, 'вкладка 4: немає днів із демо-подіями')
-                names = []
-                for n in range(days.count()):
-                    day = days.nth(n)
-                    day.click()
-                    page.wait_for_timeout(100)
-                    check('sel' in (day.get_attribute('class') or '').split(), 'натискання дня не змінило вибір календаря')
-                    detail = page.locator('.cm-details').inner_text()
-                    names = [m for m in PAYS if m in detail]
-                    if names:
-                        break
-                check(names, 'вкладка 4: позначені дні не показують демо-платежів у деталях')
-                shot(page, f'demo-{tag}-{i + 1}.jpg', full=False)
-            else:
-                names = [m for m in PAYS if m in txt]
-                check(len(names) >= 3 or (names and txt.count('•') >= 5), f'вкладка 4: немає демо-платежів ({names}, {txt.count("•")} позначок подій)')
+            days=page.locator('.calendar-only .cal-cell:has(.cal-event-icon)')
+            check(days.count()>0,'calendar has no demo events')
+            names=set()
+            dates=days.evaluate_all('es=>es.map(e=>e.dataset.date)')
+            for iso in dates:
+                detail=open_calendar_day(page,iso)
+                names.update(m for m in PAYS if m in detail.inner_text())
+                if len(names)>=3:
+                    break
+            check(len(names)>=3,f'calendar demo payment names missing: {names}')
+            page.keyboard.press('Escape')
+            shot(page,f'demo-{tag}-{i+1}.jpg',full=False)
         check(page.locator('.skel-page').count() == 0, f'вкладка {i + 1}: скелетон замість даних')
 
 

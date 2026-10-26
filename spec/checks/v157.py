@@ -51,7 +51,10 @@ CAPTURE = r"""()=>{
  const vis=e=>!!e&&e.getBoundingClientRect().width>0;
  const pick=sel=>[...document.querySelectorAll(sel)].find(vis)||null;
  const rowText=e=>{const name=e.querySelector('.kpi-in'),amount=e.querySelector('.kpi-iv');
-  if(e.matches('[data-r=inst]')&&name&&amount){const end=e.querySelector('.kpi-ie');return T(name)+' · '+T(amount).replace(/^·\s*/,'')+(end?' '+T(end):'')}
+  if(e.matches('[data-r=inst]')&&name&&amount){const end=e.querySelector('.kpi-ie');let text=T(name)+' · '+T(amount).replace(/^·\s*/,'')+(end?' '+T(end):'');
+   const dates=(e.title||'').match(/\d{2}\.\d{2}\.\d{4}/g)||[];
+   if(dates.length)text=text.replace(/ · \d{2}\.\d{2}\.\d{2}(?= |$)/,' · до '+dates[0]);
+   if(dates.length>1)text=text.replace(/ → \d{2}\.\d{2}\.\d{2}$/,' → '+dates[1]);return text}
   return T(e)};
  const kpis={};document.querySelectorAll('.kpi-t').forEach(k=>{if(!vis(k))return;const c=[...k.classList].find(x=>/^kpi-(funds|budget|balance|inst)$/.test(x));
   kpis[c]={v:T(k.querySelector('.dv-kpi-v')),sub:T(k.querySelector('.kpi-asof')),rows:[...k.querySelectorAll('.kpi-row,.kpi-inst')].map(rowText)}});

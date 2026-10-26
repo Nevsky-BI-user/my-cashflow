@@ -1,7 +1,7 @@
 """Щільність, палітра й доступність компонування без зміни фінансової логіки."""
 import json
 from pathlib import Path
-from helpers import check, finance_ref, freeze, go_tab
+from helpers import check, finance_ref, freeze, go_tab, open_calendar_day, settle
 from checks.a11y import CONTRAST
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,42 +17,27 @@ OVERVIEW_REGIONS = '.dv-bud .bd-leg,.dv-near,.dv-recent,.dv-cols>.kpi-inst>.kpi-
 
 
 def overview_bounds(page, tag):
-    """Картки цілі; довгі списки мають іменовану клавіатурну прокрутку без росту сторінки."""
+    """Огляд повністю видимий без прокрутки, прихованих рядків і обрізаних сум."""
     state = page.evaluate(r"""selectors=>{
-      const visible=e=>!!e.offsetParent;
+      const visible=e=>!!e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
       const rect=e=>{const r=e.getBoundingClientRect();return{top:r.top,bottom:r.bottom,left:r.left,right:r.right}};
       const cards=[...document.querySelectorAll(selectors)].filter(visible);
-      const allowed=e=>e.matches('.bd-leg,.dv-near,.dv-recent,.kpi-rows,.dv-unas');
-      const overflow=[...document.querySelectorAll('.dv-cols .surface,.dv-bud .bd-leg,.dv-cols>.kpi-inst>.kpi-rows')].filter(visible).filter(e=>e.scrollHeight>e.clientHeight+2).map(e=>({cls:e.className,allowed:allowed(e),overflow:getComputedStyle(e).overflowY}));
+      const blocks=[...document.querySelectorAll('.p-overview,.dv-cards,.dv-kpis,.ov-grid,.dv-cols .surface,.dv-bud .bd-leg,.dv-cols>.kpi-inst>.kpi-rows')].filter(visible);
+      const overflow=blocks.filter(e=>e.scrollHeight>e.clientHeight+1||e.scrollWidth>e.clientWidth+1).map(e=>({cls:e.className,h:[e.scrollHeight,e.clientHeight],w:[e.scrollWidth,e.clientWidth]}));
       const visuals=[...document.querySelectorAll('.dv-fc svg,.dv-bud .bd-ring')].filter(visible).map(e=>({visual:rect(e),card:rect(e.closest('.surface'))}));
-      return{doc:document.documentElement.scrollHeight,width:document.documentElement.scrollWidth,vh:innerHeight,vw:innerWidth,cards:cards.map(e=>({cls:e.className,...rect(e)})),overflow,visuals};
+      const rows=[...document.querySelectorAll('.dv-bud .bd-row,.dv-near .dv-ev,.ov-grid>.kpi-inst [data-r=inst],.dv-recent [data-tx-id]')].filter(visible).map(e=>({cls:e.className,row:rect(e),card:rect(e.closest('.surface'))}));
+      const money=[...document.querySelectorAll('.p-overview .kpi-rv,.p-overview .dv-kpi-v,.p-overview .kpi-iv,.p-overview .kpi-ie,.p-overview .dv-ev-a,.p-overview .dv-bud-v,.p-overview .bd-sum,.p-overview .bd-pct')].filter(visible);
+      const clipped=money.filter(e=>{const r=e.getBoundingClientRect(),p=e.closest('.surface')?.getBoundingClientRect();return e.scrollWidth>e.clientWidth+1||p&&(r.left<p.left-1||r.right>p.right+1||r.top<p.top-1||r.bottom>p.bottom+1)}).map(e=>({cls:e.className,text:e.textContent}));
+      return{doc:document.documentElement.scrollHeight,width:document.documentElement.scrollWidth,vh:innerHeight,vw:innerWidth,cards:cards.map(e=>({cls:e.className,...rect(e)})),overflow,visuals,rows,clipped};
     }""", OVERVIEW_CARDS)
     check(len(state['cards']) >= 5, f'{tag}: відсутні основні картки {state}')
-    check(state['doc'] <= state['vh'] + 1 and state['width'] <= state['vw'], f'{tag}: Огляд виходить за екран {state}')
+    check(state['doc'] <= state['vh'] + 1 and state['width'] <= state['vw'] + 1, f'{tag}: Огляд виходить за екран {state}')
+    check(not state['overflow'], f'{tag}: в Огляді є прокрутка або прихований вміст {state["overflow"]}')
     check(all(c['top'] >= -1 and c['left'] >= -1 and c['right'] <= state['vw'] + 1 and c['bottom'] <= state['vh'] + 1 for c in state['cards']), f'{tag}: краї карток обрізані {state}')
-    check(all(o['allowed'] and o['overflow'] in ('auto', 'scroll') for o in state['overflow']), f'{tag}: переповнення поза дозволеними списками {state}')
-    check(all(v['visual']['top'] >= v['card']['top'] - 1 and v['visual']['bottom'] <= v['card']['bottom'] + 1 and v['visual']['left'] >= v['card']['left'] - 1 and v['visual']['right'] <= v['card']['right'] + 1 for v in state['visuals']), f'{tag}: графік або кільце обрізані карткою {state}')
-    for region in page.locator(OVERVIEW_REGIONS).all():
-        if not region.is_visible():
-            continue
-        info = region.evaluate(r"""e=>({cls:e.className,tab:e.tabIndex,role:e.getAttribute('role'),label:(e.getAttribute('aria-label')||'').trim()||[...(e.getAttribute('aria-labelledby')||'').split(/\s+/)].map(id=>document.getElementById(id)?.textContent||'').join('').trim(),overflow:getComputedStyle(e).overflowY,over:e.scrollHeight>e.clientHeight+2})""")
-        check(info['tab'] >= 0 and info['role'] == 'region' and info['label'], f'{tag}: список недоступний з клавіатури або без назви {info}')
-        if info['over']:
-            check(info['overflow'] in ('auto', 'scroll'), f'{tag}: список обрізається замість прокрутки {info}')
-            region.focus()
-            region.press('Home')
-            region.press('End')
-            page.wait_for_function('e=>e.scrollTop>0', arg=region.element_handle())
-        rows = region.locator('.bd-row,.dv-ev,[data-tx-id],[data-r=inst],.unas-row,:scope > .dv-lbl-btn')
-        if rows.count():
-            for index in (0, rows.count() - 1):
-                row = rows.nth(index)
-                row.scroll_into_view_if_needed()
-                reachable = row.evaluate(r"""e=>{const r=e.getBoundingClientRect();let ok=r.top>=-1&&r.bottom<=innerHeight+1;const clipped=[];for(let p=e.parentElement;p;p=p.parentElement){const s=getComputedStyle(p);if(/auto|scroll|hidden|clip/.test(s.overflowY)){const b=p.getBoundingClientRect();if(r.top<b.top-1||r.bottom>b.bottom+1){ok=false;clipped.push(p.className)}}}return{ok,clipped,top:r.top,bottom:r.bottom}}""")
-                check(reachable['ok'], f'{tag}: рядок списку недосяжний після прокрутки {info}: {reachable}')
-        region.evaluate('e=>e.scrollTop=0')
-    page.evaluate('document.activeElement.blur();window.scrollTo(0,0)')
-    check(page.evaluate('document.documentElement.scrollHeight<=innerHeight+1'), f'{tag}: прокрутка списків розширила сторінку')
+    for item in state['visuals'] + [dict(visual=r['row'], card=r['card']) for r in state['rows']]:
+        v, c = item['visual'], item['card']
+        check(v['top'] >= c['top'] - 1 and v['bottom'] <= c['bottom'] + 1 and v['left'] >= c['left'] - 1 and v['right'] <= c['right'] + 1, f'{tag}: візуал або рядок обрізаний карткою {item}')
+    check(not state['clipped'], f'{tag}: фінансові значення обрізані {state["clipped"]}')
 
 
 def audit(page):
@@ -151,39 +136,35 @@ def calendar_geometry(page):
         cell = page.locator('.cal-cell[data-date="2026-10-24"]')
         cell.focus()
         page.keyboard.press('Enter')
-        check(page.locator('.ck-day-events').is_visible(), 'Клавіатура не відкриває повні події дня')
-        check(page.evaluate("[...document.querySelectorAll('.ck-day-events .ce-n,.ck-day-events .ce-a')].every(e=>e.scrollWidth<=e.clientWidth+1)"), 'Назва або сума дня обрізана')
-        page.locator('.ck-day .ck-link').click()
+        details = page.locator('dialog.cal-day-dialog[open]')
+        details.wait_for()
+        check(details.locator('.cal-day-row').count() > 0, 'Клавіатура не відкриває події дня')
+        check(details.locator('.cal-day-amount').evaluate_all('es=>es.every(e=>e.scrollWidth<=e.clientWidth+1)'), 'Сума події дня обрізана')
+        page.keyboard.press('Escape')
+        check(not details.count() and cell.evaluate('e=>e===document.activeElement'), 'Escape не повертає фокус на день')
         page.locator('.ck-arr[aria-label="Наступний місяць"]').click()
         check(page.locator('.cal-days.r6').count() == 1, 'Листопад 2026 має шість тижнів')
-        if width < 1400:
-            hidden = page.locator('.cal-cell').filter(has=page.locator('.cal-more')).first
-            visible = hidden.locator('.cal-ln').count()
-            more = int(hidden.locator('.cal-more').inner_text().split()[0].lstrip('+'))
-            selected_date=hidden.get_attribute('data-date')
-            events=[e for e in finance_ref(page)['events'] if e['date']==selected_date]
-            grouped=sum(e['kind']!='variable' for e in events)  # v143: змінні витрати в клітинках не показуються
-            check(visible==1 and visible+more==grouped, f'лічильник {visible}+{more}, згрупованих подій {grouped}')
-            hidden.click()
-            # v149: щоденні витрати дня одним рядком «Щоденні витрати»
-            want = sum(e['kind'] != 'variable' for e in events) + (1 if any(e['kind'] == 'variable' for e in events) else 0)
-            check(page.locator('.ck-day-events .ck-bd-row').count()==want, 'деталі не містять усіх канонічних подій вибраного дня')
-            detail_text=page.inner_text('.ck-day-events')
-            check(all(e['name'] in detail_text for e in events if e['kind'] != 'variable'), 'повна назва прихованої події недоступна')
-            check(page.evaluate("[...document.querySelectorAll('.ck-day-events .ce-n')].every(e=>e.scrollWidth<=e.clientWidth+1)"), 'Прихована подія недоступна повністю')
-            page.locator('.ck-day .ck-link').click()
-
-        check(page.evaluate("document.documentElement.scrollHeight<=innerHeight+1&&[...document.querySelectorAll('.ck-left,.ck-side,.ck-day')].filter(e=>e.offsetParent).every(e=>e.getBoundingClientRect().bottom<=innerHeight+1)"), f'{width}: шість тижнів виходять за екран')
-        scrollers=page.evaluate("""[...document.querySelectorAll('.content *')].filter(e=>e.offsetParent&&/auto|scroll/.test(getComputedStyle(e).overflowY)&&e.scrollHeight>e.clientHeight+2).map(e=>({cls:e.className,allowed:e.matches('.ck-day,.ck-side')}))""")
-        check(all(e['allowed'] for e in scrollers), f'зайві внутрішні скроли {scrollers}')
-        last=page.locator('.ck-day .cal-ev').last
-        last.scroll_into_view_if_needed()
-        check(last.evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight+1'), 'останній платіж недоступний')
-        check(page.evaluate('window.scrollY==0&&document.documentElement.scrollHeight<=innerHeight+1'), 'прокручується вся сторінка')
+        extra = page.locator('.cal-cell:has(.cal-count)').first
+        if extra.count():
+            want = extra.locator('.cal-ln').count() + int(extra.locator('.cal-count').inner_text().lstrip('+'))
+            iso = extra.get_attribute('data-date')
+            details = open_calendar_day(page, iso)
+            scheduled = details.locator('.cal-day-events .cal-day-row').filter(has_not_text='Щоденні витрати, прогноз')
+            check(scheduled.count() == want, 'Лічильник не відповідає запланованим подіям дня')
+            from helpers import finance_ref, num
+            forecast = details.locator('.cal-day-events .cal-day-row', has_text='Щоденні витрати, прогноз')
+            variable = [e for e in finance_ref(page)['events'] if e['date'] == iso and e['kind'] == 'variable']
+            check(forecast.count() == bool(variable), 'Щоденний прогноз загублено або продубльовано')
+            if variable:
+                check(round(num(forecast.locator('.cal-day-amount').inner_text()) * 100) == -sum(e['amountCents'] for e in variable), 'Сума щоденного прогнозу не відповідає розрахунку')
+            check(details.locator('.cal-day-name,.cal-day-amount').evaluate_all('es=>es.every(e=>e.scrollWidth<=e.clientWidth+1)'), 'Повні назви або суми недоступні')
+            page.keyboard.press('Escape')
+        check(page.locator('.ck-side,.ck-day,.cal-tbl').count() == 0, 'Прибрана таблиця подій знову відображається')
+        check(page.evaluate("document.documentElement.scrollHeight<=innerHeight+1&&document.documentElement.scrollWidth<=innerWidth+1&&[...document.querySelectorAll('.calendar-only *')].filter(e=>e.offsetParent).every(e=>!(/auto|scroll/.test(getComputedStyle(e).overflowY)&&e.scrollHeight>e.clientHeight+1))"), f'{width}: календар прокручується')
+        check(page.locator('.ck-cal').evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight+1'), 'Нижній ряд календаря обрізаний')
         page.locator('.ck-arr[aria-label="Попередній місяць"]').click()
 
 
-# Картки в межах екрана; переповнення довгих списків перевіряє overview_bounds.
 COLS = r"""()=>{const cards=[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')];
 const bud=document.querySelector('.dv-bud'),cats=bud.querySelector('.bd-desk .bd-leg,.bd-empty');
 return {cards:cards.map(e=>({cls:e.className,ov:e.scrollHeight-e.clientHeight,bottom:e.getBoundingClientRect().bottom+scrollY})),

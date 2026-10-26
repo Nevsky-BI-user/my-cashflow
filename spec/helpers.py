@@ -45,6 +45,32 @@ def dialog(page, label):
     return page.locator(f'[role=dialog][aria-label="{label}"]')
 
 
+def open_calendar_day(page, iso_date):
+    """Open a calendar day through month navigation and return its native dialog.
+
+    Caller must already be on Payments. Closes any existing day dialog first;
+    never changes the date clock or bypasses UI event handlers.
+    """
+    from datetime import date
+    target = date.fromisoformat(iso_date)
+    opened = page.locator('dialog.cal-day-dialog[open]')
+    if opened.count():
+        page.keyboard.press('Escape')
+        opened.wait_for(state='hidden')
+    first = page.locator('.calendar-only .cal-cell[data-date]').first
+    current = date.fromisoformat(first.get_attribute('data-date'))
+    delta = (target.year-current.year)*12 + target.month-current.month
+    check(abs(delta) <= 120, 'Calendar navigation exceeds ten years')
+    arrow = 'Наступний місяць' if delta > 0 else 'Попередній місяць'
+    for _ in range(abs(delta)):
+        previous = first.get_attribute('data-date')
+        page.locator(f'.ck-arr[aria-label="{arrow}"]').click()
+        page.wait_for_function('(old)=>document.querySelector(".calendar-only .cal-cell[data-date]").dataset.date!==old', arg=previous)
+    page.locator(f'.calendar-only .cal-cell[data-date="{iso_date}"]').click()
+    opened.wait_for(state='visible')
+    return opened
+
+
 def touch_drag(page, x0, y0, x1, y1, steps=8, hold=0, step_ms=16, before_end=None, after=250):
     """Справжній дотик через CDP (Input.dispatchTouchEvent): touchStart, hold мс без руху, steps кроків touchMove, touchEnd.
     before_end(page): виклик перед відпусканням (наприклад, скриншот посеред перетягування)."""

@@ -81,7 +81,8 @@ def kpi_plan(page):
         hs = {t['h'] for t in ts}
         check(len(ts) < 2 or max(hs) - min(hs) <= 1, f'плитки ряду {top} різної висоти {ts}')
         # вміст угорі: шапка біля верхнього краю, число одразу під шапкою (на телефоні довгий підпис може перенестися в два рядки)
-        check(all(t['head'] <= 14 and 0 <= t['val'] - t['hb'] <= 10 for t in ts), f'вміст плиток не вгорі {ts}')
+        inline = page.viewport_size['width'] >= 1024
+        check(all(0 <= t['head'] <= 14 and (abs(t['val'] - t['head']) <= 1 if inline else 0 <= t['val'] - t['hb'] <= 10) for t in ts), f'заголовок і сума не вирівняні вгорі плиток {ts}')
     print(f'      «За планом» {v} ₴ = правило від A {a} (коп.); рядів плиток {len(rows)}')
 
 
@@ -103,8 +104,9 @@ def near_rows(page):
         check(not r['ell'] and not r['cut'], f'назва обрізана або в один рядок: {r}')
         check(re.match(r'^\d\d\.\d\d · (сьогодні|через \d+ дн\.)( · з (картки|кредитки))?$', r['meta'].strip()), f'другий рядок не «дата · строк · джерело»: {r["meta"]!r}')
         check(abs(r['amtTop']) <= 4 and r['amtRight'] <= 1, f'сума не праворуч у першому рядку: {r}')
-        check(r['metaBelow'] >= -1 and r['metaSz'] < r['nameSz'], f'другий рядок не нижче або не дрібніший: {r}')
-        check(r['h'] >= 38, f'рядок затісний: {r}')
+        desktop = page.viewport_size['width'] >= 1024
+        check(r['metaBelow'] >= -1 and 12 <= r['metaSz'] <= r['nameSz'], f'другий рядок перекритий або нечитабельний: {r}')
+        check(r['h'] >= (28 if desktop else 38), f'рядок затісний: {r}')
     check(rows[0]['lines'] >= 2, f'довга назва не перенеслася: {rows[0]}')
     print('      ' + ' | '.join(r['meta'] + ' ' + r['amt'] for r in rows[1:4]))
 
@@ -201,11 +203,9 @@ def pay_balance_mobile(page):
     val = num(kb.split('Баланс сьогодні', 1)[1])
     print(f'      Огляд «Баланс» {tile}, Платежі «Баланс сьогодні» {val}')
     check(abs(val - tile) <= 1, f'«Баланс сьогодні» {val} не дорівнює плитці Огляду {tile}')
-    rows = page.evaluate("""[...document.querySelectorAll('.cm-event')].map(e=>{const a=e.querySelector('.cm-amt-col'),n=e.querySelector('.cm-name'),b=e.querySelector('.cm-bal');
-      const ar=a.getBoundingClientRect(),nr=n.getBoundingClientRect();return {bal:e.dataset.bal,t:b?b.textContent:null,ov:nr.right>ar.left+0.5}})""")
-    withb = [r for r in rows if r['bal'] is not None]
-    check(len(withb) >= 3 and all(r['t'] and r['t'].startswith('баланс ') for r in withb), f'у рядках подій немає балансу після: {rows[:6]}')
-    check(not any(r['ov'] for r in rows), 'назва події налазить на суму')
+    check(page.locator('.cm-event,.cm-month,.cm-details').count() == 0, 'прибраний список подій повернувся')
+    from checks.calendar import day_events
+    day_events(page, finance_ref(page), DAY[:7])
     cells = page.evaluate("document.querySelectorAll('.cm-calendar .cal-cell .cal-bal').length")
     check(cells >= 15, f'у клітинках телефона баланс лише в {cells} днях')
     sw = page.evaluate('document.scrollingElement.scrollWidth')

@@ -1,7 +1,7 @@
 # Оформлення ПК: 10.10.2026 користувач повернув тіні, шари й виразні KPI, зберігши чинну палітру.
 # період у шапці сторінки (Огляд, Бюджет, Потік, Календар), «Налаштування» пунктом панелі і сторінкою (не діалогом);
 # сьогоднішній день у Потоці (ПК і телефон) і в Календарі; прогноз балансу в клітинках Календаря; знімки ov-1920, ov-dark-1920, ov-375
-from helpers import check, dialog, freeze, go_tab, shot
+from helpers import check, dialog, freeze, go_tab, shot, open_calendar_day
 
 DAY = '2026-10-08'
 # фікстура: остання демо-операція на «31-ше» число, txDemo стискає дати поточного місяця до сьогодні, тож вона лягає саме на 08.10
@@ -34,8 +34,9 @@ def fonts_cards_buttons(page):
     for c in cards:
         # v181: на ПК картка банку знову в градієнті свого банку.
         check('gradient' in c['bi'], f'картка банку без градієнта банку: {c}')
-        check(c['h'] >= 142, f'картка банку замала для підписів: {c["h"]}px')
         check(c['sh'] != 'none', f'картка банку без тіні: {c}')
+    bank_content = page.locator('.dv-cards .bcard').evaluate_all("""es=>es.map(e=>{const b=e.getBoundingClientRect();return {height:b.height,visible:[...e.querySelectorAll('.bcard-sum,.bcard-name,.bcard-avail,.bcard-due,.bcard-updated,.ms-compact-warning')].every(n=>{const r=n.getBoundingClientRect();return r.width>0&&r.height>0&&r.top>=b.top&&r.bottom<=b.bottom+1&&r.left>=b.left&&r.right<=b.right+1&&n.scrollWidth<=n.clientWidth+1})}})""")
+    check(bank_content and all(c['visible'] for c in bank_content), f'підписи банків обрізані: {bank_content}')
     for sel in ('.side-add', '.dact'):
         b = page.evaluate(BTN, sel)
         check(b and b['bg'] != 'rgba(0, 0, 0, 0)', f'{sel}: немає акцентної поверхні {b}')
@@ -169,8 +170,6 @@ def calendar_forecast_desktop(page):
     check(op == 1, f'прогноз у майбутній клітинці приглушений opacity {op}')
     n = page.locator('.ck-cal .cal-bal').count()
     check(n == 2, f'сум прогнозу в жовтні {n}, а не 2 (сьогодні 8-го й аванс 21-го)')
-    nb = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev[data-bal]')].map(e=>e.dataset.date)")
-    check(len(nb) >= 8 and min(nb) == '2026-10-08', f'у таблиці баланс не на кожну дату від сьогодні: {nb}')
     # грудень: далі за 60 днів від 08.10, прогноз має покрити весь місяць
     for _ in range(2):
         page.locator('.ck-arr[aria-label="Наступний місяць"]').click()
@@ -178,11 +177,15 @@ def calendar_forecast_desktop(page):
     check('Грудень' in page.inner_text('.ck-month'), 'не перейшли на грудень')
     n = page.locator('.ck-cal .cal-bal').count()
     check(n == 2, f'у грудні сум прогнозу в клітинках {n}, а не 2 (аванс і зарплата)')
-    rows = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(e=>[e.dataset.date,e.dataset.bal])")
-    last = {}
-    for d, b in rows:
-        last[d] = b
-    check(rows and all(b is not None for b in last.values()), f'у грудні таблиця без балансу на деякі дати: {last}')
+    from helpers import finance_ref, num
+    projection=finance_ref(page)
+    for cell in page.locator('.ck-cal .cal-cell:has(.cal-bal)').all():
+        iso=cell.get_attribute('data-date')
+        expected=next(d for d in projection['days'] if d['date']==iso)
+        shift=projection['snapshot']['positiveOwnCents']-projection['snapshot']['cashCents']
+        check(abs(num(cell.locator('.cal-bal').inner_text())-(expected['netCents']+shift)/100)<=1, f'{iso}: horizon balance not from projection')
+    details=open_calendar_day(page,'2026-12-31')
+    check(details.is_visible(),'last day beyond 60-day horizon inaccessible')
 
 
 def calendar_forecast_mobile(page):
