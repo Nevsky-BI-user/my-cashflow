@@ -12,6 +12,49 @@ DARK_PALETTE = {'--bg':'#0e171e','--html-bg':'#0b131a','--card':'#16222c','--car
 GEOMETRY = """({height:document.documentElement.scrollHeight,width:document.documentElement.scrollWidth,viewport:innerHeight,cards:[...document.querySelectorAll('.panel.desk > *, .dv-cols > *, .ck-cols > *, .bud-cols > *, .goals-cols > *')].map(e=>({cls:e.className,y:Math.round(e.getBoundingClientRect().y),h:Math.round(e.getBoundingClientRect().height)}))})"""
 
 
+OVERVIEW_CARDS = '.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas'
+OVERVIEW_REGIONS = '.dv-bud .bd-leg,.dv-near,.dv-recent,.dv-cols>.kpi-inst>.kpi-rows,.dv-unas'
+
+
+def overview_bounds(page, tag):
+    """Картки цілі; довгі списки мають іменовану клавіатурну прокрутку без росту сторінки."""
+    state = page.evaluate(r"""selectors=>{
+      const visible=e=>!!e.offsetParent;
+      const rect=e=>{const r=e.getBoundingClientRect();return{top:r.top,bottom:r.bottom,left:r.left,right:r.right}};
+      const cards=[...document.querySelectorAll(selectors)].filter(visible);
+      const allowed=e=>e.matches('.bd-leg,.dv-near,.dv-recent,.kpi-rows,.dv-unas');
+      const overflow=[...document.querySelectorAll('.dv-cols .surface,.dv-bud .bd-leg,.dv-cols>.kpi-inst>.kpi-rows')].filter(visible).filter(e=>e.scrollHeight>e.clientHeight+2).map(e=>({cls:e.className,allowed:allowed(e),overflow:getComputedStyle(e).overflowY}));
+      const visuals=[...document.querySelectorAll('.dv-fc svg,.dv-bud .bd-ring')].filter(visible).map(e=>({visual:rect(e),card:rect(e.closest('.surface'))}));
+      return{doc:document.documentElement.scrollHeight,width:document.documentElement.scrollWidth,vh:innerHeight,vw:innerWidth,cards:cards.map(e=>({cls:e.className,...rect(e)})),overflow,visuals};
+    }""", OVERVIEW_CARDS)
+    check(len(state['cards']) >= 5, f'{tag}: відсутні основні картки {state}')
+    check(state['doc'] <= state['vh'] + 1 and state['width'] <= state['vw'], f'{tag}: Огляд виходить за екран {state}')
+    check(all(c['top'] >= -1 and c['left'] >= -1 and c['right'] <= state['vw'] + 1 and c['bottom'] <= state['vh'] + 1 for c in state['cards']), f'{tag}: краї карток обрізані {state}')
+    check(all(o['allowed'] and o['overflow'] in ('auto', 'scroll') for o in state['overflow']), f'{tag}: переповнення поза дозволеними списками {state}')
+    check(all(v['visual']['top'] >= v['card']['top'] - 1 and v['visual']['bottom'] <= v['card']['bottom'] + 1 and v['visual']['left'] >= v['card']['left'] - 1 and v['visual']['right'] <= v['card']['right'] + 1 for v in state['visuals']), f'{tag}: графік або кільце обрізані карткою {state}')
+    for region in page.locator(OVERVIEW_REGIONS).all():
+        if not region.is_visible():
+            continue
+        info = region.evaluate(r"""e=>({cls:e.className,tab:e.tabIndex,role:e.getAttribute('role'),label:(e.getAttribute('aria-label')||'').trim()||[...(e.getAttribute('aria-labelledby')||'').split(/\s+/)].map(id=>document.getElementById(id)?.textContent||'').join('').trim(),overflow:getComputedStyle(e).overflowY,over:e.scrollHeight>e.clientHeight+2})""")
+        check(info['tab'] >= 0 and info['role'] == 'region' and info['label'], f'{tag}: список недоступний з клавіатури або без назви {info}')
+        if info['over']:
+            check(info['overflow'] in ('auto', 'scroll'), f'{tag}: список обрізається замість прокрутки {info}')
+            region.focus()
+            region.press('Home')
+            region.press('End')
+            page.wait_for_function('e=>e.scrollTop>0', arg=region.element_handle())
+        rows = region.locator('.bd-row,.dv-ev,[data-tx-id],[data-r=inst],.unas-row,:scope > .dv-lbl-btn')
+        if rows.count():
+            for index in (0, rows.count() - 1):
+                row = rows.nth(index)
+                row.scroll_into_view_if_needed()
+                reachable = row.evaluate(r"""e=>{const r=e.getBoundingClientRect();let ok=r.top>=-1&&r.bottom<=innerHeight+1;const clipped=[];for(let p=e.parentElement;p;p=p.parentElement){const s=getComputedStyle(p);if(/auto|scroll|hidden|clip/.test(s.overflowY)){const b=p.getBoundingClientRect();if(r.top<b.top-1||r.bottom>b.bottom+1){ok=false;clipped.push(p.className)}}}return{ok,clipped,top:r.top,bottom:r.bottom}}""")
+                check(reachable['ok'], f'{tag}: рядок списку недосяжний після прокрутки {info}: {reachable}')
+        region.evaluate('e=>e.scrollTop=0')
+    page.evaluate('document.activeElement.blur();window.scrollTo(0,0)')
+    check(page.evaluate('document.documentElement.scrollHeight<=innerHeight+1'), f'{tag}: прокрутка списків розширила сторінку')
+
+
 def audit(page):
     freeze(page, '2026-10-08')
     rows = []
@@ -43,7 +86,7 @@ def audit(page):
                     check(not clipped, f'{theme}/{width}/{tab}: обрізані суми {clipped[:3]}')
                     if i == 0:
                         bottom = page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom')
-                        check(page.evaluate("[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'{width}: внутрішня прокрутка огляду')
+                        overview_bounds(page, f'{theme}/{width}x{height}')
                         check(bottom <= height, f'{width}: останні операції нижче екрана: {bottom}')
                         check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (159.5 if height < 900 else 179.5 if height < 1000 else 259.5), f'{width}x{height}: графік нижчий за адаптивний мінімум')
                 elif i == 0:
@@ -83,7 +126,7 @@ def current_overview(page):
         page.set_viewport_size({'width': width, 'height': height})
         go_tab(page, 0)
         page.wait_for_timeout(150)
-        check(page.evaluate("[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).every(e=>e.scrollHeight<=e.clientHeight+2)"), f'Today/{width}/{height}: внутрішня прокрутка огляду')
+        overview_bounds(page, f'Today/{width}x{height}')
         # Стандартний Огляд повністю вміщується, включно з низьким ПК.
         check(page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight'), 'Нижня картка обрізана')
         check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (159.5 if height < 900 else 179.5 if height < 1000 else 259.5), f'Today/{width}/{height}: графік нижчий за адаптивний мінімум')
@@ -140,7 +183,7 @@ def calendar_geometry(page):
         page.locator('.ck-arr[aria-label="Попередній місяць"]').click()
 
 
-# Всі картки доступні прокруткою сторінки; всередині карток немає окремих скролів.
+# Картки в межах екрана; переповнення довгих списків перевіряє overview_bounds.
 COLS = r"""()=>{const cards=[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')];
 const bud=document.querySelector('.dv-bud'),cats=bud.querySelector('.bd-desk .bd-leg,.bd-empty');
 return {cards:cards.map(e=>({cls:e.className,ov:e.scrollHeight-e.clientHeight,bottom:e.getBoundingClientRect().bottom+scrollY})),
@@ -161,7 +204,7 @@ def overview_days(page):
             check(len(st['cards']) >= 5, f'{tag}: основні картки відсутні {st}')
             check(st['cats'] and st['cats']['display'] != 'none' and st['cats']['count'] > 0, f'{tag}: категорії бюджету приховані {st}')
             check(st['cats']['over'] <= 1, f'{tag}: категорії виходять за картку бюджету {st}')
-            check(all(c['ov'] <= 2 for c in st['cards']), f'{tag}: внутрішнє переповнення карток {st}')
+            overview_bounds(page, tag)
             check(st['wide'] <= width, f'{tag}: горизонтальне переповнення {st}')
             page.evaluate('window.scrollTo(0,document.documentElement.scrollHeight)')
             check(page.evaluate("[...document.querySelectorAll('.dv-cols .dv-bud,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].every(e=>e.getBoundingClientRect().bottom<=innerHeight+1)"), f'{tag}: нижні картки недоступні прокруткою сторінки')

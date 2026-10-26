@@ -1,7 +1,8 @@
 # Щільність ПК на 1920x900: Огляд, Календар, Цілі і Бюджет без прокрутки сторінки, числа KPI до 24px, основний текст 13px, бейджі А/З/борг читаються;
 # Потік: панель фільтрів до 150px (усі категорії видно) і щонайменше 14 рядків у вʼюпорті (дата заморожена: демо-операції txDemo розкладаються за сьогоднішнім днем);
-# жодної внутрішньої прокрутки в .content на пʼяти екранах; Календар із реальними обсягами (2 рахунки з боргом) вміщається в 1920x900 цілком, і з розкладом дня теж
+# Огляд має доступні області прокрутки довгих списків; інші екрани зберігають власні обмеження прокрутки.
 from helpers import check, dialog, finance_ref, freeze, go_tab, shot
+from checks.visual_layout import overview_bounds
 
 DAY = '2026-10-08'
 FIT = "({sh:document.scrollingElement.scrollHeight,ih:innerHeight})"
@@ -41,7 +42,10 @@ def fit(page):
         page.wait_for_timeout(300)
         m = page.evaluate(FIT)
         check(m['sh'] <= m['ih'] + 8, f'{name} на 1920x900 прокручується: {m["sh"]} > {m["ih"]}')
-        no_inner(page, name, ('ck-side', 'ck-day') if i == 3 else ())
+        if i == 0:
+            overview_bounds(page, 'Щільність/Огляд')
+        else:
+            no_inner(page, name, ('ck-side', 'ck-day') if i == 3 else ())
         fs = page.evaluate(KPI_FS)
         max_font = 26 if i == 4 else 24
         check(fs and max(fs) <= max_font, f'{name}: число KPI {max(fs) if fs else None}px, а не до {max_font}')

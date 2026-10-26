@@ -1,6 +1,7 @@
 # Кільце бюджету з багатьма категоріями: видима легенда, графік не нижче 240px,
-# без внутрішньої прокрутки колонок; якщо не вміщається й так, Огляд прокручується сторінкою (клас ov-scroll), нічого не прибрано.
+# картки в межах екрана; довгі списки мають іменовану клавіатурну прокрутку, нічого не прибрано.
 from helpers import check, finance_ref, freeze, go_tab, num
+from checks.visual_layout import overview_bounds
 
 DAY = '2026-10-12'
 # демо: ще вісім категорій витрат (дні 25-31 стискаються в 10-12 жовтня, тобто в поточний період), кожна понад 3% факту, тож у кільці окремі сегменти, а не «Інші»
@@ -12,14 +13,14 @@ MANY = [("const TX_DEMO_ROWS=[", "const TX_DEMO_ROWS=[" + ",".join(
 STATE = """(()=>{const q=s=>document.querySelector(s);const leg=q('.dv-bud .bd-desk .bd-leg');const cols=leg?getComputedStyle(leg).gridTemplateColumns.split(' ').length:0;
 const inner=[...document.querySelectorAll('.dv-cols .dv-fc,.dv-cols .dv-bud,.dv-cols .dv-near,.dv-cols>.kpi-inst,.dv-cols .dv-recent,.dv-cols .dv-unas')].filter(e=>e.offsetParent).map(e=>e.scrollHeight-e.clientHeight);
 return {cols,rows:document.querySelectorAll('.dv-bud .bd-row').length,inner,svg:Math.round(q('.dv-fc svg').getBoundingClientRect().height),
-clipped:[...document.querySelectorAll('.dv-bud .bd-row')].filter(e=>{const r=e.getBoundingClientRect(),p=q('.dv-bud').getBoundingClientRect();return r.width<=0||getComputedStyle(e).visibility==='hidden'||r.bottom>p.bottom+1||[...e.querySelectorAll('.bd-sum,.bd-pct')].some(n=>n.scrollWidth>n.clientWidth+1)}).map(e=>e.textContent),doc:document.documentElement.scrollHeight,vh:innerHeight,scroll:q('.p-overview').classList.contains('ov-scroll')}})()"""
+clipped:[...document.querySelectorAll('.dv-bud .bd-row')].filter(e=>{const r=e.getBoundingClientRect(),p=q('.dv-bud').getBoundingClientRect(),leg=e.closest('.bd-leg'),scrollable=leg&&['auto','scroll'].includes(getComputedStyle(leg).overflowY);return r.width<=0||getComputedStyle(e).visibility==='hidden'||(!scrollable&&r.bottom>p.bottom+1)||[...e.querySelectorAll('.bd-sum,.bd-pct')].some(n=>n.scrollWidth>n.clientWidth+1)}).map(e=>e.textContent),doc:document.documentElement.scrollHeight,vh:innerHeight,scroll:q('.p-overview').classList.contains('ov-scroll')}})()"""
 
 
 def _check(page, tag, many):
     st = page.evaluate(STATE)
     check(st['cols'] >= 1, f'{tag}: легенда в {st["cols"]} колонку {st}')
     check(len(st['inner']) >= 5 and not st['clipped'], f'{tag}: missing cards or clipped budget legend {st}')
-    check(all(v <= 2 for v in st['inner']), f'{tag}: внутрішня прокрутка колонок {st}')
+    overview_bounds(page, f'v149/{tag}')
     check(st['svg'] >= (160 if st['vh'] < 900 else 180 if st['vh'] < 1000 else 260), f'{tag}: графік нижчий за адаптивний мінімум {st}')
     if st['doc'] > st['vh'] + 1:
         page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)')
@@ -329,7 +330,7 @@ CHECKS = [
     ('v149: «Найближче» у два рядки: назва повністю, сума праворуч, дата · строк · джерело', 'mobile', near_rows),
     ('v149: «За планом» у «Доступні кошти», плитки KPI однакової висоти', 'desktop', kpi_plan),
     ('v149: «За планом» у «Доступні кошти», плитки KPI однакової висоти', 'mobile', kpi_plan),
-    ('v149: кільце з багатьма категоріями на ПК: колонки легенди, графік від 240px, без внутрішньої прокрутки', 'desktop', ring_many),
+    ('v149: кільце з багатьма категоріями на ПК: колонки легенди, адаптивний графік, доступна прокрутка', 'desktop', ring_many),
     ('v149: тултіп графіка: одне число в рядку, праві краї разом, ланцюжок балансу', 'desktop', tooltip),
     ('v149: тултіп графіка: одне число в рядку, праві краї разом, ланцюжок балансу', 'mobile', tooltip),
     ('v149: Календар іде за періодом шапки, стрілки міняють період', 'desktop', period_follow),
