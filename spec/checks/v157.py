@@ -13,6 +13,8 @@ from datetime import date, datetime, timedelta
 from helpers import ROOT, check, freeze, go_tab, num, open_payout, settle
 from checks.visual_layout import overview_bounds
 
+from checks.visual_layout import overview_plot_minimum
+
 DAY = '2026-10-13'
 FIX = ROOT / 'spec' / 'fixtures' / 'overview-cur.json'
 
@@ -263,7 +265,7 @@ def _geometry(page, tag, base):
         page.wait_for_timeout(350)
         settle(page)
         g = page.evaluate(GEO)
-        check(g['chart'] >= (159.5 if hh < 900 else 179.5 if hh < 1000 else 259.5), f'{tag} {w}x{hh}: графік нижчий за адаптивний мінімум: {g}')
+        check(g['chart'] >= overview_plot_minimum(hh) - 0.5, f'{tag} {w}x{hh}: графік нижчий за адаптивний мінімум: {g}')
         overview_bounds(page, f'{tag}/{w}x{hh}')
         # без НОВОГО ov-scroll: не поточний період не прокручується там, де поточний вміщається; легший період може вміститись
         # і тоді, коли поточний прокручується (вищий вміст поточного періоду не робить помилкою вільніший інший)

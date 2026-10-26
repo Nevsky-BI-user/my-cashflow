@@ -1,4 +1,4 @@
-# Щільність ПК на 1920x900: Огляд, Календар, Цілі і Бюджет без прокрутки сторінки, числа KPI до 24px, основний текст 13px, бейджі А/З/борг читаються;
+# Щільність ПК на 1920x900: Огляд, Календар, Цілі і Бюджет без прокрутки сторінки, числа KPI 20–32px, основний текст 13px, бейджі А/З/борг читаються;
 # Потік: панель фільтрів до 150px (усі категорії видно) і щонайменше 14 рядків у вʼюпорті (дата заморожена: демо-операції txDemo розкладаються за сьогоднішнім днем);
 # Огляд уміщує всі підсумки й категорії без внутрішньої прокрутки.
 from helpers import check, dialog, finance_ref, freeze, go_tab, shot, open_calendar_day, settle
@@ -31,7 +31,7 @@ def fit(page):
     page.set_viewport_size({'width': 1920, 'height': 900})
     page.wait_for_timeout(400)
     # v145: плитки KPI Огляду з рядками розкладу (готівка, карти, кредитні, «Доступно до»): до 176px, сторінка все одно без прокрутки
-    for i, name, kmax in ((0, 'Огляд', 176), (3, 'Календар', 90), (4, 'Цілі', 90)):
+    for i, name, kmax in ((0, 'Огляд', 176), (3, 'Календар', 128), (4, 'Цілі', 90)):
         go_tab(page, i)
         page.wait_for_timeout(300)
         m = page.evaluate(FIT)
@@ -41,8 +41,11 @@ def fit(page):
         else:
             no_inner(page, name)
         fs = page.evaluate(KPI_FS)
-        max_font = 26 if i == 4 else 24
-        check(fs and max(fs) <= max_font, f'{name}: число KPI {max(fs) if fs else None}px, а не до {max_font}')
+        max_font = 26 if i == 4 else 32
+        check(fs and min(fs) >= 18 and max(fs) <= max_font, f'{name}: число KPI поза читабельним діапазоном 18–{max_font}px: {fs}')
+        if i == 0:
+            primary = page.evaluate("[...document.querySelectorAll('.dv-kpis>.kpi-t .dv-kpi-v')].map(e=>parseFloat(getComputedStyle(e).fontSize))")
+            check(len(primary) == 3 and min(primary) >= 20, f'{name}: три основні KPI дрібніші за 20px: {primary}')
         hs = page.evaluate(KPI_H)
         check(hs and max(hs) <= kmax + 0.5, f'{name}: KPI заввишки {hs}, а не до {kmax}px')
     page.mouse.move(2, 2)

@@ -1,7 +1,7 @@
-# Кільце бюджету з багатьма категоріями: видима легенда, графік не нижче 240px,
-# картки в межах екрана; довгі списки мають іменовану клавіатурну прокрутку, нічого не прибрано.
+# Кільце бюджету з багатьма категоріями: повна видима легенда, адаптивний графік,
+# усі фінансові картки в межах екрана без прокрутки.
 from helpers import check, finance_ref, freeze, go_tab, num
-from checks.visual_layout import overview_bounds
+from checks.visual_layout import overview_bounds, overview_plot_minimum
 
 DAY = '2026-10-12'
 # демо: ще вісім категорій витрат (дні 25-31 стискаються в 10-12 жовтня, тобто в поточний період), кожна понад 3% факту, тож у кільці окремі сегменти, а не «Інші»
@@ -21,7 +21,7 @@ def _check(page, tag, many):
     check(st['cols'] >= 1, f'{tag}: легенда в {st["cols"]} колонку {st}')
     check(len(st['inner']) >= 5 and not st['clipped'], f'{tag}: missing cards or clipped budget legend {st}')
     overview_bounds(page, f'v149/{tag}')
-    check(st['svg'] >= (160 if st['vh'] < 900 else 180 if st['vh'] < 1000 else 260), f'{tag}: графік нижчий за адаптивний мінімум {st}')
+    check(st['svg'] >= overview_plot_minimum(st['vh']) - 0.5, f'{tag}: графік нижчий за адаптивний мінімум {st}')
     if st['doc'] > st['vh'] + 1:
         page.evaluate('window.scrollTo(0, document.documentElement.scrollHeight)')
         page.wait_for_timeout(150)
@@ -53,7 +53,7 @@ def ring_many(page):
 
 KPI = """(()=>{const tiles=[...document.querySelectorAll('.dv-kpis>.kpi-t,.projection-summary>.kpi-t')].filter(e=>e.offsetParent);
 return tiles.map(t=>{const r=t.getBoundingClientRect(),hd=t.querySelector('.kpi-head').getBoundingClientRect(),v=t.querySelector('.dv-kpi-v').getBoundingClientRect();
-return {k:t.dataset.k||t.className,top:Math.round(r.top),h:Math.round(r.height),head:Math.round(hd.top-r.top),hb:Math.round(hd.bottom-r.top),val:Math.round(v.top-r.top)}})})()"""
+return {k:t.dataset.k||t.className,top:Math.round(r.top),h:Math.round(r.height),head:Math.round(hd.top-r.top),hb:Math.round(hd.bottom-r.top),val:Math.round(v.top-r.top),pad:parseFloat(getComputedStyle(t).paddingTop),hl:Math.round(hd.left-r.left),vl:Math.round(v.left-r.left)}})})()"""
 
 
 def kpi_plan(page):
@@ -81,8 +81,9 @@ def kpi_plan(page):
         hs = {t['h'] for t in ts}
         check(len(ts) < 2 or max(hs) - min(hs) <= 1, f'плитки ряду {top} різної висоти {ts}')
         # вміст угорі: шапка біля верхнього краю, число одразу під шапкою (на телефоні довгий підпис може перенестися в два рядки)
-        inline = page.viewport_size['width'] >= 1024
-        check(all(0 <= t['head'] <= 14 and (abs(t['val'] - t['head']) <= 1 if inline else 0 <= t['val'] - t['hb'] <= 10) for t in ts), f'заголовок і сума не вирівняні вгорі плиток {ts}')
+        # Відступ належить картці: на телефоні підсумки тепер повної ширини.
+        # Число стоїть поруч із заголовком або відразу під ним, без накладання.
+        check(all(abs(t['head'] - t['pad']) <= 2 and (abs(t['val'] - t['head']) <= 1 or (0 <= t['val'] - t['hb'] <= 12 and abs(t['vl'] - t['hl']) <= 2)) for t in ts), f'заголовок і сума не вирівняні у відступах плиток {ts}')
     print(f'      «За планом» {v} ₴ = правило від A {a} (коп.); рядів плиток {len(rows)}')
 
 

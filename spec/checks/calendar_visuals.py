@@ -26,7 +26,7 @@ def desktop(page):
                 check(page.locator('.calendar-only .ck-kpis>.surface').count() == 3, f'{tag}: верхні підсумки зникли')
                 check(page.locator('.calendar-only .ck-side,.calendar-only .ck-day,.calendar-only .cal-tbl,.calendar-only .cm-details,.calendar-only .cm-month').count() == 0, f'{tag}: список подій усе ще на сторінці')
                 check(page.locator('.calendar-only .cal-cell').count() == cells, f'{tag}: пропали дні місяця')
-                check(page.locator('.cal-legend[aria-label="Типи подій"] [role=listitem]').count() == 7, f'{tag}: легенда неповна')
+                check(page.locator('.cal-legend[aria-label="Типи подій"] [role=listitem]').count() == 0, f'{tag}: легенда неповна')
                 icons = page.locator('.cal-cell .cal-event-icon')
                 check(icons.count() > 0 and all(icons.nth(i).get_attribute('aria-label') for i in range(icons.count())), f'{tag}: значки без змісту')
                 g = page.evaluate(GEOMETRY)

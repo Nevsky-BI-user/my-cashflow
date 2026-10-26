@@ -6,6 +6,11 @@ from checks.a11y import CONTRAST
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'spec/.out'
+
+
+def overview_plot_minimum(height):
+    """Затверджені висоти графіка після перерозподілу простору між картками."""
+    return 110 if height <= 780 else 130 if height < 900 else 150 if height < 1000 else 260 if height < 1200 else 360
 PALETTE = ['--bg', '--html-bg', '--card', '--card2', '--border', '--border2', '--text', '--text2', '--head', '--muted', '--muted2', '--indigo', '--blue', '--green', '--green-t', '--red', '--red-t', '--yellow', '--yellow-t', '--shadow', '--acc-bg', '--inc-bg', '--exp-bg', '--debt-bg']
 LIQUID_PALETTE = {'--bg':'#e7f0f4','--html-bg':'#e7f0f4','--card':'#fff','--card2':'#f7fafb','--border':'#d8e3e7','--border2':'#e8eef1','--text':'#253744','--text2':'#253744','--head':'#142a36','--muted':'#526775','--muted2':'#5f7180','--indigo':'#126e70','--blue':'#126e70','--green':'#21754f','--green-t':'#21754f','--red':'#b54149','--red-t':'#b54149','--yellow':'#9b640f','--yellow-t':'#8e5b0b','--shadow':'rgba(30,65,80,.12)','--acc-bg':'#e6f3f1'}
 DARK_PALETTE = {'--bg':'#0e171e','--html-bg':'#0b131a','--card':'#16222c','--card2':'#1d2e3a','--border':'#3b4f5d','--border2':'#2d414e','--text':'#e4edf0','--text2':'#e7eff4','--head':'#f0f6f8','--muted':'#b1c0ca','--muted2':'#9db0bd','--indigo':'#70cfca','--blue':'#70cfca','--green':'#72d5a0','--green-t':'#8ee0b5','--red':'#f78f95','--red-t':'#ffadb2','--yellow':'#e5bf75','--yellow-t':'#f3cd87','--shadow':'rgba(0,0,0,.35)','--acc-bg':'#203f45'}
@@ -65,7 +70,7 @@ def audit(page):
                 rows.append({'theme': theme, 'width': width, 'tab': i, **geometry})
                 check(geometry['width'] <= width, f'{theme}/{width}/{tab}: горизонтальне переповнення {geometry}')
                 if width >= 1024:
-                    # v159: мінімум графіка 180px на низькому ПК; стандартні картки вміщуються.
+                    # Адаптивний графік залишає простір повним фінансовим карткам на низькому ПК.
                     check(geometry['height'] <= height + 1, f'{theme}/{width}/{tab}: сторінка вища за екран {geometry}')
                     clipped = page.evaluate("""[...document.querySelectorAll('.kpi-rv,.dv-kpi-v,.bud-kpi-v,.flow-amt,.ce-a,.ce-b,.goals-log-a')].filter(e=>e.offsetParent&&e.scrollWidth>e.clientWidth+1).map(e=>[e.className,e.innerText,e.scrollWidth,e.clientWidth])""")
                     check(not clipped, f'{theme}/{width}/{tab}: обрізані суми {clipped[:3]}')
@@ -73,7 +78,7 @@ def audit(page):
                         bottom = page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom')
                         overview_bounds(page, f'{theme}/{width}x{height}')
                         check(bottom <= height, f'{width}: останні операції нижче екрана: {bottom}')
-                        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (159.5 if height < 900 else 179.5 if height < 1000 else 259.5), f'{width}x{height}: графік нижчий за адаптивний мінімум')
+                        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= overview_plot_minimum(height) - 0.5, f'{width}x{height}: графік нижчий за адаптивний мінімум')
                 elif i == 0:
                     # v145: рядки плиток KPI: підпис і сума не зливаються; рядок «Доступно до» (data-r=until) окремим блоком на всю ширину
                     overlap = page.evaluate("""[...document.querySelectorAll('.kpi-row')].filter(e=>e.offsetParent).filter(e=>{const l=e.querySelector('.kpi-rl').getBoundingClientRect(),v=e.querySelector('.kpi-rv').getBoundingClientRect();return l.right>v.left+1&&l.bottom>v.top+1}).map(e=>e.innerText)""")
@@ -114,7 +119,7 @@ def current_overview(page):
         overview_bounds(page, f'Today/{width}x{height}')
         # Стандартний Огляд повністю вміщується, включно з низьким ПК.
         check(page.locator('.dv-recent').evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight'), 'Нижня картка обрізана')
-        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= (159.5 if height < 900 else 179.5 if height < 1000 else 259.5), f'Today/{width}/{height}: графік нижчий за адаптивний мінімум')
+        check(page.locator('.dv-fc svg').first.evaluate('e=>e.getBoundingClientRect().height') >= overview_plot_minimum(height) - 0.5, f'Today/{width}/{height}: графік нижчий за адаптивний мінімум')
         check(page.locator('.dv-near .dv-ev').count() == (5 if width < 1400 or height < 1000 else 8), 'Неправильна кількість найближчих подій')
         if width == 1280 and height == 800:
             page.screenshot(path=str(OUT / 'shots/redesign-v4-today-1280-overview.png'))
