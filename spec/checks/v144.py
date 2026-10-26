@@ -1,7 +1,7 @@
 # v144: бічна панель категорії, групи Бюджету, ліміти в ₴ або %, список Календаря до дня перед зарплатою
 from datetime import date, timedelta
 
-from helpers import check, expand_groups, finance_ref, finance_state, freeze, go_tab, num, shot
+from helpers import check, expand_groups, finance_ref, finance_state, freeze, go_tab, num, shot, open_calendar_day
 
 DAY = '2026-10-12'
 
@@ -207,33 +207,16 @@ def limit_abs(page):
 
 
 def cal_list(page):
-    """Календар: список від початку поточного періоду до дня перед наступною зарплатою (06.11), щоденні витрати по обох періодах."""
-    mob = page.viewport_size['width'] < 1024
+    """Across the salary boundary, exact daily forecasts remain accessible by month."""
+    from checks.calendar import day_events, list_range
     for day, lo, hi in ((DAY, '2026-10-06', '2026-11-05'), ('2026-11-03', '2026-10-21', '2026-11-05')):
-        freeze(page, day)
-        go_tab(page, 3)
-        if mob:
-            # телефон: список показується, коли не вибрано день (за замовчуванням вибрано сьогодні)
-            if page.locator('.cal-tbl').count() == 0 and page.locator('.ck-day .ck-link').count():
-                page.locator('.ck-day .ck-link').first.click()
-                page.wait_for_timeout(200)
-            if page.locator('.cal-tbl').count() == 0:
-                # телефон: таблиці «Події і баланс» немає, є календар, «Події дня» і «Усі платежі місяця» (без балансу); п. 5 стосується таблиці ПК
-                check(page.locator('details.cm-month').count() == 1, 'на телефоні немає «Усі платежі місяця»')
-                print('      телефон: таблиці «Події і баланс» немає, є «Усі платежі місяця» (місяць, з кнопками оплати)')
-                return
-        rows = page.evaluate("[...document.querySelectorAll('.cal-tbl .cal-ev')].map(r=>({d:r.dataset.date,c:r.className,n:r.querySelector('.ce-n').textContent}))")
-        ds = [r['d'] for r in rows]
-        print(f'      {day}: рядків {len(rows)}, дати {ds[0]}..{ds[-1]}')
-        check(ds[0] >= lo and ds[-1] == hi, f'{day}: список {ds[0]}..{ds[-1]}, очікували {lo}..{hi}')
-        check(ds == sorted(ds), f'{day}: дати списку не за порядком')
-        var = [r for r in rows if 'cal-ev-var' in r['c']]
-        want = 2 if day == DAY else 1
-        check(len(var) == want, f'{day}: рядків щоденних витрат {len(var)}, очікували {want}: {[r["n"] for r in var]}')
-        check(var[-1]['n'].endswith('-05.11)'), f'{day}: останній рядок щоденних витрат не до 05.11: {var[-1]["n"]}')
-        if day != DAY:
-            check(any(r['d'] < '2026-11-01' and 'past' in r['c'] for r in rows), f'{day}: немає минулих днів періоду з жовтня')
-            check(page.locator('.cal-tbl .pay-done').count() == page.locator('.cal-tbl .cal-ev[data-date^="2026-11"] .pay-done').count(), 'кнопка оплати на рядку іншого місяця')
+        freeze(page,day)
+        go_tab(page,3)
+        projection=finance_ref(page)
+        check(list_range(projection)==(lo,hi),f'{day}: financial period changed')
+        check(page.locator('.cal-tbl,.cm-month').count()==0,'removed report remains')
+        for month in sorted({e['date'][:7] for e in projection['events'] if lo<=e['date']<=hi}):
+            day_events(page,projection,month)
 
 
 CR = r"""(e)=>{const P=c=>c.match(/[\d.]+/g).map(Number);const L=c=>{const f=x=>{x/=255;return x<=0.04045?x/12.92:Math.pow((x+0.055)/1.055,2.4)};return 0.2126*f(c[0])+0.7152*f(c[1])+0.0722*f(c[2])};

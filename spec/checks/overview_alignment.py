@@ -1,4 +1,4 @@
-"""Desktop Overview: shared grid edges, financial text and bounded list reachability."""
+"""Desktop Overview: shared grid edges and fully visible financial text without scrolling."""
 from helpers import check, freeze, go_tab, settle
 from checks.visual_layout import overview_bounds
 
@@ -15,12 +15,13 @@ GEOMETRY = r"""()=>{
  const cardEls=Object.values(sels).map(q).filter(Boolean);
  const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';
  const money=[...document.querySelectorAll('.p-overview .dv-kpi-v,.p-overview .kpi-rv,.p-overview .kpi-iv,.p-overview .kpi-ie,.p-overview .dv-ev-a,.p-overview .dv-bud-v,.p-overview .bd-sum,.p-overview .bd-pct')].filter(visible);
- const clipped=money.filter(e=>{const b=e.getBoundingClientRect(),host=e.closest('.surface'),p=host&&host.getBoundingClientRect(),region=e.closest('.bd-leg,.dv-near,.dv-recent,.kpi-rows,.dv-unas');const scrolls=region&&/auto|scroll/.test(getComputedStyle(region).overflowY)&&region.scrollHeight>region.clientHeight+2;return e.scrollWidth>e.clientWidth+1||p&&(b.left<p.left-1||b.right>p.right+1||!scrolls&&(b.top<p.top-1||b.bottom>p.bottom+1))}).map(e=>e.textContent);
+ const clipped=money.filter(e=>{const b=e.getBoundingClientRect(),host=e.closest('.surface'),p=host&&host.getBoundingClientRect();return e.scrollWidth>e.clientWidth+1||p&&(b.left<p.left-1||b.right>p.right+1||b.top<p.top-1||b.bottom>p.bottom+1)}).map(e=>e.textContent);
  const inner=cardEls.flatMap(e=>[e,...e.querySelectorAll('*')]).filter(e=>visible(e)&&/auto|scroll/.test(getComputedStyle(e).overflowY)&&e.scrollHeight>e.clientHeight+2).map(e=>e.className);
  const banks=[...document.querySelectorAll('.dv-cards>.bcard')].filter(visible).map(e=>({...box(e),amount:box(e.querySelector('.bcard-sum'))}));
  const titles=[q('.dv-bud>:first-child>:first-child'),q('.ov-grid>.kpi-inst .kpi-head .lbl-ico>span:last-child'),q('.dv-recent>:first-child>button')].map(textBox);
  const inlineAdvice=[...document.querySelectorAll('.dv-cards>.bcard .bank-advice')].some(e=>visible(e)&&e.textContent.trim().length>0);
- return {cards,kpis,banks,titles,inlineAdvice,bankrow:box(q('.dv-cards')),add:box(q('.dv-cards>.bcard-add')),grid:box(grid),wallet:box(q('.dv-accs')),unas:box(q('.dv-unas')),wide:document.documentElement.scrollWidth,clipped,inner};
+ const badge=q('.budget-unassigned');
+ return {cards,kpis,banks,titles,inlineAdvice,bankrow:box(q('.dv-cards')),add:box(q('.dv-cards>.bcard-add')),grid:box(grid),wallet:box(q('.dv-accs')),unas:box(q('.dv-unas')),badge:badge?{...box(badge),text:badge.textContent,label:badge.getAttribute('aria-label')}:null,wide:document.documentElement.scrollWidth,doc:document.documentElement.scrollHeight,clipped,inner};
 }"""
 
 
@@ -52,12 +53,13 @@ def desktop_grid(page):
             _equal([g['bankrow']['right'], k[-1]['right']], f'{tag}: account row right grid edge')
             _equal([bank['width'] for bank in g['banks']], f'{tag}: equal bank card widths')
             _equal([bank['top'] for bank in g['banks']], f'{tag}: bank card top edge')
-            check(g['add'] and 40 <= g['add']['width'] <= 48 and g['add']['right'] <= g['bankrow']['right'] + 1, f'{tag}: add button outside account row {g["add"]}')
+            check(g['add'] and 32 <= g['add']['width'] <= 48 and g['add']['height'] >= 32 and g['add']['left'] >= g['bankrow']['left'] and g['add']['right'] <= g['bankrow']['right'] + 1 and g['add']['top'] >= g['bankrow']['top'] and g['add']['bottom'] <= g['bankrow']['bottom'] + 1, f'{tag}: add button outside account row or too small {g["add"]}')
+            check(page.get_by_role('button', name='Додати рахунок', exact=True).count() == 1, f'{tag}: add account action has no accessible name')
             for left, right in zip(g['banks'], g['banks'][1:] + [g['add']]):
                 check(left['right'] <= right['left'] + 1, f'{tag}: accounts or add button overlap')
             check(all(t and t['height'] > 0 for t in g['titles']), f'{tag}: bottom card titles must be visible {g["titles"]}')
-            # У чверть-широких картках заголовок може переноситися, але початок рядка спільний.
-            for edge in (('top',) if g['unas'] else ('top', 'bottom')):
+            # Назви нижніх карток мають спільний початок, навіть коли довга назва переноситься.
+            for edge in ('top',):
                 _equal([t[edge] for t in g['titles']], f'{tag}: bottom card title {edge}')
             c = g['cards']
             check(all(r and r['width'] > 0 and r['height'] > 0 for r in c.values()), f'{tag}: картка відсутня {c}')
@@ -66,31 +68,25 @@ def desktop_grid(page):
             for edge in ('top', 'bottom'):
                 _equal([f[edge], n[edge]], f'{tag}: перший ряд {edge}')
                 _equal([b[edge], i[edge], r[edge]], f'{tag}: другий ряд {edge}')
-            lower = [b, i, r] + ([g['unas']] if g['unas'] else [])
-            _equal([card['width'] for card in lower], f'{tag}: ширина нижніх карток')
+            check(g['unas'] is None, f'{tag}: старий додатковий ряд без рахунку повернувся')
+            gap = i['left'] - b['right']
+            _equal([i['width'], r['width']], f'{tag}: ширина двох правих нижніх карток')
+            _equal([b['width'], 2 * i['width'] + gap], f'{tag}: бюджет займає половину нижнього ряду')
             _equal([f['left'], b['left'], k[0]['left'], g['wallet']['left'], g['grid']['left']], f'{tag}: лівий край')
-            if g['unas']:
-                u = g['unas']
-                for edge in ('top', 'bottom'):
-                    _equal([card[edge] for card in lower], f'{tag}: чотири картки нижнього ряду {edge}')
-                gap = i['left'] - b['right']
-                track = (g['grid']['width'] - 11 * gap) / 12
-                _equal([f['width'], 8 * track + 7 * gap], f'{tag}: прогноз займає вісім треків')
-                _equal([n['width'], 4 * track + 3 * gap], f'{tag}: найближче займає чотири треки')
-                _equal([n['right'], u['right'], k[-1]['right'], g['wallet']['right'], g['grid']['right']], f'{tag}: правий край')
-                _equal([gap, r['left']-i['right'], u['left']-r['right'], n['left']-f['right']], f'{tag}: проміжки колонок')
-            else:
-                _equal([f['right'], i['right']], f'{tag}: прогноз займає дві колонки')
-                _equal([n['left'], r['left']], f'{tag}: права колонка left')
-                _equal([n['right'], r['right'], k[-1]['right'], g['wallet']['right'], g['grid']['right']], f'{tag}: правий край')
-                _equal([i['left']-b['right'], r['left']-i['right'], n['left']-f['right']], f'{tag}: проміжки колонок')
+            track = (g['grid']['width'] - 11 * gap) / 12
+            for name, card, span in (('прогноз', f, 8), ('найближче', n, 4), ('бюджет', b, 6), ('розстрочки', i, 3), ('операції', r, 3)):
+                _equal([card['width'], span * track + (span - 1) * gap], f'{tag}: {name}, ширина {span} треків')
+            _equal([n['right'], r['right'], k[-1]['right'], g['wallet']['right'], g['grid']['right']], f'{tag}: правий край')
+            _equal([gap, r['left']-i['right'], n['left']-f['right']], f'{tag}: проміжки колонок')
+            if g['badge']:
+                u = g['badge']
+                check(u['width'] > 0 and u['height'] > 0 and u['left'] >= b['left'] and u['right'] <= b['right'] + 1 and u['top'] >= b['top'] and u['bottom'] <= b['bottom'] + 1, f'{tag}: сума без рахунку обрізана {u}')
+                check('Без рахунку' in u['text'] and 'Коригування власних коштів' in u['label'], f'{tag}: загублено зміст коригування без рахунку {u}')
             check(b['top'] >= f['bottom'] + 1, f'{tag}: ряди перетинаються {c}')
-            check(g['wide'] <= width and not g['clipped'], f'{tag}: обрізані суми або горизонтальний скрол {g}')
-            # Обрізання поза дозволеними списками лишається помилкою; кожен такий список
-            # перевіряється з клавіатури до першого й останнього рядка без росту сторінки.
+            check(g['wide'] <= width and g['doc'] <= height + 1 and not g['clipped'] and not g['inner'], f'{tag}: обрізані суми або прокрутка {g}')
             overview_bounds(page, tag)
             page.evaluate('window.scrollTo(0,document.documentElement.scrollHeight)')
-            check(page.evaluate("[...document.querySelectorAll('.dv-bud,.ov-grid>.kpi-t.kpi-inst,.dv-recent,.dv-unas')].every(e=>e.getBoundingClientRect().bottom<=innerHeight+1)"), f'{tag}: нижні картки недоступні')
+            check(page.evaluate('scrollY<=1'), f'{tag}: Огляд можна прокрутити вертикально')
             page.evaluate('window.scrollTo(0,0)')
             print(f'      {tag}: 3 KPI, спільні краї двох рядів, суми видимі')
 

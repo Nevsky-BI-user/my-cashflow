@@ -2,7 +2,7 @@
 # Сьогодні понеділок 12.10.2026: тиждень оплати 12.10-18.10.
 import calendar
 
-from helpers import check, dialog, finance_ref, finance_state, freeze, go_tab, shot
+from helpers import check, dialog, finance_ref, finance_state, freeze, go_tab, shot, open_calendar_day
 
 DAY = '2026-10-12'
 NAME = 'Прибирання'
@@ -74,14 +74,10 @@ def weekly_pay(page):
     fid = [f for f in finance_state(page)['data']['fixed'] if f['name'] == NAME][0]['id']
     before = finance_ref(page)
     go_tab(page, 3)
-    ev = page.locator('.cal-ev', has_text=NAME)
-    texts = ev.all_inner_texts()
-    btns = [ev.nth(i).locator('.pay-done').count() for i in range(ev.count())]
-    print(f'      Календар: {len(texts)} рядків, кнопки {btns}')
-    # v144: список «Події і баланс» від початку періоду (06.10) до дня перед зарплатою, тож 05.10 у ньому немає; кнопка лише в поточному тижні 12.10
-    # v151: дні після наступної виплати (21.10) згорнуто в підсумковий рядок, тому окремих рядків щотижневого платежу два (12.10, 19.10)
-    check(len(btns) >= 2 and all(n == 1 for n in btns), f'«Внести оплату» не лише в поточному тижні: {btns}')
-    ev.nth(0).locator('.pay-done').click()
+    for iso in ('2026-10-12','2026-10-19'):
+        row=open_calendar_day(page,iso).locator('.cal-day-events .cal-day-row',has_text=NAME)
+        check(row.count()==1 and row.locator('.pay-done').count()==1,f'{iso}: weekly payment action missing')
+    open_calendar_day(page,'2026-10-12').locator('.cal-day-events .cal-day-row',has_text=NAME).locator('.pay-done').click()
     page.wait_for_timeout(400)
     dlg = dialog(page, 'Нова операція')
     check(dlg.locator('input[aria-label="\u0414\u0430\u0442\u0430 \u0444\u0430\u043a\u0442\u0438\u0447\u043d\u043e\u0457 \u043e\u043f\u043b\u0430\u0442\u0438"]').input_value() == DAY, 'оплата поточного тижня не сьогоднішня')
@@ -100,10 +96,7 @@ def weekly_pay(page):
 
 
 def _day(page, iso):
-    """ПК: вибрати день у сітці Календаря; повертає рядки «Події дня»."""
-    page.locator(f'.ck-cal .cal-cell[data-date="{iso}"]').click()
-    page.wait_for_timeout(300)
-    return page.locator('.ck-day-events .ck-bd-row')
+    return open_calendar_day(page,iso).locator('.cal-day-events .cal-day-row')
 
 
 def weekly_pay_past(page):
@@ -131,35 +124,18 @@ def weekly_pay_past(page):
     check(any(str(t.get('date', ''))[:10] == DAY and t.get('payment_due_date') == '2026-10-05' for t in tx), 'оплата 05.10 не записалась операцією з fixed_id')
     rows = _day(page, '2026-10-05').filter(has_text=NAME)
     check(rows.locator('.pay-done').count() == 0, 'після оплати тиждень 05.10 досі з кнопкою')
-    btns = page.locator('.cal-ev', has_text=NAME).locator('.pay-done').count()
-    check(btns == 2, f'у списку кнопок «{NAME}» не 1 (поточний тиждень): {btns}')
+    for iso in ('2026-10-12','2026-10-19'):
+        check(_day(page,iso).filter(has_text=NAME).locator('.pay-done').count()==1,f'{iso}: another week was closed')
 
 
 def paid_no_button(page):
-    """v144: на сплаченому «Внести оплату» немає: розстрочка, сплачена за планом (Ланцюжок 11.10), у списку і розкладі дня на ПК і в «Усі платежі місяця» на телефоні."""
-    freeze(page, DAY)
-    go_tab(page, 3)
-    if page.viewport_size['width'] >= 1024:
-        lst = page.locator('.cal-ev', has_text='Ланцюжок')
-        n0 = (lst.count(), lst.locator('.pay-done').count())
-        # v151: сплачений минулий рядок згорнуто в підсумок минулих днів (назва в підказці рядка), окремого рядка й кнопки немає
-        folded = page.locator('.cal-ev.cal-ev-fold.past[title*="Ланцюжок"]').count()
-        day = _day(page, '2026-10-11').filter(has_text='Ланцюжок')
-        n = n0 + (day.count(), day.locator('.pay-done').count())
-        print(f'      ПК Ланцюжок: рядків списку {n[0]}, кнопок {n[1]}; розклад 11.10 {n[2]}, кнопок {n[3]}')
-        check((n[0] >= 1 or folded == 1) and n[2] >= 1 and n[1] == 0 and n[3] == 0, f'сплачена розстрочка з кнопкою на ПК: {n}, у підсумку {folded}')
-    else:
-        page.locator('details.cm-month summary').click()
-        page.wait_for_timeout(200)
-        r = page.locator('details.cm-month .cm-event', has_text='Ланцюжок')
-        txt = r.first.inner_text()
-        print(f'      телефон: {txt!r}')
-        check('сплачено' in txt and r.first.locator('.pay-done').count() == 0, f'сплачена розстрочка з кнопкою на телефоні: {txt!r}')
-        # v182: неоплачене до початку поточного періоду (Оренда 01.10, період з 06.10) у списку не показується;
-        # неоплачене поточного періоду (Садочок 10.10) лишається з кнопкою оплати
-        check(page.locator('details.cm-month .cm-event', has_text='Оренда').filter(has_text='01.10').count() == 0, 'на телефоні Оренда 01.10 з минулого періоду в списку')
-        o = page.locator('details.cm-month .cm-event', has_text='Садочок')
-        check(o.first.locator('.pay-done').count() == 1, 'на телефоні зникла кнопка неоплаченого Садочка')
+    """Paid installment is read-only; unpaid fixed payment remains actionable."""
+    freeze(page,DAY)
+    go_tab(page,3)
+    paid=_day(page,'2026-10-11').filter(has_text='Ланцюжок')
+    check(paid.count()==1 and paid.get_attribute('data-paid')=='true','paid installment status missing')
+    check(paid.locator('.pay-done').count()==0,'paid installment can be paid again')
+    check(_day(page,'2026-10-10').filter(has_text='Садочок').locator('.pay-done').count()==1,'unpaid fixed action missing')
 
 
 def credit_cash(page):
@@ -193,7 +169,7 @@ def credit_cash(page):
     cid = head[0]['occurrenceId'].split(':')[1]
     go_tab(page, 3)
     # v153 доповнення 5: того ж дня може стояти рядок «Дострокове погашення: Навушники, ...» (прогноз, без кнопки), беремо сам платіж
-    ev = page.locator('.cal-ev', has_text='Навушники').filter(has_not_text='Дострокове').first
+    ev = _day(page, '2026-10-21').filter(has_text='Навушники').filter(has_not_text='Дострокове').first
     check(ev.locator('.pay-done').count() == 1, 'у розстрочки немає «Внести оплату»')
     ev.locator('.pay-done').click()
     page.wait_for_timeout(400)
@@ -305,12 +281,10 @@ def debt_minus(page):
     repay = [e for e in finance_ref(page)['events'] if e['kind'] == 'repay' and e['date'][:7] == DAY[:7]]
     check(repay, 'немає погашення в поточному місяці')
     iso = repay[0]['date']
-    tbl = page.evaluate(f"[...document.querySelectorAll('.cal-tbl .cal-ev.cal-ev-debt[data-date=\"{iso}\"] .ce-a')].map(e=>e.textContent)")
-    page.click(f'.ck-cal .cal-cell[data-date="{iso}"]')
-    page.wait_for_timeout(250)
-    day = page.evaluate("[...document.querySelectorAll('.ck-day-events .ck-bd-row')].filter(e=>e.textContent.includes('Погашення')).map(e=>e.querySelector('.ce-a').textContent)")
-    print(f'      Найближче {near}, прогноз {fc}, таблиця {tbl}, розклад {day}')
-    for where, vals in (('Найближче', near), ('день прогнозу', fc), ('Події і баланс', tbl), ('розклад дня', day)):
+    rows=_day(page,iso).filter(has_text='Погашення')
+    day=rows.locator('.cal-day-amount').all_inner_texts()
+    print(f'      Найближче {near}, прогноз {fc}, події дня {day}')
+    for where, vals in (('Найближче', near), ('день прогнозу', fc), ('події дня', day)):
         check(vals and all(v.strip().startswith('−') for v in vals), f'{where}: погашення без мінуса {vals}')
 
 

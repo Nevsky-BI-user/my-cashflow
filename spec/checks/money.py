@@ -1,7 +1,7 @@
 # Гроші по рахунках (DESIGN.md, третя редакція 08.10.2026): паритет cashCore з еталоном scripts/budget_pool.py,
 # поріг мінімальних витрат Ощаду (п. 11), обовʼязковий рахунок у формі операції, чип «Без рахунку», обмежений готівкою бюджет, підписи прогнозу без накладань.
 import re
-from helpers import check, finance_ref, finance_state, dialog, freeze, go_tab, num, shot
+from helpers import check, finance_ref, finance_state, dialog, freeze, go_tab, num, shot, open_calendar_day
 
 DAY = '2026-10-08'
 # фікстура: операції сьогодні (txDemo стискає день 31 до 8 жовтня, 12:00 UTC, тобто після мітки балансу 09:00):
@@ -52,14 +52,18 @@ def unassigned_chip(page):
     freeze(page, DAY, PATCH)
     n0 = page.evaluate('window.__cashCore.unList.length')
     check(n0 >= 2, f'фікстура: без рахунку {n0}')
-    check(page.locator('.dv-unas').count() == 1, 'на Огляді ПК немає картки операцій без рахунку')
-    go_tab(page, 2)
+    badge = page.locator('.budget-unassigned')
+    check(badge.count() == 1 and badge.is_visible(), 'на Огляді ПК немає кнопки операцій без рахунку')
+    label = badge.get_attribute('aria-label') or ''
+    check(f'Операції без рахунку: {n0}.' in label and '−200 ₴' in label, f'кнопка загубила кількість або коригування: {label}')
+    badge.click()
+    page.wait_for_selector('.p-flow')
     chip = page.locator('.flow-chip.flow-unas')
     check(chip.count() == 1, 'у Потоці немає чипа «Без рахунку»')
     t = chip.inner_text()
     check(t.startswith('Без рахунку (') and int(t.split('(')[1].rstrip(')')) >= n0 and 'warn' in (chip.get_attribute('class') or ''),
           f'чип без рахунку: {t!r}')
-    chip.click()
+    check(chip.get_attribute('aria-pressed') == 'true' or 'active' in (chip.get_attribute('class') or ''), 'кнопка Огляду не ввімкнула фільтр без рахунку')
     page.wait_for_timeout(250)
     pick = page.locator('.p-flow .pick-acc')
     k0 = pick.count()
@@ -170,21 +174,24 @@ def min_spend(page):
     card = page.locator('.p-overview .bcard .ms-wrap[data-acc="l1"]')
     check(card.count() == 1 and card.is_visible(), 'на картці Ощаду немає прогресу порогу')
     t = _sp(card.inner_text())
-    want = f"витрачено {round(js['ms'][0]['spent']):,} з 15 000 у жовтні".replace(',', ' ')
+    want = f"{round(js['ms'][0]['spent']):,} / 15 000 ₴".replace(',', ' ')
     check(want in t, f'текст прогресу {t!r}, очікували {want!r}')
-    check(card.locator('.ms-warn').count() == 1 and card.locator('.ms-warn.chip-due').count() == 0, 'до останніх 10 днів підпис має бути видимим без бурштинової плашки')
-    adv = page.locator('.p-overview .bcard .bank-advice')
-    check(adv.count() == 1 and ('Якщо оплатити' in adv.inner_text() or 'Запланованих платежів' in adv.inner_text()) and 'Ощадбанк' in adv.locator('xpath=..').inner_text(), f'порада всередині рахунку Ощаду: {adv.all_inner_texts()}')
+    check(card.locator('.ms-compact-warning').is_visible(), 'поріг і комісія мають бути видимі')
+    bank = card.locator('xpath=ancestor::*[contains(@class,"bcard")][1]')
+    check('Ощадбанк' in bank.inner_text(), 'порада не належить Ощадбанку')
+    bank.locator('.bank-advice-info').focus()
+    advice = page.locator('.bank-advice-popover')
+    check(advice.is_visible() and ('Якщо оплатити' in advice.inner_text() or 'Запланованих платежів' in advice.inner_text()), 'порада недоступна у поясненні')
+    page.keyboard.press('Escape')
     left = _sp(page.evaluate('v=>fmtI(v)', js['ms'][0]['left']))
-    check('ще ' + left + ' до 31.10' in _sp(card.locator('.ms-warn').inner_text()), 'підпис картки не показує обчислений залишок до порогу')
+    check('Ще ' + left + ' ₴ · 31.10' in _sp(card.locator('.ms-compact-warning').inner_text()), 'підпис картки не показує обчислений залишок до порогу')
     page.mouse.move(2, 2)
     shot(page, 'ms-ov-1920.jpg', full=False)
-    # Календар, листопад: подія комісії 01.11 у таблиці «Події і баланс», біла
-    go_tab(page, 3)
-    page.click('.ck-arr[aria-label="Наступний місяць"]')
-    page.wait_for_timeout(300)
-    row = page.locator('.ck-day .cal-ev[data-date="2026-11-01"]', has_text='Комісія')
-    check(row.count() == 1, 'у таблиці Календаря немає події комісії 01.11')
+    # Після клавіатурної підказки переходимо через видиму навігацію.
+    page.locator('.side-item').nth(3).click()
+    page.wait_for_selector('.calendar-only')
+    row = open_calendar_day(page, '2026-11-01').locator('.cal-day-row[data-event-kind=fee]', has_text='Комісія')
+    check(row.count() == 1, 'у подробицях дня немає події комісії 01.11')
     rt = _sp(row.inner_text())
     check('400 ₴' in rt and 'комісія' in rt.lower(), f'рядок комісії: {rt!r}')
     page.mouse.move(2, 2)
@@ -195,11 +202,9 @@ def min_spend(page):
     check(ref2['minSpend'][0]['left']==0 and not any(e['id']=='fee:l1:2026-10' for e in ref2['events']), 'комісія поточного місяця лишилась після факту15000')
     check(ref['nextPlan']['mandatoryCents']-ref2['nextPlan']['mandatoryCents']==40000, 'резерв не зменшився на400')
     check(page.locator('.p-overview .ms-wrap[data-acc="l1"] .ms-ok').count() == 1, 'немає позначки «без комісії»')
-    check(page.locator('.p-overview .bcard .bank-advice').count() == 0, 'порада лишилась після досягнення порогу')
+    check(page.locator('.p-overview .bcard .bank-advice-info').count() == 0, 'порада лишилась після досягнення порогу')
     go_tab(page, 3)
-    page.click('.ck-arr[aria-label="Наступний місяць"]')
-    page.wait_for_timeout(300)
-    check(page.locator('.ck-day .cal-ev[data-date="2026-11-01"]', has_text='Комісія').count() == 0, 'подія комісії лишилась у Календарі')
+    check(open_calendar_day(page, '2026-11-01').locator('.cal-day-row[data-event-kind=fee]', has_text='Комісія').count() == 0, 'подія комісії лишилась у Календарі')
 
 
 def min_spend_late(page):
@@ -210,10 +215,10 @@ def min_spend_late(page):
     ref=finance_ref(page)
     fee=[e for e in ref['events'] if e['id']=='fee:l1:2026-10']
     check(len(fee)==1 and fee[0]['date']=='2026-11-01', 'немає комісії01.11')
-    w = page.locator('.p-overview .ms-wrap[data-acc="l1"] .ms-warn.chip-due')
+    w = page.locator('.p-overview .ms-wrap[data-acc="l1"] .ms-compact-warning')
     check(w.count() == 1, 'немає бурштинової плашки')
     t = _sp(w.inner_text())
-    check(t.startswith('ще ') and 'до 31.10, інакше комісія 400 ₴' in t, f'плашка: {t!r}')
+    check(t.startswith('Ще ') and '31.10' in t and 'Комісія 400 ₴' in t and str(round(ref['minSpend'][0]['left'])).replace(' ','') in t.replace(' ',''), f'плашка: {t!r}')
 
 
 def min_spend_phone(page):

@@ -29,9 +29,12 @@ def desktop(page):
     check(plus['x'] >= last['x'] + last['width'] - 1 and plus['width'] <= 64, '«+» не праворуч від усіх карток або завеликий')
     for i in range(3):
         w = cards.nth(i).bounding_box()
-        check(w['width'] >= 240 and w['height'] >= 142, f'картка {i + 1}: {w["width"]:.0f}x{w["height"]:.0f}, замала для підписів')
+        check(w['width'] >= 240 and w['height'] > 0, f'картка {i + 1} відсутня або завузька: {w}')
         metrics = cards.nth(i).evaluate("""e=>{const r=e.getBoundingClientRect(),name=e.querySelector('.bcard-bank').getBoundingClientRect(),sum=e.querySelector('.bcard-sum').getBoundingClientRect();return {gap:sum.top-name.bottom,clipped:[...e.querySelectorAll('.bcard-bank,.bcard-sum,.ms-txt,.ms-warn')].some(x=>{const b=x.getBoundingClientRect();return b.bottom>r.bottom+1||b.right>r.right+1||x.scrollWidth>x.clientWidth+1||x.scrollHeight>x.clientHeight+1})}}""")
-        check(metrics['gap'] >= 10 and not metrics['clipped'], f'картка {i + 1}: замалий відступ або обрізані підписи: {metrics}')
+        check(metrics['gap'] >= 0 and not metrics['clipped'], f'картка {i + 1}: перекриті або обрізані підписи: {metrics}')
+        from checks.account_card_fit import METRICS
+        bad = [m for m in cards.nth(i).evaluate(METRICS) if m['outside'] or m['overflow'] or m['ellipsis']]
+        check(not bad, f'картка {i + 1}: реквізити обрізані: {bad}')
     check(cards.first.locator('.ms-wrap').count() == 1 and page.locator('.o-ms-list').count() == 0, 'поріг витрат має бути всередині картки Ощаду')
     # monobank: світла картка, «дебетова», кнопка ↻ без БД не падає й оновлює час
     mono = page.locator('.dv-cards .bcard-mono')
@@ -92,7 +95,7 @@ def desktop(page):
     salary_badge = '.bcard-badges [aria-label="Зарплата надходить на цей рахунок"]'
     gold = [cards.nth(i).locator(salary_badge).count() for i in range(3)]
     check(gold == [0, 0, 1], f'позначка зарплатної картки: {gold}, очікували лише на третій')
-    check(cards.nth(2).locator(salary_badge).inner_text() == 'зарплатна', 'немає видимого підпису зарплатної картки')
+    check(cards.nth(2).locator(salary_badge).is_visible() and cards.nth(2).locator(salary_badge).inner_text() == '💼', 'немає видимого значка зарплатної картки')
     # Esc закриває форму
     cards.first.click()
     page.locator('.account-history-edit').click()

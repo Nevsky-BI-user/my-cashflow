@@ -1,14 +1,14 @@
 # v150: модель «власні кошти не мінус» на екранах і Платежі на ПК без прокрутки
 from datetime import date, timedelta
 
-from helpers import check, freeze, go_tab
+from helpers import check, freeze, go_tab, open_calendar_day
 
 DAY = '2026-10-12'
 # демо з боргом Mono за жовтень (план погашення за правилом місяця 20.11) і лімітом: погашення 21.10 лише за правилом «максимум, лишити 15 000»
 MONO_DEBT = [("kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:0,debt_month:null",
               "kind:'credit',mono_account_id:'demo-mono',balance:0,debt:20000,credit_limit:30000,debt_month:pbIso(new Date(t.getFullYear(),t.getMonth(),1))")]
 
-DRAWER = r"""(()=>{const c=document.querySelector('.ck-day');if(!c)return null;return [...c.querySelectorAll('.ck-day-events .ck-bd-row')].map(r=>({n:r.querySelector('.ce-n')?.textContent||'',a:r.querySelector('.ce-a')?.textContent||''}))})()"""
+DRAWER = """()=>[...document.querySelectorAll('dialog.cal-day-dialog[open] .cal-day-events .cal-day-row')].map(r=>({n:r.querySelector('.cal-day-name b').textContent,a:r.querySelector('.cal-day-amount').textContent}))"""
 
 MODEL = r"""(()=>{const p=window.__financeProjection,D='2026-10-21';const rep=p.events.filter(e=>e.kind==='repay'&&e.date===D);const per=p.periods.find(q=>q.start===D);
 const prev=p.days.find(d=>d.date==='2026-10-20');const accs=window.__financeInput.accounts;
@@ -42,7 +42,7 @@ def pay_repay_mono(page):
     check(per['A'] == per['own'] - per['reserve'] - base, f'A {per["A"]} != власні − резерв − погашення')
     monos = [r for r in rep if r['mono']]
     check(monos, f'немає події погашення Mono 21.10: {rep}')
-    page.click('.cal-cell[data-date="2026-10-21"]')
+    open_calendar_day(page, '2026-10-21')
     page.wait_for_timeout(250)
     rows = page.evaluate(DRAWER)
     check(rows, 'розклад дня 21.10 не відкрився')
@@ -54,7 +54,7 @@ def pay_repay_mono(page):
     check(all(re.fullmatch(r'Погашення .+? · (обовʼязкове|додатково|прострочене)', r['n']) for r in rp), f'підпис погашення без банку чи виду: {[r["n"] for r in rp]}')
     check(len({r['n'] for r in rp}) == len(rp), f'однакові підписи погашень 21.10: {[r["n"] for r in rp]}')
     ui = round(sum(-_num(r['a']) for r in rp) * 100)  # у розкладі суми цілими гривнями: допуск 0,50 ₴ на рядок
-    check(abs(ui - s) <= 50 * len(rp), f'сума рядків погашення в розкладі {ui} != {s}')
+    check(ui == s, f'сума рядків погашення в розкладі {ui} != {s}')
     print(f'      21.10: власні {per["own"] / 100:.2f}, резерв {per["reserve"] / 100:.2f}, погашення {s / 100:.2f} (Mono offset {per["offset"] / 100:.2f}), A {per["A"] / 100:.2f}; рядки: '
           + '; '.join(r['n'] + ' ' + r['a'] for r in rp))
 
@@ -64,16 +64,16 @@ const sc=[];for(let el=days;el;el=el.parentElement){const cs=getComputedStyle(el
 const d=document.scrollingElement;const cells=[...days.querySelectorAll('.cal-cell')];const last=cells[cells.length-1].getBoundingClientRect();const cr=cal.getBoundingClientRect();
 const rows=new Set([...days.children].map(c=>Math.round(c.getBoundingClientRect().top))).size;
 const cut=cells.filter(c=>{const r=c.getBoundingClientRect();return r.bottom>cr.bottom+0.5||r.bottom>innerHeight+0.5}).map(c=>c.dataset.date);
-const clip=cells.filter(c=>c.scrollHeight>c.clientHeight+1).map(c=>c.dataset.date+' '+c.scrollHeight+'/'+c.clientHeight);const nm=[...days.querySelectorAll('.cal-nm')];const ell=nm.filter(n=>n.scrollWidth>n.clientWidth+1||n.scrollHeight>n.clientHeight+1);
+const clip=cells.filter(c=>c.scrollHeight>c.clientHeight+1).map(c=>c.dataset.date+' '+c.scrollHeight+'/'+c.clientHeight);const nm=[...days.querySelectorAll('.cal-nm')];const ell=nm.filter(n=>n.getClientRects().length&&(n.scrollWidth>n.clientWidth+1||n.scrollHeight>n.clientHeight+1));
 return {vw:innerWidth,vh:innerHeight,calSH:cal.scrollHeight,calCH:cal.clientHeight,daysSH:days.scrollHeight,daysCH:days.clientHeight,doc:d.scrollHeight-d.clientHeight,sc,rows,weeks:Math.ceil(((new Date(+days.querySelector('.cal-cell').dataset.date.slice(0,4),+days.querySelector('.cal-cell').dataset.date.slice(5,7)-1,1).getDay()+6)%7+cells.length)/7),
- clip,lastBottom:Math.round(last.bottom),calBottom:Math.round(cr.bottom),cut,cellH:Math.round(cells[0].getBoundingClientRect().height),ell:ell.length,ellTitled:ell.filter(n=>(n.title||n.closest('[title]')?.title||'').length>0).length,
+ clip,lastBottom:Math.round(last.bottom),calBottom:Math.round(cr.bottom),cut,cellH:Math.round(cells[0].getBoundingClientRect().height),ell:ell.length,ellTitled:ell.filter(n=>(n.title||n.closest('.cal-cell')?.getAttribute('aria-label')||'').length>0).length,
  nmLines:nm.map(n=>Math.round(n.getBoundingClientRect().height/(parseFloat(getComputedStyle(n).lineHeight)||14))).reduce((a,b)=>Math.max(a,b),0)}})()"""
 
 
 
 def _fit(page, w, hgt, months):
     page.set_viewport_size({'width': w, 'height': hgt})
-    freeze(page, DAY)
+    freeze(page, DAY, [("name:'Садочок',amount:3500", "name:'Дуже довга назва постійного платежу, яка не вміщається в клітинку календаря',amount:3500")])
     go_tab(page, 3)
     page.wait_for_selector('.p-credits.desk .cal-days .cal-cell')
     seen = []
@@ -81,7 +81,7 @@ def _fit(page, w, hgt, months):
         if k:
             page.click('.ck-arr[aria-label="Наступний місяць"]')
             page.wait_for_timeout(300)
-        page.evaluate("""()=>{const n=document.querySelector('.p-credits.desk .cal-days .cal-nm');if(n)n.textContent='Дуже довга назва постійного платежу, яка не вміщається в клітинку календаря'}""")
+        check(page.locator('.cal-cell .cal-event-icon').count()>0,'semantic event icons missing')
         page.wait_for_timeout(60)
         f = page.evaluate(FIT)
         check(f, 'немає календаря Платежів на ПК')
@@ -106,46 +106,30 @@ def fit_2000(page):
     _fit(page, 2000, 1200, 3)
 
 
-SIDE = r"""(()=>{const side=document.querySelector('.p-credits.desk .ck-side');if(!side)return null;const d=side.querySelector('.ck-day');const sc=[];
-for(const el of [side,...side.querySelectorAll('*')]){const cs=getComputedStyle(el);if(el.scrollHeight>el.clientHeight+1&&/(auto|scroll)/.test(cs.overflowY))sc.push(String(el.className).slice(0,30)+' '+el.scrollHeight+'/'+el.clientHeight)}
-const b=e=>e?Math.round(e.getBoundingClientRect().bottom):null,list=d&&d.querySelector('.ck-bd-list'),subs=list?[...list.querySelectorAll(':scope > .ck-bd-sub')]:[];
-const rows=list?[...list.querySelectorAll(':scope > .ck-bd-row')].map(r=>({c:r.className,n:r.querySelector('.ce-n')?.textContent||'',b:r.querySelector('.ce-b')?.textContent||''})):[];
-return {vh:innerHeight,doc:document.documentElement.scrollHeight-document.documentElement.clientHeight,sc,daySH:d?d.scrollHeight:null,dayCH:d?d.clientHeight:null,dayB:b(d),tot:b(list&&list.querySelector('.ck-bd-tot')),foot:b(subs[subs.length-1]),rows}})()"""
-
 
 def _side(page, w, hgt):
-    """v151 (знахідка 3, варіант А): розклад вибраного дня в бічній панелі Платежів вміщається без прокрутки: події від сьогодні до дня
-    перед вибраним згорнуто в один підсумковий рядок «Події ДД.ММ-ДД.ММ: N подій» із сумою і балансом після, окремо лише події вибраного дня;
-    «Баланс на кінець» і рядок надходжень видно. Дні: сьогодні (без згортання), 21.10 (виплата й погашення), 31.10 (найбільше подій до дня)."""
-    page.set_viewport_size({'width': w, 'height': hgt})
-    freeze(page, DAY, MONO_DEBT)
-    go_tab(page, 3)
-    page.wait_for_selector('.p-credits.desk .cal-days .cal-cell')
-    seen = []
-    for d in ['2026-10-12', '2026-10-21', '2026-10-31']:
-        page.click(f'.cal-cell[data-date="{d}"]')
-        page.wait_for_timeout(250)
-        if not page.locator('.ck-day .ck-bd-tot').count():  # повторний клік знімає вибір
-            page.click(f'.cal-cell[data-date="{d}"]')
-            page.wait_for_timeout(250)
-        s = page.evaluate(SIDE)
-        tag = f'{w}x{hgt} {d}'
-        check(s and s['tot'] is not None, f'{tag}: розклад дня не відкрився')
-        check(not s['sc'] and s['daySH'] <= s['dayCH'] + 1 and s['doc'] <= 1, f'{tag}: бічна панель прокручується: {s["sc"]}, {s["daySH"]}/{s["dayCH"]}, сторінка {s["doc"]}')
-        check(s['tot'] <= s['dayB'] and s['foot'] <= s['dayB'] and s['foot'] <= s['vh'], f'{tag}: «Баланс на кінець» чи підсумок надходжень поза панеллю: {s}')
-        early = [r for r in s['rows'] if 'ck-bd-early' in r['c']]
-        if d == DAY:
-            check(not early, f'{tag}: для сьогодні нічого не згортається: {early}')
-        else:
-            check(len(early) == 1, f'{tag}: дні до вибраного не згорнуто в один рядок: {[r["n"] for r in s["rows"]]}')
-            e = early[0]
-            check(e['n'].startswith('Події 12.10-') and not e['n'].startswith('Погашення'), f'{tag}: підпис підсумку {e["n"]!r}')
-            prev = date.fromisoformat(d) - timedelta(days=1)
-            want = page.evaluate(f"(()=>{{const p=window.__financeProjection;const x=p.days.find(v=>v.date==='{prev.isoformat()}');return x?x.closingCashCents/100:null}})()")  # v153: власні після, як лінія «Власні»
-            check(want is not None and abs(_num(e['b']) - want) <= 1, f'{tag}: власні після підсумку {e["b"]}, а на кінець {prev} {want}')
-            check(all(r['n'][:5] == d[8:] + '.' + d[5:7] for r in s['rows'] if 'ck-bd-early' not in r['c'] and 'ck-bd-st' not in r['c'] and 'ck-bd-tot' not in r['c']), f'{tag}: окремі рядки не лише вибраного дня: {[r["n"] for r in s["rows"]]}')
-        seen.append(f'{d[8:]}.{d[5:7]}: рядків {len(s["rows"])}, панель {s["daySH"]}/{s["dayCH"]}')
-    print(f'      {w}x{hgt}: ' + '; '.join(seen))
+    """Day details contain only selected-day events, exact amounts and visible money."""
+    from helpers import finance_ref, num
+    page.set_viewport_size({'width':w,'height':hgt})
+    freeze(page,DAY,MONO_DEBT)
+    go_tab(page,3)
+    projection=finance_ref(page)
+    for iso in ('2026-10-12','2026-10-21','2026-10-31'):
+        detail=open_calendar_day(page,iso)
+        rows=detail.locator('.cal-day-events .cal-day-row')
+        expected=[e for e in projection['events'] if e['date']==iso and not (e['id'].startswith('budget-savings:') and not e['amountCents'])]
+        expected_amounts=[(1 if e['kind'] in ('payout','income') else -1)*abs(e['amountCents'] or e.get('debtDeltaCents',0)) for e in expected if e['kind']!='variable']
+        variables=[e for e in expected if e['kind']=='variable']
+        if variables:expected_amounts.append(-sum(e['amountCents'] for e in variables))
+        # Today can additionally contain schedule-only historic occurrences; every projected amount must be present.
+        actual=[round(num(t)*100) for t in rows.locator('.cal-day-amount').all_inner_texts()]
+        for amount in expected_amounts:
+            check(amount in actual,f'{iso}: exact planned amount {amount} missing: {actual}')
+            actual.remove(amount)
+        check(rows.locator('.cal-day-amount').evaluate_all('es=>es.every(e=>e.scrollWidth<=e.clientWidth+1)'),f'{iso}: clipped amounts')
+        check(detail.evaluate('e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight+1}'),f'{iso}: day details outside viewport')
+        page.keyboard.press('Escape')
+        check(page.evaluate('document.documentElement.scrollHeight<=innerHeight+1'),'calendar page scroll')
 
 
 def side_1440(page):
@@ -156,59 +140,20 @@ def side_2000(page):
     _side(page, 2000, 1200)
 
 
-LIST = r"""(()=>{const side=document.querySelector('.p-credits.desk .ck-side');if(!side)return null;const d=side.querySelector('.ck-day');const sc=[];
-for(const el of [side,...side.querySelectorAll('*')]){const cs=getComputedStyle(el);if(el.scrollHeight>el.clientHeight+1&&/(auto|scroll)/.test(cs.overflowY))sc.push(String(el.className).slice(0,30)+' '+el.scrollHeight+'/'+el.clientHeight)}
-const rows=[...side.querySelectorAll('.cal-tbl .cal-ev')].map(r=>({c:r.className,d:r.dataset.date||'',n:r.querySelector('.ce-n')?.textContent||'',a:r.querySelector('.ce-a')?.textContent||'',b:r.querySelector('.ce-b')?.textContent||'',pay:!!r.querySelector('.pay-done')}));
-return {sel:!!side.querySelector('.ck-bd-list'),doc:document.documentElement.scrollHeight-document.documentElement.clientHeight,sc,daySH:d?d.scrollHeight:null,dayCH:d?d.clientHeight:null,rows}})()"""
-
-# події рушія в діапазоні (без щоденних): кількість і сума руху власних коштів, як у підсумковому рядку
-ENGINE = r"""(([lo,hi])=>{const ev=window.__financeProjection.events.filter(e=>e.date>=lo&&e.date<=hi&&e.kind!=='variable');
-return {n:ev.length,net:ev.reduce((s,e)=>s+(e.funding==='credit'?0:(e.cashDeltaCents!=null?e.cashDeltaCents:e.amountCents)),0)/100}})"""
-
-
-def _list(page, w, hgt):
-    """v151 (варіант А для «Події і баланс» без вибраного дня): у поточному періоді минулі дні (крім неоплачених з кнопкою оплати) і дні
-    після наступної виплати згорнуто в підсумкові рядки «Події ДД.ММ-ДД.ММ: N подій» із сумою (рух власних) і балансом після; панель
-    без прокрутки в жовтні (демо і борг Mono) і в наступних місяцях демо; кількість і сума підсумку після виплати = події рушія."""
-    page.set_viewport_size({'width': w, 'height': hgt})
-    seen = []
-    for name, patch in (('демо', None), ('борг Mono', MONO_DEBT)):
-        freeze(page, DAY, patch)
-        go_tab(page, 3)
-        page.wait_for_selector('.p-credits.desk .cal-days .cal-cell')
-        for k in range(3):
-            if k:
-                page.click('.ck-arr[aria-label="Наступний місяць"]')
-                page.wait_for_timeout(300)
-            s = page.evaluate(LIST)
-            tag = f'{w}x{hgt} {name} міс.{k + 1}'
-            check(s and not s['sel'] and s['rows'], f'{tag}: немає списку «Події і баланс»')
-            fit = not s['sc'] and s['daySH'] <= s['dayCH'] + 1 and s['doc'] <= 1
-            fold = [r for r in s['rows'] if 'cal-ev-fold' in r['c']]
-            if k == 0:
-                check(fit, f'{tag}: панель прокручується: {s["sc"]}, {s["daySH"]}/{s["dayCH"]}')
-                past = [r for r in fold if ' past' in r['c']]
-                late = [r for r in fold if ' past' not in r['c']]
-                check(len(past) == 1 and past[0]['n'].startswith('Події 06.10-11.10: '), f'{tag}: минулі дні не згорнуто: {[r["n"] for r in fold]}')
-                left = [r for r in s['rows'] if ' past' in r['c'] and 'cal-ev-fold' not in r['c']]
-                check(all(r['pay'] for r in left), f'{tag}: поза підсумком лишились минулі рядки без кнопки оплати: {[r["n"] for r in left if not r["pay"]]}')
-                np = page.evaluate("window.__financeProjection.nextPlan.nextPayout.date")
-                check(np == '2026-10-21', f'{tag}: наступна виплата {np}')
-                check(len(late) == 1 and late[0]['n'].startswith('Події 22.10-05.11: '), f'{tag}: дні після виплати 21.10 не згорнуто: {[r["n"] for r in fold]}')
-                e = page.evaluate(ENGINE, ['2026-10-22', '2026-11-05'])
-                n = int(late[0]['n'].split(': ')[1].split()[0])
-                check(n == e['n'] and abs(_num(late[0]['a']) - e['net']) <= 1, f'{tag}: підсумок {late[0]["n"]} {late[0]["a"]}, а рушій {e}')
-                after = [r for r in s['rows'] if r['d'] > '2026-10-21' and 'cal-ev-fold' not in r['c'] and 'cal-ev-end' not in r['c'] and 'cal-ev-var' not in r['c']]
-                check(not after, f'{tag}: окремі рядки після виплати: {[r["n"] for r in after]}')
-            else:
-                check(not fold, f'{tag}: інший місяць не згортається: {[r["n"] for r in fold]}')
-                if name == 'борг Mono' and w == 1440 and k == 1:
-                    # знахідка v151: листопад з боргом Mono на 1440x900 прокручується (19 рядків, назви на два рядки), рішення у звіті
-                    print(f'      {tag}: панель {s["daySH"]}/{s["dayCH"]} (відомо, у звіті)')
-                else:
-                    check(fit, f'{tag}: панель прокручується: {s["sc"]}, {s["daySH"]}/{s["dayCH"]}')
-            seen.append(f'{name} міс.{k + 1}: {len(s["rows"])} рядків, {s["daySH"]}/{s["dayCH"]}')
-    print(f'      {w}x{hgt}: ' + '; '.join(seen))
+def _list(page,w,hgt):
+    """Three months remain navigable without the removed period report."""
+    from helpers import finance_ref
+    from checks.calendar import day_events
+    page.set_viewport_size({'width':w,'height':hgt})
+    for name,patch in (('demo',None),('Mono debt',MONO_DEBT)):
+        freeze(page,DAY,patch)
+        go_tab(page,3)
+        projection=finance_ref(page)
+        for month in ('2026-10','2026-11','2026-12'):
+            day_events(page,projection,month)
+            check(page.locator('.ck-side,.cal-tbl').count()==0,'removed report remains')
+            check(page.evaluate('document.documentElement.scrollHeight<=innerHeight+1'),'calendar scrolls')
+            check(page.locator('.cal-cell').last.evaluate('e=>e.getBoundingClientRect().bottom<=innerHeight+1'),'last day clipped')
 
 
 def list_1440(page):

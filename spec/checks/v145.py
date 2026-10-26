@@ -2,7 +2,7 @@
 # на телефоні, щоденні витрати в Потоці одним рядком на період. Числа звіряються з єдиною проєкцією (finance_ref).
 import re
 
-from helpers import check, finance_ref, freeze, go_tab, num, settle, shot
+from helpers import check, finance_ref, freeze, go_tab, num, settle, shot, open_calendar_day
 
 DAY = '2026-10-08'
 KEYS = ['funds', 'budget', 'balance', 'inst']
@@ -51,8 +51,13 @@ def kpi_values(page, scope):
         })""")
         inst = [_norm(t) for t in inst]
     print(f'      розстрочки: {inst}')
+    pattern = INST
+    if scope == '.p-overview.desk':
+        pattern = re.compile(r'^.+ · [\d\s  ]+(,\d+)? ₴ × \d+ · \d\d\.\d\d\.\d{2}( → \d\d\.\d\d\.\d{2})?$')
+        titles = page.locator(f'{scope} .kpi-inst [data-r=inst]').evaluate_all('es=>es.map(e=>e.title)')
+        check(len(titles) == len(inst) and all(re.search(r' · \d\d\.\d\d\.\d{4}( → \d\d\.\d\d\.\d{4})?$', title) for title in titles), f'повні роки розстрочок недоступні: {titles}')
     for t in inst:
-        check(INST.match(t.replace('\n', ' ')), f'рядок розстрочки не за форматом «Назва · X ₴ × n · до DD.MM.YYYY»: {t!r}')
+        check(pattern.match(t.replace('\n', ' ')), f'рядок розстрочки втратив назву, суму, кількість або дату: {t!r}')
 
 
 def kpi_desktop(page):
@@ -175,22 +180,16 @@ def donut_mobile(page):
 
 
 def pay_list(page):
-    """Телефон, Платежі: список під календарем «Платежі до зарплати DD.MM · N», де DD.MM: дата наступної зарплати (не авансу), N: рядків у списку."""
-    freeze(page, DAY)
-    go_tab(page, 3)
-    s = page.locator('details.cm-month > summary')
-    check(s.count() == 1, 'немає списку платежів місяця')
-    t = _norm(s.inner_text())
-    m = re.match(r'^Платежі до зарплати (\d\d)\.(\d\d) · (\d+)$', t)
-    check(m, f'заголовок списку: {t!r}')
-    n = finance_ref(page)['nextPlan']
-    sal = next((x['date'] for x in (n.get('nextPayout'), n.get('followingPayout')) if x and x.get('kind') == 'salary'), None)
-    print(f'      {t!r}, наступна зарплата {sal}')
-    check(sal and (m.group(2), m.group(1)) == (sal[5:7], sal[8:10]), f'дата в заголовку {m.group(1)}.{m.group(2)}, а зарплата {sal}')
-    s.click()
-    page.wait_for_timeout(200)
-    n = page.evaluate("document.querySelectorAll('details.cm-month > .cm-event').length")  # v149: без рядка-шапки «Подія / Сума · баланс після»
-    check(n == int(m.group(3)), f'у заголовку {m.group(3)} платежів, а рядків {n}')
+    """Next salary remains reachable, with exact amount and income icon."""
+    from helpers import num
+    freeze(page,DAY)
+    go_tab(page,3)
+    projection=finance_ref(page)
+    plan=projection['nextPlan']
+    salary=next(x for x in (plan['nextPayout'],plan['followingPayout']) if x['kind']=='salary')
+    row=open_calendar_day(page,salary['date']).locator('.cal-day-events .cal-day-row[data-event-kind=income]',has_text='Зарплата')
+    expected=next(e for e in projection['events'] if e['date']==salary['date'] and e['kind']=='payout')
+    check(row.count()==1 and round(num(row.locator('.cal-day-amount').inner_text())*100)==expected['amountCents'],'next salary date or amount changed')
 
 
 def flow_daily(page):

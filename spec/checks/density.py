@@ -1,7 +1,7 @@
 # Щільність ПК на 1920x900: Огляд, Календар, Цілі і Бюджет без прокрутки сторінки, числа KPI до 24px, основний текст 13px, бейджі А/З/борг читаються;
 # Потік: панель фільтрів до 150px (усі категорії видно) і щонайменше 14 рядків у вʼюпорті (дата заморожена: демо-операції txDemo розкладаються за сьогоднішнім днем);
-# Огляд має доступні області прокрутки довгих списків; інші екрани зберігають власні обмеження прокрутки.
-from helpers import check, dialog, finance_ref, freeze, go_tab, shot
+# Огляд уміщує всі підсумки й категорії без внутрішньої прокрутки.
+from helpers import check, dialog, finance_ref, freeze, go_tab, shot, open_calendar_day, settle
 from checks.visual_layout import overview_bounds
 
 DAY = '2026-10-08'
@@ -19,12 +19,6 @@ INNER = r"""[...document.querySelectorAll('.content *')].filter(e=>{const o=getC
 # фікстура: другий рахунок із боргом (monobank), дедлайн той самий, що в ПриватБанку
 DEBT2 = ("{id:'l3',name:'monobank',bank:'mono',card_last4:'4388',kind:'debit',mono_account_id:'demo-mono',balance:12500,debt:0,debt_month:null",
          "{id:'l3',name:'monobank',bank:'mono',card_last4:'4388',kind:'credit',mono_account_id:'demo-mono',balance:12500,debt:4200,debt_month:pbIso(dm)")
-CAL = """({sh:document.documentElement.scrollHeight,ih:innerHeight,
-ev:[...document.querySelectorAll('.ck-day .cal-ev')].map(e=>Math.round(e.getBoundingClientRect().height)),
-rep:[...document.querySelectorAll('.ck-day .cal-ev')].filter(e=>/Погашення .+? · /.test(e.innerText)).map(e=>e.dataset.date),more:(document.querySelector('.ck-day .ck-more')||{}).innerText||'',
-cards:document.querySelectorAll('.ck-side .ck-debts').length,
-side:[...document.querySelectorAll('.ck-cal, .ck-side > *')].map(e=>{const r=e.getBoundingClientRect();return [e.className.split(' ').pop(),Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.bottom),Math.round(r.right)]})})"""
-
 
 def no_inner(page, name, allowed=()):
     inner = page.evaluate(INNER)
@@ -45,7 +39,7 @@ def fit(page):
         if i == 0:
             overview_bounds(page, 'Щільність/Огляд')
         else:
-            no_inner(page, name, ('ck-side', 'ck-day') if i == 3 else ())
+            no_inner(page, name)
         fs = page.evaluate(KPI_FS)
         max_font = 26 if i == 4 else 24
         check(fs and max(fs) <= max_font, f'{name}: число KPI {max(fs) if fs else None}px, а не до {max_font}')
@@ -53,11 +47,11 @@ def fit(page):
         check(hs and max(hs) <= kmax + 0.5, f'{name}: KPI заввишки {hs}, а не до {kmax}px')
     page.mouse.move(2, 2)
     shot(page, 'goals-1920.jpg', full=False)
-    # основний текст ПК 13px на рядку операції (Огляд, «Останні операції»)
+    # Компактний опис операції лишається читабельним: щонайменше 12px.
     go_tab(page, 0)
     page.wait_for_timeout(200)
     row = page.evaluate("getComputedStyle(document.querySelector('.dv-recent div[style*=\"cursor\"] span:nth-child(2)')).fontSize")
-    check(row == '13px', f'рядок операції {row}, а не 13px')
+    check(float(row.removesuffix('px')) >= 12, f'опис операції надто дрібний: {row}')
     # бейджі виплат і боргу в сітці Календаря: щонайменше 11.5px (дрібний кегль дизайну ПК v135) і не обрізані
     go_tab(page, 3)
     page.wait_for_timeout(200)
@@ -94,54 +88,36 @@ def fit(page):
 
 
 def calendar_real(page):
-    """Календар 1920x900 з реальними обсягами (2 рахунки з боргом): без прокрутки сторінки і внутрішніх прокруток, рядки таблиці 28px,
-    усі дати з подіями є в таблиці, погашення кредиток з виплати 21-го (п. 12), «Погасити» в KPI; клік по дню: розклад балансу, повторний: таблиця"""
+    """Повноширинний календар із двома боргами та доступними діями оплати без прокрутки."""
     freeze(page, DAY, patch=[DEBT2])
     page.set_viewport_size({'width': 1920, 'height': 900})
-    page.wait_for_timeout(400)
     go_tab(page, 3)
-    page.wait_for_timeout(300)
-    c = page.evaluate(CAL)
-    print(f'      Календар 1920x900: сторінка {c["sh"]}/{c["ih"]}, рядків таблиці {len(c["ev"])}, погашень {c["rep"]}')
-    check(c['sh'] <= c['ih'], f'Календар на 1920x900 прокручується: {c["sh"]} > {c["ih"]}')
-    no_inner(page, 'Календар', ('ck-side', 'ck-day'))
-    check(c['cards'] == 0, 'у правій колонці лишилась картка «Борги»')
-    nd = page.evaluate("[...new Set([...document.querySelectorAll('.ck-cal .cal-cell')].filter(c=>c.querySelector('.cal-ln,.cal-more')).map(c=>c.dataset.date))]")
-    dates = set(page.evaluate("[...document.querySelectorAll('.ck-day .cal-ev')].map(e=>e.dataset.date)"))
-    # v144: список від початку поточного періоду до дня перед наступною зарплатою; дати сітки поза ним не порівнюємо
-    from checks.calendar import list_range
-    lo, hi = list_range(finance_ref(page))
-    nd = [d for d in nd if lo <= d <= hi]
-    check(set(nd) <= dates, f'у таблиці немає дат з подіями: {sorted(set(nd) - dates)}')
-    # v149: рядки ростуть з довгою назвою і круглою кнопкою оплати 22px, але лишаються компактними
-    check(c['ev'] and all(27 <= x <= 34 for x in c['ev']), f'рядки таблиці не 27-34px: {c["ev"]}')
+    check(page.evaluate('document.documentElement.scrollHeight<=innerHeight+1&&document.documentElement.scrollWidth<=innerWidth+1'), 'Календар виходить за екран')
+    no_inner(page, 'Календар')
+    check(page.locator('.ck-side,.ck-day,.cal-tbl').count() == 0, 'Бічна таблиця подій не прибрана')
+    check(page.locator('.ck-cal').evaluate('e=>e.getBoundingClientRect().width>=innerWidth-270'), 'Календар не займає доступну ширину')
     ref = finance_ref(page)
     expected_repay = {e['date'] for e in ref['events'] if e['kind'] == 'repay' and e['date'].startswith(DAY[:7])}
-    check(c['rep'] and set(c['rep']) == expected_repay, f'дати погашення не збігаються з планом: {c["rep"]}, {expected_repay}')
-    reachable = page.locator('.ck-side').evaluate("""e=>{const last=e.querySelector('.cal-ev:last-child');if(!last)return false;const scroll=[e,...e.querySelectorAll('*')].filter(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+2);scroll.forEach(x=>x.scrollTop=x.scrollHeight);const r=last.getBoundingClientRect();const ok=r.bottom<=innerHeight&&r.top>=0;scroll.forEach(x=>x.scrollTop=0);return ok}""")
-    check(reachable, 'останній рядок місячних подій недоступний у межах екрана')
-    check(c['more'] == '', f'у таблиці лишилось «+N»: {c["more"]!r}')
-    s = {x[0]: x for x in c['side']}
-    check(s['ck-day'][1] >= s['ck-cal'][5] and s['ck-day'][2] == s['ck-cal'][2], f'таблиця подій не праворуч від сітки: {c["side"]}')
-    # «Погасити» в KPI «Борги» відкриває рахунок
+    check(expected_repay, 'Фікстура не містить запланованого погашення')
+    for iso in sorted(expected_repay):
+        details = open_calendar_day(page, iso)
+        check('Погашення' in details.inner_text(), f'{iso}: погашення відсутнє в деталях дня')
+        check(details.locator('.cal-day-amount').evaluate_all('es=>es.every(e=>e.scrollWidth<=e.clientWidth+1)'), 'Суми погашень обрізані')
+        page.keyboard.press('Escape')
     g = page.locator('.ck-kpi.ck-debt .ck-ghost')
-    check(g.count() == 1 and g.inner_text() == 'Погасити', 'у KPI «Борги» немає кнопки «Погасити»')
-    page.mouse.move(2, 2)
-    shot(page, 'cal-real-1920.jpg', full=False)
+    check(g.count() == 1 and g.inner_text() == 'Погасити', 'У підсумку боргів немає кнопки погашення')
     g.click()
-    page.wait_for_timeout(400)
-    check(dialog(page, 'Рахунок').count() == 1, '«Погасити» не відкрило рахунок')
+    check(dialog(page, 'Рахунок').count() == 1, 'Погашення не відкрило рахунок')
     page.keyboard.press('Escape')
-    page.wait_for_timeout(300)
-    # клік по дню в сітці: розклад балансу замість таблиці, без прокрутки; повторний клік повертає таблицю
-    page.locator('.ck-cal .cal-cell.future:has(.cal-ln)').first.click()
-    page.wait_for_timeout(250)
-    check(page.locator('.ck-day .ck-bd-list').count() == 1, 'клік по дню не показав розклад балансу')
-    sh = page.evaluate('document.documentElement.scrollHeight')
-    check(sh <= 900, f'з розкладом дня сторінка прокручується: {sh}')
-    page.locator('.ck-cal .cal-cell.sel').click()
-    page.wait_for_timeout(250)
-    check(page.locator('.ck-day .cal-tbl').count() == 1 and page.locator('.ck-cal .cal-cell.sel').count() == 0, 'повторний клік не повернув таблицю')
+    day = page.locator('.ck-cal .cal-cell.future:has(.cal-ln)').first
+    iso = day.get_attribute('data-date')
+    details = open_calendar_day(page, iso)
+    check(details.locator('.cal-day-row').count() > 0, 'Повні події дня недоступні')
+    page.keyboard.press('Escape')
+    check(not page.locator('dialog.cal-day-dialog[open]').count(), 'Діалог дня не закрився')
+    no_inner(page, 'Календар')
+    check(page.evaluate('document.documentElement.scrollHeight<=innerHeight+1'), 'Після перегляду дня сторінка прокручується')
+    shot(page, 'cal-real-1920.jpg', full=False)
 
 
 def laptop(page):

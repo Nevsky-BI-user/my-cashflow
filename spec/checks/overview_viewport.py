@@ -1,4 +1,4 @@
-"""Огляд: цілі картки в межах екрана, повні візуали й досяжні довгі списки."""
+"""Огляд: усі картки й рядки одночасно видимі без прокрутки на ПК."""
 import json
 
 from helpers import check, freeze, go_tab, settle, shot
@@ -25,7 +25,9 @@ UNASSIGNED = MANY + [('today:now,core:core,msAdv:msAdv', 'today:now,core:Object.
 GEOMETRY = r"""selectors=>{
  const visible=e=>e.getClientRects().length>0&&getComputedStyle(e).visibility!=='hidden';
  const rect=e=>{const r=e.getBoundingClientRect();return{top:r.top,left:r.left,right:r.right,bottom:r.bottom,width:r.width,height:r.height}};
+ const blocks=[...document.querySelectorAll('.p-overview,.dv-cards,.dv-kpis,.ov-grid,.dv-cols .surface,.dv-bud .bd-leg,.dv-cols>.kpi-inst .kpi-rows')].filter(visible);
  return {wide:document.documentElement.scrollWidth,doc:document.documentElement.scrollHeight,
+ overflow:blocks.filter(e=>e.scrollWidth>e.clientWidth+1||e.scrollHeight>e.clientHeight+1).map(e=>({cls:e.className,width:[e.scrollWidth,e.clientWidth],height:[e.scrollHeight,e.clientHeight]})),
  cards:[...document.querySelectorAll(selectors)].filter(visible).map(e=>({cls:e.className,...rect(e)})),
  donut:[...document.querySelectorAll('.dv-bud .bd-desk svg')].filter(visible).map(rect),
  chart:[...document.querySelectorAll('.dv-fc svg')].filter(visible).map(rect),
@@ -43,19 +45,23 @@ REACHABLE = r"""e=>{
 }"""
 
 
-def _rows_reachable(page, selector, tag):
+def _rows_visible(page, selector, tag):
     rows = page.locator(selector)
     if not rows.count():
         return
-    for index in (0, rows.count() - 1):
-        row = rows.nth(index)
-        row.scroll_into_view_if_needed()
+    for row in rows.all():
         state = row.evaluate(REACHABLE)
         check(state['row']['top'] >= -1 and state['row']['bottom'] <= page.viewport_size['height'] + 1,
-              f'{tag}: рядок поза екраном після прокрутки: {state}')
+              f'{tag}: рядок поза екраном без прокрутки: {state}')
         check(all(state['row']['top'] >= c['top'] - 1 and state['row']['bottom'] <= c['bottom'] + 1 for c in state['clips']),
-              f'{tag}: рядок обрізаний контейнером після прокрутки: {state}')
-    page.evaluate('window.scrollTo(0,0)')
+              f'{tag}: рядок обрізаний контейнером: {state}')
+        bounds = row.evaluate(r"""e=>{
+          const r=e.getBoundingClientRect(),card=e.closest('.surface')?.getBoundingClientRect();
+          return{row:{left:r.left,right:r.right,top:r.top,bottom:r.bottom},card:card?{left:card.left,right:card.right,top:card.top,bottom:card.bottom}:null,
+          clipped:[...e.querySelectorAll('.bd-sum,.bd-pct,.dv-ev-a,.kpi-iv,.kpi-ie,span:last-child')].filter(x=>{const b=x.getBoundingClientRect();return x.scrollWidth>x.clientWidth+1||b.left<r.left-1||b.right>r.right+1}).map(x=>x.textContent)};
+        }""")
+        check(not bounds['clipped'], f'{tag}: сума чи поле рядка обрізані: {bounds}')
+        check(not bounds['card'] or all(bounds['row'][k] >= bounds['card'][k] - 1 for k in ('left', 'top')) and all(bounds['row'][k] <= bounds['card'][k] + 1 for k in ('right', 'bottom')), f'{tag}: рядок виходить за власну картку: {bounds}')
 
 
 def _desktop(page, many, unassigned=False):
@@ -79,6 +85,7 @@ def _desktop(page, many, unassigned=False):
             state = page.evaluate(GEOMETRY, CARDS)
             check(len(state['cards']) >= 5, f'{tag}: відсутні основні картки')
             check(state['wide'] <= width and state['doc'] <= height + 1, f'{tag}: сторінка виходить за екран: {state}')
+            check(not state['overflow'], f'{tag}: повернулася прокрутка або приховане переповнення: {state["overflow"]}')
             check(all(c['top'] >= -1 and c['left'] >= -1 and c['right'] <= width + 1 and c['bottom'] <= height + 1 for c in state['cards']),
                   f'{tag}: обрізані краї карток: {state}')
             check(state['donut'] and all(d['width'] >= 80 and d['height'] >= 80 for d in state['donut']), f'{tag}: діаграма прихована або надто мала: {state}')
@@ -89,42 +96,26 @@ def _desktop(page, many, unassigned=False):
             check(not state['font'] or min(state['font']) >= 11, f'{tag}: шрифт легенди зменшено до нечитабельного: {state}')
             for selector in ('.dv-bud .bd-row', '.dv-cols>.kpi-inst [data-r=inst]', '.dv-near .dv-ev', '.dv-recent [data-tx-id]'):
                 check(page.locator(selector).count() > 0, f'{tag}: фікстура не має рядків {selector}')
-                _rows_reachable(page, selector, tag)
+                _rows_visible(page, selector, tag)
             if unassigned:
-                region = page.locator('.dv-unas')
-                check(region.count() == 1 and region.is_visible(), f'{tag}: картку без рахунку приховано')
-                check(region.locator('.unas-row').count() == 4, f'{tag}: показано не чотири операції')
-                more = region.locator(':scope > .dv-lbl-btn')
-                check(more.count() == 1 and 'ще 2' in more.inner_text(), f'{tag}: немає переходу до решти операцій')
-                check(region.get_attribute('role') == 'region' and region.get_attribute('aria-label') == 'Операції без рахунку' and region.evaluate('e=>e.tabIndex>=0'), f'{tag}: регіон без рахунку недоступний з клавіатури')
-                if region.evaluate('e=>e.scrollHeight>e.clientHeight+2'):
-                    check(region.evaluate('e=>["auto","scroll"].includes(getComputedStyle(e).overflowY)'), f'{tag}: операції обрізані замість прокрутки')
-                    region.focus()
-                    region.press('Home')
-                    region.press('End')
-                    page.wait_for_function('e=>e.scrollTop>0', arg=region.element_handle())
-                _rows_reachable(page, '.dv-unas .unas-row', tag)
-                _rows_reachable(page, '.dv-unas > .dv-lbl-btn', tag)
-                clipped = region.locator('.unas-row > span:last-of-type').evaluate_all('es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.textContent)')
-                check(not clipped, f'{tag}: суми операцій обрізані горизонтально {clipped}')
-                for row in region.locator('.unas-row').all():
-                    row.scroll_into_view_if_needed()
-                    bounds = row.evaluate(r"""e=>{
-                      const r=e.getBoundingClientRect(),c=e.closest('.dv-unas').getBoundingClientRect(),description=e.querySelector('span:nth-child(2)'),amount=e.querySelector('span:nth-child(3)'),pick=e.querySelector('.pick-acc');
-                      const rect=x=>{const b=x.getBoundingClientRect();return{left:b.left,right:b.right,top:b.top,bottom:b.bottom,width:b.width,height:b.height}};
-                      return{row:rect(e),card:rect(e.closest('.dv-unas')),overflow:e.scrollWidth-e.clientWidth,description:description?rect(description):null,amount:amount?rect(amount):null,pick:pick?rect(pick):null};
-                    }""")
-                    check(bounds['overflow'] <= 1, f'{tag}: рядок операції переповнюється горизонтально {bounds}')
-                    check(bounds['description'] and bounds['description']['width'] > 0, f'{tag}: зник опис операції {bounds}')
-                    for field in ('amount', 'pick'):
-                        child = bounds[field]
-                        check(child and child['width'] > 0 and child['height'] > 0, f'{tag}: відсутня сума або кнопка вибору {bounds}')
-                        check(all(child['left'] >= parent['left'] - 1 and child['right'] <= parent['right'] + 1 and child['top'] >= parent['top'] - 1 and child['bottom'] <= parent['bottom'] + 1 for parent in (bounds['row'], bounds['card'])), f'{tag}: сума або кнопка виходить за рядок/картку {bounds}')
-                region.evaluate('e=>e.scrollTop=0')
-                page.evaluate('document.activeElement.blur()')
-            check(page.evaluate('document.documentElement.scrollHeight<=innerHeight+1'), f'{tag}: досяжність рядків розширила сторінку')
+                check(page.locator('.dv-unas').count() == 0, f'{tag}: старий додатковий ряд повернувся')
+                badge = page.locator('.budget-unassigned')
+                check(badge.count() == 1 and badge.is_visible(), f'{tag}: підсумок операцій без рахунку приховано')
+                text = badge.inner_text().replace('\xa0', ' ')
+                check('Без рахунку 6' in text and '−138 051 ₴' in text, f'{tag}: змінено кількість або підсумок: {text}')
+                check(badge.get_attribute('type') == 'button' and 'Відкрити операції та вибрати рахунок' in badge.get_attribute('aria-label'), f'{tag}: перехід до операцій без рахунку недоступний')
+                bounds = badge.evaluate(r"""e=>{const r=e.getBoundingClientRect(),p=e.closest('.dv-bud').getBoundingClientRect();return{fit:r.left>=p.left&&r.right<=p.right+1&&r.top>=p.top&&r.bottom<=p.bottom+1,clipped:e.scrollWidth>e.clientWidth+1};}""")
+                check(bounds['fit'] and not bounds['clipped'], f'{tag}: підсумок чи кнопка без рахунку обрізані: {bounds}')
+            check(page.evaluate('scrollY<=1&&document.documentElement.scrollHeight<=innerHeight+1'), f'{tag}: Огляд потребує вертикальної прокрутки')
             if width in (1899, 1280):
                 shot(page, f'overview-viewport-{theme}-{width}-{height}-{"unas" if unassigned else "many" if many else "demo"}.jpg', full=False)
+        if unassigned:
+            # Підсумок використовує справжній наявний перехід; тестові core-рядки
+            # перевіряють представлення, тому не підмінюємо список транзакцій.
+            page.locator('.budget-unassigned').focus()
+            page.keyboard.press('Enter')
+            page.wait_for_selector('.p-flow.desk')
+            check(page.locator('.flow-unas[aria-pressed="true"]').count() == 1, f'{theme}: не вибрано фільтр операцій без рахунку')
 
 
 def desktop(page):
@@ -156,7 +147,7 @@ def mobile(page):
 
 CHECKS = [
     ('Overview: visible cards and visuals across desktop heights', 'desktop', desktop),
-    ('Overview: 17 category rows reachable within viewport', 'desktop', many_categories),
-    ('Overview: unassigned operations share the visible bottom row', 'desktop', unassigned_operations),
+    ('Overview: all 17 category rows visible without scrolling', 'desktop', many_categories),
+    ('Overview: unassigned summary and existing Operations route', 'desktop', unassigned_operations),
     ('Overview: mobile keeps normal document scrolling', 'mobile', mobile),
 ]
