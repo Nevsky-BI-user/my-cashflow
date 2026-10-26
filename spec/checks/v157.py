@@ -11,6 +11,7 @@ import os
 from datetime import date, datetime, timedelta
 
 from helpers import ROOT, check, freeze, go_tab, num, open_payout, settle
+from checks.visual_layout import overview_bounds
 
 DAY = '2026-10-13'
 FIX = ROOT / 'spec' / 'fixtures' / 'overview-cur.json'
@@ -253,14 +254,14 @@ def _cur_scroll(page):
 
 
 def _geometry(page, tag, base):
-    """Не поточний період не ламає компонування ПК: графік не нижче 240px, без внутрішньої прокрутки, без нового ov-scroll, тексти не обрізані, рядок періоду в шапці."""
+    """Не поточний період зберігає адаптивний графік, цілі картки, доступні списки та рядок періоду в шапці."""
     for (w, hh), cur_scroll in base.items():
         page.set_viewport_size({'width': w, 'height': hh})
         page.wait_for_timeout(350)
         settle(page)
         g = page.evaluate(GEO)
         check(g['chart'] >= (159.5 if hh < 900 else 179.5 if hh < 1000 else 259.5), f'{tag} {w}x{hh}: графік нижчий за адаптивний мінімум: {g}')
-        check(not g['inner'], f'{tag} {w}x{hh}: внутрішня прокрутка колонок: {g}')
+        overview_bounds(page, f'{tag}/{w}x{hh}')
         # без НОВОГО ov-scroll: не поточний період не прокручується там, де поточний вміщається; легший період може вміститись
         # і тоді, коли поточний прокручується (вищий вміст поточного періоду не робить помилкою вільніший інший)
         check(cur_scroll or not g['scroll'], f'{tag} {w}x{hh}: зʼявилась прокрутка Огляду, якої немає в поточному періоді ({cur_scroll} -> {g["scroll"]})')
