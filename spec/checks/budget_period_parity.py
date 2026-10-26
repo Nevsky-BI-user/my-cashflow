@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 from helpers import check, freeze, go_tab, num
 from checks.v157 import _nav, _snap, _bud_card
+from checks.visual_layout import overview_plot_minimum
 
 DAY='2026-10-13'
 
@@ -120,7 +121,7 @@ def responsive(page):
         check(geo['wide']<=width and not geo['clipped'],f'{width}: cropped money or horizontal overflow {geo}')
         if width>=1024:
             check(geo['main']['scroll']<=geo['main']['height']+2 and geo['budget']<=height and geo['budget']<=geo['main']['bottom']+1,f'{width}: Budget outside visible column {geo}')
-            check(geo['chart']>=(159.5 if height<900 else 179.5 if height<1000 else 259.5),f'{width}: graph too short {geo}')
+            check(geo['chart']>=overview_plot_minimum(height) - 0.5,f'{width}: graph too short {geo}')
         from helpers import ROOT
         page.screenshot(path=str(ROOT / 'spec' / '.out' / f'budget-parity-final-{width}.png'),full_page=True)
         print(f'      responsive {width}x{height}: {geo}')

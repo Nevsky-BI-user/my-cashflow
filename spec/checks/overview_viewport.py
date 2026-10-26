@@ -2,6 +2,7 @@
 import json
 
 from helpers import check, freeze, go_tab, settle, shot
+from checks.visual_layout import overview_plot_minimum
 
 
 DAY = '2026-10-26'
@@ -91,7 +92,7 @@ def _desktop(page, many, unassigned=False):
             check(state['donut'] and all(d['width'] >= 80 and d['height'] >= 80 for d in state['donut']), f'{tag}: діаграма прихована або надто мала: {state}')
             budget = page.locator('.dv-bud').bounding_box()
             check(all(d['top'] >= budget['y'] and d['bottom'] <= budget['y'] + budget['height'] for d in state['donut']), f'{tag}: діаграма бюджету обрізана: {state}')
-            minimum_chart = 144 if height <= 760 else 150
+            minimum_chart = overview_plot_minimum(height) - 0.5
             check(state['chart'] and state['chart'][0]['height'] >= minimum_chart, f'{tag}: графік надто малий: {state}')
             check(not state['font'] or min(state['font']) >= 11, f'{tag}: шрифт легенди зменшено до нечитабельного: {state}')
             for selector in ('.dv-bud .bd-row', '.dv-cols>.kpi-inst [data-r=inst]', '.dv-near .dv-ev', '.dv-recent [data-tx-id]'):
