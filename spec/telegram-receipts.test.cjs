@@ -34,7 +34,7 @@ test('calendar centuries and leap years remain bounded by current Kyiv date',asy
   for(const [raw,expected] of [['29.02.24','2024-02-29'],['29 лютого','2024-02-29'],['29.02.2000','2000-02-29'],['31.12','2026-12-31'],['1 січня 00','2000-01-01']]){
     const h=harness([{...single,date_text:raw}],options);await h.run();assert.equal(h.state.rows[0]?.date,expected,raw);
   }
-  for(const raw of ['29.02.1900','29.02.2025','31.04.2026','01.01.28','2027-02-02','20/10.2026','03/04/05/06','пн 2026-10-20',null,'']){
+  for(const raw of ['29.02.1900','29.02.2025','31.04.2026','01.01.28','2027-02-02','20/10.2026','03/04/05/06','пн 2026-10-20']){
     const h=harness([batch([transaction(),transaction({amount:2,date_text:raw})])],options);await h.run();assert.equal(h.state.inserts.length,0,String(raw));
   }
   const h=harness([{...single,date_text:'01.01.00'}],{today:'2100-06-01',messageDate:Date.parse('2100-06-01T00:00:00Z')/1000});
@@ -164,8 +164,8 @@ test('yearless and relative dates roll back at New Year, preserving full histori
 });
 
 test('unresolved date or wrong weekday rejects entire batch despite model ISO guess',async()=>{
-  for(const raw of ['вт 19 жовтня','31 лютого','невідомо',null]){
-    const h=harness([batch([transaction(),transaction({amount:2,date:raw===null?null:'2026-10-19',date_text:raw})])],
+  for(const raw of ['вт 19 жовтня','31 лютого','невідомо']){
+    const h=harness([batch([transaction(),transaction({amount:2,date:'2026-10-19',date_text:raw})])],
       {messageDate:Date.parse('2026-10-20T12:00:00Z')/1000});
     await h.run();assert.equal(h.state.inserts.length,0,String(raw));
   }
@@ -206,11 +206,11 @@ test('invalid visible date cannot borrow an earlier multipart date',async()=>{
   assert.equal(h.state.inserts.length,0);
 });
 
-test('explicit empty visible date rejects a model ISO guess for whole batch',async()=>{
+test('missing visible date uses current Kyiv day instead of a model ISO guess',async()=>{
   for(const date_text of [null,'','   ']){
     const h=harness([batch([transaction(),transaction({amount:2,date:'2026-10-19',date_text})])],
       {messageDate:Date.parse('2026-10-20T12:00:00Z')/1000});
-    await h.run();assert.equal(h.state.inserts.length,0,JSON.stringify(date_text));
+    await h.run();assert.deepEqual(h.state.rows.map(r=>r.date),['2026-10-19','2026-10-20'],JSON.stringify(date_text));
   }
 });
 
@@ -294,8 +294,8 @@ test('historical screenshot dates are retained and never derived from send time'
   assert.equal(singleOld.state.rows[0].date,'2025-01-12');
 });
 
-test('one missing, invalid, or future screenshot date rejects the whole batch after retry',async()=>{
-  for(const date of [null,undefined,'2026-02-30','2026-10-21']){
+test('one invalid or future screenshot date rejects the whole batch after retry',async()=>{
+  for(const date of ['2026-02-30','2026-10-21']){
     const h=harness([batch([transaction(),transaction({date})])]);await h.run();
     assert.equal(h.state.inserts.length,0);
     assert.equal(h.state.requests.length,2);
@@ -303,11 +303,11 @@ test('one missing, invalid, or future screenshot date rejects the whole batch af
   }
 });
 
-test('strong model may recover the screenshot date but missing single date never inserts',async()=>{
-  const repaired=harness([{...single,date:null},single]);await repaired.run();
+test('strong model may recover an invalid screenshot date but cannot save invalid final dates',async()=>{
+  const repaired=harness([{...single,date:'31 лютого'},single]);await repaired.run();
   assert.equal(repaired.state.rows[0].date,'2026-10-19');
   assert.equal(repaired.state.requests.length,2);
-  for(const date of [null,undefined,'2026-02-30','2026-10-21']){
+  for(const date of ['2026-02-30','2026-10-21']){
     const h=harness([{...single,date}]);await h.run();
     assert.equal(h.state.inserts.length,0);
     assert.match(h.state.replies.at(-1)[1],/дату операції/);
@@ -319,6 +319,39 @@ test('multipart retains an earlier screenshot date when the final part omits it'
   await h.run(41);await h.run(42);
   assert.equal(h.state.rows.length,1);
   assert.equal(h.state.rows[0].date,'2025-01-12');
+});
+
+test('undated single receipts and screenshot operations use current Kyiv day',async()=>{
+  for(const date of [null,undefined,'','   ']){
+    const options={today:'2026-10-24',messageDate:Date.parse('2026-10-23T20:59:00Z')/1000};
+    const receipt=harness([{...single,date}],options);await receipt.run();
+    assert.equal(receipt.state.rows[0]?.date,'2026-10-24');
+    assert.equal(receipt.state.requests.length,1);
+    const screenshot=harness([batch([transaction({date}),transaction({amount:2,date:'2025-01-12'})])],options);
+    await screenshot.run();assert.deepEqual(screenshot.state.rows.map(r=>r.date),['2026-10-24','2025-01-12']);
+  }
+  const undated={...single};delete undated.date;
+  const receipt=harness([undated]);await receipt.run();assert.equal(receipt.state.rows[0]?.date,'2026-10-20');
+});
+
+test('undated multipart fallback stays fixed through midnight and pending confirmation',async()=>{
+  const options={today:'2026-10-20'};
+  const h=harness([{...single,has_total:false,amount:null,date:null},{...single,date:null}],options);
+  await h.run(40);assert.equal(h.state.pending.date,'2026-10-20');
+  options.today='2026-10-21';await h.run(41);
+  assert.equal(h.state.rows[0]?.date,'2026-10-20');
+  const confirmed=harness([{...single,has_total:false,amount:null,date_text:null}],options);
+  await confirmed.run(50);options.today='2026-10-22';await confirmed.api.confirmPending(1,'u');
+  assert.equal(confirmed.state.rows[0]?.date,'2026-10-21');
+});
+
+test('undated receipt duplicate checks use fallback date before insertion',async()=>{
+  const h=harness([{...single,date:null}]);await h.run(40);await h.run(41);
+  assert.equal(h.state.rows.length,1);assert.equal(h.state.inserts.length,1);
+  assert.match(h.state.replies.at(-1)[1],/Схожа операція вже записана: 20.10.2026/);
+  const screenshot=harness([batch([transaction({date_text:null})])]);
+  await screenshot.run(40);await screenshot.run(41);
+  assert.equal(screenshot.state.rows.length,1);assert.equal(screenshot.state.inserts.length,1);
 });
 
 test('/yes cannot confirm a receipt with missing or invalid screenshot date',async()=>{
@@ -587,7 +620,7 @@ test('explicit screenshot capture date anchors yesterday and yearless groups ins
     assert.match(h.state.requests[0].system,/2026-06-17/);
   }
   const unknown=harness([batch([transaction({date_text:null})])],{today:'2026-06-19',messageDate:Date.parse('2026-06-18T21:01:00Z')/1000});
-  await unknown.run(70,'дата скриншота: 2026-06-17');assert.equal(unknown.state.inserts.length,0);
+  await unknown.run(70,'дата скриншота: 2026-06-17');assert.equal(unknown.state.rows[0]?.date,'2026-06-19');
 });
 
 test('invalid explicit capture date blocks before storage or OCR and arbitrary caption dates do not anchor',async()=>{
@@ -726,7 +759,7 @@ test('valid cheap batch must be verified; strong group dates are authoritative',
  await h.run();assert.equal(h.state.requests.length,2);assert.equal(h.state.inserts.length,1);
 });
 test('failed strong verification never saves an otherwise valid cheap batch or creates pending writes',async()=>{
- for(const strong of [null,{error:'unavailable'},single,{...batch(),complete:false},batch([transaction({amount:-1})]),batch([transaction({date_text:''})])]){
+ for(const strong of [null,{error:'unavailable'},single,{...batch(),complete:false},batch([transaction({amount:-1})]),batch([transaction({date_text:'31 лютого'})])]){
   const h=harness([batch(),strong]);await h.run();
   assert.equal(h.state.requests.length,2);assert.equal(h.state.inserts.length,0);assert.equal(h.state.pending,null);assert.equal(h.state.txReplies.length,0);
  }

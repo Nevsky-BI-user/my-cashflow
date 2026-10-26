@@ -120,10 +120,14 @@ test('wizard accepts grouped thousands and decimals without truncating the amoun
     assert.equal(h.state.rows.length,0,text);assert.equal(h.state.pending.kind,'entry');
   }
 });
-test('image income requires valid bank rows and keeps mode after unknown dates, direction or retail receipts',async()=>{
+test('image income uses today for missing dates and keeps mode after invalid dates, direction or retail receipts',async()=>{
   const h=harness();await h.send(kb.KB_BTN.income);await h.send(kb.KB_BTN.image);await h.photo();
   assert.equal(h.state.rows[0]?.type,'income');assert.equal(h.state.pending,null);
-  for(const ocr of [receipt([{amount:10,type:'income',currency:'UAH',description:'Переказ',date:null}]),
+  const undated=harness({pending:entry('income','image'),ocr:receipt([{amount:10,type:'income',currency:'UAH',description:'Переказ',date:null}])});
+  await undated.photo();assert.equal(undated.state.rows[0]?.type,'income');
+  assert.equal(undated.state.rows[0]?.date,'2026-10-21');assert.equal(undated.state.pending,null);
+  for(const ocr of [receipt([{amount:10,type:'income',currency:'UAH',description:'Переказ',date:'2026-02-30'}]),
+    receipt([{amount:10,type:'income',currency:'UAH',description:'Переказ',date:'2026-10-22'}]),
     receipt([{amount:10,type:null,currency:'UAH',description:'Переказ',date:'2026-10-20'}]),
     {has_total:true,amount:150,items_sum:150,date:'2026-10-20',readable:'good'}]){
     const bad=harness({pending:entry('income','image'),ocr});await bad.photo();
