@@ -14,6 +14,170 @@ const transaction=(overrides={})=>({amount:120.5,type:'expense',currency:'UAH',d
 const batch=(transactions=[transaction(),transaction({amount:200,type:'income',description:'Повернення',date:'2026-10-20'})])=>
   ({kind:'transactions',complete:true,readable:'good',transactions});
 const single={has_total:true,amount:250,items_sum:250,description:'Чек',date:'2026-10-19',readable:'good'};
+test('Oschad purchase detail date with time imports automatically',async()=>{
+  const h=harness([batch([transaction({amount:321.45,description:'Тестова покупка',date_text:'28 жовтня 2026 09:39',time:'09:39',bank:'oschad'})])],
+    {today:'2026-10-28',accounts:[{id:13,name:'Ощадбанк',bank:'oschad'}]});
+  await h.run();
+  assert.equal(h.state.rows[0]?.date,'2026-10-28');
+  assert.equal(h.state.rows[0]?.amount,321.45);
+  assert.equal(h.state.rows[0]?.account_id,13);
+  assert.equal(h.state.pending,null);
+});
+test('date-time suffixes preserve the calendar date and invalid clocks remain unresolved',async()=>{
+  for(const date_text of ['28 жовтня 2026 09:39','28 жовтня 2026, 09:39','28.10.2026 о 09:39:15','2026-10-28T09:39','Ср, 28 жовтня 2026 9:39']){
+    const h=harness([{...single,date_text}],{today:'2026-10-28'});await h.run();
+    assert.equal(h.state.rows[0]?.date,'2026-10-28',date_text);assert.equal(h.state.requests.length,1);
+  }
+  for(const date_text of ['28 жовтня 2026 25:39','28 жовтня 2026 09:60','31 жовтня 2026 09:39','31 лютого 2026 09:39','28 жовтня 2026 невідомо']){
+    const h=harness([{...single,date_text}],{today:'2026-10-28'});await h.run();
+    assert.equal(h.state.rows.length,0,date_text);assert.equal(h.state.pending?.kind,'receipt_date');
+  }
+});
+test('purchase detail prompt recognises coherent Oschad cues and always treats bank purchases as transactions',()=>{
+  for(const cue of ['ОДНУ банківську покупку','document_type:"bank"','«Деталі операції»','«Отримати квитанцію»','«Успішно»','дата й час під сумою','Один колір'])assert.ok(receiptSystem.includes(cue),cue);
+});
+test('unknown bank on a bank detail is reread automatically, while ordinary receipt stays cheap',async()=>{
+  const h=harness([{...single,document_type:'bank',bank:null},{...single,document_type:'bank',bank:'oschad'}],{accounts:[{id:13,name:'Ощадбанк',bank:'oschad'}]});
+  await h.run();assert.equal(h.state.requests.length,2);assert.equal(h.state.rows[0]?.account_id,13);assert.equal(h.state.pending,null);
+});
+test('failed date reread defers, then resumes only missing dates and retains sources, account, direction and time',async()=>{
+  const result=batch([transaction({date_text:'17 жовтня 2026',amount:1}),transaction({date_text:'нерозбірливо',amount:2,type:'income',time:'09:39'}),transaction({date_text:'невідомо',amount:3})]);
+  const h=harness([result],{accounts:[{id:13,name:'Ощадбанк',bank:'oschad'}]});
+  await h.run(123,'ощад');assert.equal(h.state.requests.length,2);assert.equal(h.state.inserts.length,0);assert.equal(h.state.pending.kind,'receipt_date');
+  await h.api.answerReceiptDate(1,'u','18.10.2026',h.state.pending);
+  assert.equal(h.state.inserts.length,0);assert.equal(h.state.pending.kind,'receipt_date');
+  await h.api.answerReceiptDate(1,'u','2026-10-19',h.state.pending);
+  assert.deepEqual(h.state.rows.map(r=>[r.date,r.amount,r.type,r.account_id,r.source_id]),[
+    ['2026-10-17',1,'expense',13,'tg:123'],['2026-10-18',2,'income',13,'tg:123:1'],['2026-10-19',3,'expense',13,'tg:123:2']]);
+  assert.match(h.state.rows[1].description,/09:39/);assert.equal(h.state.requests.length,2);assert.equal(h.state.pending,null);
+});
+test('clarification retains multipart photos and original chosen account',async()=>{
+  const old={kind:'receipt',parts:[{path:'u/first.jpg',update_id:40}],expires:new Date(Date.now()+600000).toISOString(),date:'2026-10-18',account_id:13,account_name:'Ощадбанк',account_resolved:true};
+  const h=harness([{...single,date_text:'нерозбірливо',bank:'privat'}],{pending:old,accounts:[{id:13,name:'Ощадбанк',bank:'oschad'}]});
+  await h.run(41);assert.equal(h.state.pending.kind,'receipt_date');
+  await h.api.answerReceiptDate(1,'u','19.10.2026',h.state.pending);
+  assert.equal(h.state.rows[0]?.source_id,'tg:41');assert.equal(h.state.rows[0]?.receipt_url,'u/first.jpg');
+  assert.equal(h.state.rows[0]?.receipt_parts.length,2);assert.equal(h.state.rows[0]?.account_id,13);assert.equal(h.state.pending,null);
+});
+test('clarification rechecks duplicates and does not accept stale or expired pending state',async()=>{
+  const h=harness([{...single,date_text:'нерозбірливо'}]);await h.run();
+  const pending=h.state.pending;
+  h.state.rows.push({id:1,amount:250,type:'expense',date:'2026-10-19',description:'Чек',account_id:null});
+  await h.api.answerReceiptDate(1,'u','19.10.2026',pending);assert.equal(h.state.inserts.length,0);assert.match(h.state.replies.at(-1)[1],/дубл|схож/i);
+  const stale=harness([{...single,date_text:'нерозбірливо'}]);await stale.run();const stalePending=stale.state.pending;
+  stale.state.pending={kind:'entry',input:'text',type:'income',expires:'2099-01-01'};
+  await stale.api.answerReceiptDate(1,'u','19.10.2026',stalePending);assert.equal(stale.state.inserts.length,0);assert.equal(stale.state.pending.kind,'entry');
+  const expired=harness([{...single,date_text:'нерозбірливо'}]);await expired.run();expired.state.pending.expires='2000-01-01';
+  await expired.api.answerReceiptDate(1,'u','19.10.2026',expired.state.pending);assert.equal(expired.state.inserts.length,0);assert.equal(expired.state.pending,null);
+});
+test('date clarification failure cannot overwrite existing pending or import any rows',async()=>{
+  const h=harness([{...single,date_text:'нерозбірливо'}],{pendingSaveError:true});await h.run();
+  assert.equal(h.state.inserts.length,0);assert.equal(h.state.pending,null);assert.match(h.state.replies.at(-1)[1],/Не вдалося зберегти уточнення/);
+});
+test('date fallback cannot downgrade a bank batch to one retail receipt',async()=>{
+  const h=harness([batch(),{...single,date_text:'нерозбірливо'}]);await h.run();
+  assert.equal(h.state.rows.length,0);assert.equal(h.state.pending,null);
+});
+test('clarification survives duplicate lookup failure and retries with the saved date',async()=>{
+  const options={lookupError:false};
+  const h=harness([batch([transaction({date_text:'нерозбірливо'})])],options);await h.run();
+  options.lookupError=true;await h.api.answerReceiptDate(1,'u','18.10.2026',h.state.pending);
+  assert.equal(h.state.inserts.length,0);assert.equal(h.state.pending.kind,'receipt_date');
+  options.lookupError=false;await h.api.answerReceiptDate(1,'u','/yes',h.state.pending);
+  assert.equal(h.state.rows[0]?.date,'2026-10-18');assert.equal(h.state.pending,null);assert.equal(h.state.requests.length,2);
+});
+
+const refundAccount={id:13,name:'Ощадбанк',bank:'oschad',active:true};
+const returnCategory={id:104,name:'Повернення',is_income:true,user_id:'u'};
+const refundPurchase=(overrides={})=>({id:900,amount:321.45,type:'expense',description:'Тестова покупка',date:'2026-10-18',account_id:13,...overrides});
+const refundIncome=(overrides={})=>transaction({amount:321.45,type:'income',description:'Тестова покупка — повернення',date:'2026-10-19',bank:'oschad',...overrides});
+test('refund matches exact cents, same account and merchant on or after purchase without altering expense',async()=>{
+  for(const date of ['2026-10-18','2026-10-19','2026-10-20']){
+    const expense=refundPurchase();const h=harness([batch([refundIncome({date})])],{existing:[expense],accounts:[refundAccount],refundCategories:[returnCategory]});
+    await h.run();const row=h.state.rows.at(-1);
+    assert.equal(row.category_id,104,date);assert.equal(row.auto_categorized,true);assert.equal(row.type,'income');assert.equal(row.amount,321.45);
+    assert.equal(row.description,'Повернення: Тестова покупка — повернення');assert.deepEqual(h.state.rows[0],expense);
+    assert.equal(h.state.pending,null);assert.equal(h.state.warnings.length,0);
+    assert.deepEqual(h.state.lookups[0].ins,[['account_id',[13]],['amount',[321.45]]]);assert.deepEqual(h.state.lookups[0].max,['date',date]);
+  }
+});
+test('refund requires matching merchant, known same account, exact amount and an earlier or equal expense date',async()=>{
+  for(const change of [{date:'2026-10-20'},{amount:321.46},{account_id:14},{description:'Інший магазин'},{transfer_id:'transfer'},{type:'income',date:'2025-01-01'}]){
+    const h=harness([batch([refundIncome()])],{existing:[refundPurchase(change)],accounts:[refundAccount],refundCategories:[returnCategory]});await h.run();
+    const row=h.state.rows.at(-1);assert.equal(row.type,'income');assert.equal(row.category_id,undefined,JSON.stringify(change));assert.equal(row.description,'Тестова покупка — повернення');
+  }
+  for(const change of [{bank:null},{description:'Зарплата'},{description:'Тестова покупка інший відділ'},{description:'Повернення'}]){
+    const h=harness([batch([refundIncome(change)])],{existing:[refundPurchase()],accounts:[refundAccount],refundCategories:[returnCategory]});await h.run();
+    assert.equal(h.state.rows.at(-1).category_id,undefined,JSON.stringify(change));assert.equal(h.state.pending,null);
+  }
+});
+test('refund merchant removes only explicit edge markers and keeps payment time',async()=>{
+  for(const description of ['Повернення: Тестова покупка','ТЕСТОВА ПОКУПКА (refund)','Тестова покупка — повернення коштів','Refund: Тестова покупка']){
+    const h=harness([batch([refundIncome({description,time:'09:39'})])],{existing:[refundPurchase()],accounts:[refundAccount],refundCategories:[returnCategory]});await h.run();
+    assert.equal(h.state.rows.at(-1).category_id,104,description);assert.match(h.state.rows.at(-1).description,/ · 09:39$/);
+    assert.ok(!h.state.rows.at(-1).description.startsWith('Повернення: Повернення: '));
+  }
+});
+test('refund matches historical purchase beyond first page without a fixed lookback window',async()=>{
+  const existing=Array.from({length:1000},(_,i)=>refundPurchase({id:i+1,description:'Інший магазин '+i,date:'2025-01-01'}));
+  existing.push(refundPurchase({id:1001,date:'2025-01-01'}));
+  const h=harness([batch([refundIncome()])],{existing,accounts:[refundAccount],refundCategories:[returnCategory]});await h.run();
+  assert.equal(h.state.rows.at(-1).category_id,104);assert.equal(h.state.lookups.length,2);
+  assert.deepEqual(h.state.lookups.map(q=>q.page),[[0,999],[1000,1999]]);
+});
+test('refund can match earlier purchase in same atomic batch but does not use later rows',async()=>{
+  const purchase=transaction({amount:321.45,description:'Тестова покупка',bank:'oschad',date:'2026-10-18'});
+  for(const [rows,expected] of [[[purchase,refundIncome()],104],[[refundIncome(),purchase],undefined]]){
+    const h=harness([batch(rows)],{accounts:[refundAccount],refundCategories:[returnCategory]});await h.run();
+    assert.equal(h.state.rows.find(r=>r.type==='income').category_id,expected);assert.equal(h.state.inserts.length,1);
+    assert.equal(h.state.rows.find(r=>r.type==='expense').amount,321.45);
+  }
+});
+test('several eligible purchases still classify refund and own category wins over another family category',async()=>{
+  const categories=[{...returnCategory,id:105,user_id:'other'},returnCategory];
+  const h=harness([batch([refundIncome()])],{existing:[refundPurchase(),refundPurchase({id:901,date:'2026-10-17'})],accounts:[refundAccount],refundCategories:categories});
+  await h.run();assert.equal(h.state.rows.at(-1).category_id,104);assert.equal(h.state.pending,null);
+  const shared=harness([batch([refundIncome()])],{existing:[refundPurchase()],accounts:[refundAccount],refundCategories:[{...returnCategory,user_id:'other'}]});
+  await shared.run();assert.equal(shared.state.rows.at(-1).category_id,104);
+});
+test('refund category absence, ambiguity, lookup errors and incomplete pages preserve ordinary income without prompts',async()=>{
+  const cases=[{refundCategories:[]},{refundCategories:[{...returnCategory,is_income:false}]},
+    {refundCategories:[returnCategory,{...returnCategory,id:105}]},
+    {refundCategories:[{...returnCategory,user_id:'other'},{...returnCategory,id:105,user_id:'another'}]},
+    {refundCategoryError:true},{refundLookupError:true},{refundIncomplete:true}];
+  for(const changes of cases){
+    const h=harness([batch([refundIncome()])],{existing:[refundPurchase()],accounts:[refundAccount],refundCategories:[returnCategory],...changes});await h.run();
+    assert.equal(h.state.rows.at(-1).category_id,undefined,JSON.stringify(changes));assert.equal(h.state.rows.at(-1).type,'income');
+    assert.equal(h.state.rows.at(-1).description,'Тестова покупка — повернення');assert.equal(h.state.pending,null);assert.equal(h.state.warnings.length,0);
+    assert.ok(h.state.lookups.length<=10);
+  }
+});
+test('refund category preserves duplicate protection across repeated import and canonical description',async()=>{
+  const h=harness([batch([refundIncome()])],{existing:[refundPurchase()],accounts:[refundAccount],refundCategories:[returnCategory]});
+  await h.run(40);await h.run(41);assert.equal(h.state.inserts.length,1);assert.equal(h.state.rows.length,2);assert.match(h.state.replies.at(-1)[1],/Схожа операція/);
+  const unresolved=harness([batch([refundIncome({bank:null})])],{existing:[h.state.rows.at(-1)],accounts:[refundAccount],refundCategories:[returnCategory]});
+  await unresolved.run(42);assert.equal(unresolved.state.inserts.length,0);assert.match(unresolved.state.replies.at(-1)[1],/Схожа операція/);
+});
+test('generic purchase or refund labels without merchant never classify a refund',async()=>{
+  for(const description of ['Покупка','Переказ','Магазин','Невідомо','Повернення коштів']){
+    const h=harness([batch([refundIncome({description})])],{existing:[refundPurchase({description})],accounts:[refundAccount],refundCategories:[returnCategory]});await h.run();
+    assert.equal(h.state.rows.at(-1).category_id,undefined,description);assert.equal(h.state.lookups.length,0);
+  }
+});
+test('sub-cent bank OCR is reread before saving and cannot be rounded into a matching refund',async()=>{
+  const options={existing:[refundPurchase()],accounts:[refundAccount],refundCategories:[returnCategory]};
+  const bad=batch([refundIncome({amount:321.451})]);
+  const rejected=harness([bad],options);await rejected.run();
+  assert.equal(rejected.state.requests.length,2);assert.equal(rejected.state.inserts.length,0);assert.equal(rejected.state.pending,null);
+  const invalidStrong=harness([batch([refundIncome()]),bad],options);await invalidStrong.run();assert.equal(invalidStrong.state.inserts.length,0);
+  const repaired=harness([bad,batch([refundIncome()])],options);await repaired.run();
+  assert.equal(repaired.state.requests.length,2);assert.equal(repaired.state.rows.at(-1).amount,321.45);assert.equal(repaired.state.rows.at(-1).category_id,104);
+  const binary=harness([batch([refundIncome({amount:0.1+0.2})])],{...options,existing:[refundPurchase({amount:0.3})]});await binary.run();
+  assert.equal(binary.state.rows.at(-1).amount,0.3);assert.equal(binary.state.rows.at(-1).category_id,104);
+});
+test('refund OCR direction follows visible positive sign even when the detail header says purchase',()=>{
+  assert.ok(receiptSystem.includes('знаком «+»'));assert.ok(receiptSystem.includes('навіть якщо заголовок екрана «Покупка»'));assert.ok(receiptSystem.includes('заголовок не змінює знак'));
+});
 test('all month forms and weekdays work independently of date format',async()=>{
   const months=['січень|січня|січ','лютий|лютого|лют','березень|березня|бер','квітень|квітня|квіт','травень|травня|трав','червень|червня|черв','липень|липня|лип','серпень|серпня|серп','вересень|вересня|вер','жовтень|жовтня|жовт','листопад|листопада|лист','грудень|грудня|груд'];
   const options={today:'2027-01-01',messageDate:Date.parse('2026-12-31T12:00:00Z')/1000};
@@ -73,13 +237,14 @@ test('active account query selects card suffix and filters active accounts',asyn
   assert.ok(columns.split(',').includes('card_last4'));assert.equal(active,true);
 });
 function harness(responses, options={}) {
-  const state={rows:[...(options.existing??[])],inserts:[],replies:[],txReplies:[],categories:[],requests:[],accountLoads:[],uploads:[],warnings:[],events:[],pending:options.pending??null};
+  const state={rows:[...(options.existing??[])],inserts:[],replies:[],txReplies:[],categories:[],requests:[],accountLoads:[],uploads:[],warnings:[],events:[],lookups:[],pending:options.pending??null};
   const sb={
     storage:{from:()=>({upload:async(...args)=>{state.uploads.push(args);return {error:null}},download:async()=>({data:{arrayBuffer:async()=>new Uint8Array([1]).buffer}})})},
     from(table) {
       const q={filters:[],payload:null,mode:'read',one:false};
       q.select=()=>q;
       q.eq=(key,value)=>{q.filters.push([key,value]);return q};
+      q.in=(key,values)=>{(q.ins??=[]).push([key,values]);return q};
       q.gte=(key,value)=>{q.min=[key,value];return q};
       q.lte=(key,value)=>{q.max=[key,value];return q};
       q.order=()=>q;
@@ -89,8 +254,14 @@ function harness(responses, options={}) {
       q.insert=payload=>{q.mode='insert';q.payload=payload;return q};
       q.update=payload=>{q.mode='update';q.payload=payload;return q};
       q.then=(resolve,reject)=>Promise.resolve().then(()=>{
+        if(table==='categories')return {data:options.refundCategories??[],error:options.refundCategoryError?{message:'synthetic'}:null};
         if(table==='profiles'){
-          if(q.mode==='update') {state.pending=q.payload.telegram_pending;return {data:[{id:'u'}],error:null};}
+          if(q.mode==='update') {
+            const expected=q.filters.find(([k])=>k==='telegram_pending');
+            if(options.pendingSaveError)return {data:null,error:{message:'synthetic'}};
+            if(expected && expected[1] !== (state.pending == null ? null : JSON.stringify(state.pending)))return {data:[],error:null};
+            state.pending=q.payload.telegram_pending;return {data:[{id:'u'}],error:null};
+          }
           return {data:{telegram_pending:state.pending},error:null};
         }
         if(q.mode==='insert'){
@@ -102,9 +273,15 @@ function harness(responses, options={}) {
           // PostgreSQL's RETURNING order is not a mapping contract.
           return {data:q.one?rows[0]:[...rows].reverse(),error:null};
         }
+        if(q.ins){
+          state.lookups.push({filters:q.filters,ins:q.ins,max:q.max,page:q.page});
+          if(options.refundLookupError)return {data:null,error:{message:'synthetic'}};
+          if(options.refundIncomplete)return {data:Array.from({length:1000},(_,id)=>({id,type:'expense',amount:321.45,date:'2025-01-01',account_id:13,description:'Тестова покупка'})),error:null};
+        }
         if(q.page && options.lookupError)return {data:null,error:{message:'synthetic'}};
         if(q.page && options.incompletePages)return {data:Array.from({length:1000},(_,id)=>({id,amount:999999,type:'income',date:'2026-10-20'})),error:null};
         let rows=state.rows.filter(r=>q.filters.every(([k,v])=>r[k]===v) &&
+          (!q.ins||q.ins.every(([k,vs])=>vs.includes(r[k]))) &&
           (!q.min||r[q.min[0]]>=q.min[1]) && (!q.max||r[q.max[0]]<=q.max[1]));
         if(q.page)rows=rows.slice(q.page[0],q.page[1]+1);
         return {data:q.one?rows[0]??null:rows,error:null};
@@ -130,13 +307,13 @@ function harness(responses, options={}) {
   const accs=options.accounts??[{id:7,name:'Готівка'}];
   const linkReceiptRows=new Function('fixedContext','fixedCandidates','fixedOccurrenceKey',receiptLinkCode+';return linkReceiptRows;')(
     async()=>({fixed:options.fixed||[],paid:new Set(state.rows.filter(t=>t.fixed_id!=null).map(t=>{const f=(options.fixed||[]).find(f=>f.id===t.fixed_id);return f?fixedApi.fixedOccurrenceKey(f,t.payment_due_date??t.date):''}))}),fixedApi.fixedCandidates,fixedApi.fixedOccurrenceKey);
-  const bindings={linkReceiptRows,sb,fetch,BOT_TOKEN:'test',CLAUDE_API_KEY:'test',RECEIPT_MODEL:'fast',RECEIPT_MODEL_STRONG:'strong',RECEIPT_SYSTEM:receiptSystem,CONFIRM_KB:{keyboard:[]},ENTRY_INPUT_KB:{keyboard:[]},
+  const bindings={linkReceiptRows,sb,fetch,BOT_TOKEN:'test',CLAUDE_API_KEY:'test',RECEIPT_MODEL:'fast',RECEIPT_MODEL_STRONG:'strong',RECEIPT_SYSTEM:receiptSystem,CONFIRM_KB:{keyboard:[]},ENTRY_INPUT_KB:{keyboard:[]},MAIN_KB:{keyboard:[]},
     todayKyiv:()=> options.today??'2026-10-20',reply:async(...args)=>state.replies.push(args),
     replyTx:async(...args)=>state.txReplies.push(args),categorizeLater:id=>state.categories.push(id),
     activeAccounts:async(includeMono)=>{state.accountLoads.push(includeMono);return accs},
     pickAccount:()=>({matched:true,acc:options.captionAccount??accs[0]}),fmtMoney:String,
     console:{log(){},error(){}}};
-  const api=new Function(...Object.keys(bindings),isolated+confirmSource+';return {addReceipt,receiptBatch,recognizeReceipt,receiptDate,confirmPending};')(...Object.values(bindings));
+  const api=new Function(...Object.keys(bindings),isolated+confirmSource+';return {addReceipt,receiptBatch,recognizeReceipt,receiptDate,confirmPending,answerReceiptDate};')(...Object.values(bindings));
   return {state,api,run:(update=42,caption)=>api.addReceipt(1,'u',update,[{file_id:'photo'}],undefined,caption,options.messageDate)};
 }
 
@@ -246,7 +423,7 @@ test('invalid member or incomplete list rejects whole batch without pending writ
   const cases=[
     batch([transaction(),transaction({amount:-1})]),batch([transaction({amount:true})]),
     batch([transaction({currency:'USD'})]),batch([transaction({type:'transfer'})]),
-    batch([transaction({date:'2026-02-30'})]),batch([]),
+    batch([]),
     batch(Array.from({length:21},()=>transaction())),{...batch(),complete:false},
     {...batch(),readable:'poor'},{transactions:batch().transactions},
   ];
@@ -759,7 +936,7 @@ test('valid cheap batch must be verified; strong group dates are authoritative',
  await h.run();assert.equal(h.state.requests.length,2);assert.equal(h.state.inserts.length,1);
 });
 test('failed strong verification never saves an otherwise valid cheap batch or creates pending writes',async()=>{
- for(const strong of [null,{error:'unavailable'},single,{...batch(),complete:false},batch([transaction({amount:-1})]),batch([transaction({date_text:'31 лютого'})])]){
+ for(const strong of [null,{error:'unavailable'},single,{...batch(),complete:false},batch([transaction({amount:-1})])]){
   const h=harness([batch(),strong]);await h.run();
   assert.equal(h.state.requests.length,2);assert.equal(h.state.inserts.length,0);assert.equal(h.state.pending,null);assert.equal(h.state.txReplies.length,0);
  }

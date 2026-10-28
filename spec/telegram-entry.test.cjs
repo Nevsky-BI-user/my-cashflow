@@ -17,7 +17,7 @@ class Clock extends Date{constructor(...args){super(...(args.length?args:[NOW]))
 const entry=(type='income',input='text')=>({kind:'entry',type,input,expires:new Date(NOW+600000).toISOString()});
 const receipt=(transactions=[{amount:150,type:'income',currency:'UAH',description:'Переказ',date:'2026-10-20'}])=>({kind:'transactions',complete:true,readable:'good',transactions});
 function harness(options={}){
-  const state={pending:options.pending??null,rows:[...(options.rows??[])],messages:[],photos:[],requests:[],reports:[],events:[],reportEvents:[],delays:[],writes:0};
+  const state={pending:options.pending??null,rows:[...(options.rows??[])],messages:[],photos:[],requests:[],reports:[],events:[],reportEvents:[],delays:[],writes:0,edits:[]};
   let handler;
   let reportResponse=0;
   const sb={storage:{from:()=>({upload:async()=>({error:options.uploadError?{message:'synthetic'}:null}),download:async()=>({data:{arrayBuffer:async()=>new Uint8Array([1]).buffer}})})},
@@ -25,6 +25,7 @@ function harness(options={}){
       const q={filters:[],one:false,mode:'read'};
       for(const name of ['select','order','limit','range','not','or'])q[name]=()=>q;
       q.eq=(k,v)=>{q.filters.push([k,v]);return q};q.is=q.eq;
+      q.in=(k,vs)=>{(q.ins??=[]).push([k,vs]);return q};
       q.gte=(k,v)=>{q.min=[k,v];return q};q.lte=(k,v)=>{q.max=[k,v];return q};q.lt=q.lte;
       q.single=q.maybeSingle=()=>{q.one=true;return q};
       q.update=p=>{q.mode='update';q.payload=p;return q};q.insert=p=>{q.mode='insert';q.payload=p;return q};
@@ -40,15 +41,24 @@ function harness(options={}){
           if(options.profileReadError)return {data:null,error:{message:'synthetic'}};
           return {data:options.unlinked?null:{id:'u',telegram_pending:state.pending},error:null};
         }
+        if(table==='categories')return {data:options.refundCategories??[],error:null};
         if(table==='accounts')return {data:options.accounts??[{id:7,name:'Картка',kind:'debit',bank:'privat',is_salary:true,active:true,card_last4:'1234'}],error:null};
         if(table==='transactions'){
+          if(q.mode==='update' && q.payload.category_id != null && options.concurrentManualCategory){
+            const current=state.rows.find(r=>q.filters.some(([k,v])=>k==='id'&&r.id===v));
+            if(current){current.category_id=999;current.auto_categorized=false;}
+          }
           if(q.mode==='insert'){
             if(options.insertError)return {data:null,error:{message:'synthetic'}};
             const rows=(Array.isArray(q.payload)?q.payload:[q.payload]).map((r,i)=>({...r,id:state.rows.length+i+1}));
             if(rows.some(r=>state.rows.some(old=>r.source_id===old.source_id)))return {data:null,error:{code:'23505'}};
             state.rows.push(...rows);state.events.push('insert');return {data:q.one?rows[0]:rows,error:null};
           }
-          const rows=state.rows.filter(r=>q.filters.every(([k,v])=>r[k]===v)&&(!q.min||r[q.min[0]]>=q.min[1])&&(!q.max||r[q.max[0]]<=q.max[1]));
+          const rows=state.rows.filter(r=>q.filters.every(([k,v])=>v==null?r[k]==null:r[k]===v)&&(!q.ins||q.ins.every(([k,vs])=>vs.includes(r[k])))&&(!q.min||r[q.min[0]]>=q.min[1])&&(!q.max||r[q.max[0]]<=q.max[1]));
+          if(q.mode==='update'){
+            if(q.payload.category_id != null && options.refundUpdateError)return {data:null,error:{message:'synthetic'}};
+            for(const row of rows)Object.assign(row,q.payload);
+          }
           return {data:q.one?rows[0]??null:rows,error:null};
         }
         return {data:q.one?null:[],error:null};
@@ -73,10 +83,11 @@ function harness(options={}){
       }
     }
     if(url.includes('/sendPhoto'))state.photos.push(init.body);
+    if(url.includes('/editMessageText'))state.edits.push(JSON.parse(init.body));
     return {ok:true,json:async()=>({ok:true})};
   };
   const bindings={salaryOptions:async()=>({choices:[]}),...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
-    creditPaid:()=>[],matchCredit:()=>null,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
+    creditPaid:()=>[],matchCredit:()=>null,parsePaidCallback:todayReports.parsePaidCallback,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
     todayExpensesModel:todayReports.todayExpensesModel,formatTodayExpenses:m=>options.todayPages??todayReports.formatTodayExpenses(m),
     setTimeout:(fn,ms)=>{state.delays.push(ms);state.reportEvents.push('pause:'+ms);fn();return 0},
     __finance:()=>({projection:{},today:options.reportToday??'2026-10-21',txs:state.rows,cats:options.categories??[],accounts:options.accounts??[]}),
@@ -88,7 +99,9 @@ function harness(options={}){
     const update={update_id:extra.update_id??next++,message:{chat:{id:1,type:'private'},from:{id:1},date:NOW/1000,...(text?{text}:{}),...extra}};
     return handler(new Request('https://local/webhook',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':extra.secret??'test'},body:JSON.stringify(update)}));
   };
-  return {state,send,photo:(extra={})=>send(null,{photo:[{file_id:'photo'}],...extra}),options};
+  const callback=async(data)=>handler(new Request('https://local/webhook',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'test'},
+    body:JSON.stringify({update_id:next++,callback_query:{id:'callback',from:{id:1},data,message:{message_id:1,chat:{id:1,type:'private'}}}})}));
+  return {state,send,photo:(extra={})=>send(null,{photo:[{file_id:'photo'}],...extra}),callback,options};
 }
 
 test('income and expense buttons guide text entry and preserve legacy direct commands',async()=>{
@@ -131,7 +144,85 @@ test('image income uses today for missing dates and keeps mode after invalid dat
     receipt([{amount:10,type:null,currency:'UAH',description:'Переказ',date:'2026-10-20'}]),
     {has_total:true,amount:150,items_sum:150,date:'2026-10-20',readable:'good'}]){
     const bad=harness({pending:entry('income','image'),ocr});await bad.photo();
-    assert.equal(bad.state.rows.length,0);assert.equal(bad.state.pending.input,'image');assert.deepEqual(bad.state.messages.at(-1).reply_markup,kb.ENTRY_INPUT_KB);
+    assert.equal(bad.state.rows.length,0);
+    if(ocr.transactions?.[0]?.type==='income')assert.equal(bad.state.pending.kind,'receipt_date');
+    else assert.equal(bad.state.pending.input,'image');
+    assert.deepEqual(bad.state.messages.at(-1).reply_markup,kb.ENTRY_INPUT_KB);
+  }
+});
+
+test('unreadable receipt date is asked only after automatic reread and resumed through webhook',async()=>{
+  const ocr=receipt([{amount:321.45,type:'expense',currency:'UAH',description:'Тестова покупка',date_text:'нерозбірливо',bank:'oschad',time:'09:39'}]);
+  const h=harness({ocr,accounts:[{id:13,name:'Ощадбанк',kind:'debit',bank:'oschad',active:true}]});
+  await h.photo({update_id:80});assert.equal(h.state.requests.length,2);assert.equal(h.state.rows.length,0);assert.equal(h.state.pending.kind,'receipt_date');
+  for(const invalid of ['/yes','31.02.2026','22.10.2026','не дата']){
+    await h.send(invalid);assert.equal(h.state.rows.length,0);assert.equal(h.state.pending.kind,'receipt_date');
+  }
+  await h.send('20.10.2026');assert.equal(h.state.rows.length,1);assert.equal(h.state.pending,null);
+  assert.equal(h.state.rows[0].date,'2026-10-20');assert.equal(h.state.rows[0].account_id,13);assert.equal(h.state.rows[0].source_id,'tg:80');
+  assert.equal(h.state.requests.length,2);
+  await h.photo({update_id:80});assert.equal(h.state.rows.length,1);assert.equal(h.state.requests.length,2);
+});
+
+test('date fallback cancellation, expiry and concurrent state preserve no-write behavior',async()=>{
+  const ocr=receipt([{amount:10,type:'income',currency:'UAH',description:'Тестове надходження',date_text:'нерозбірливо'}]);
+  const canceled=harness({ocr});await canceled.photo();await canceled.send('/no');
+  assert.equal(canceled.state.pending,null);assert.equal(canceled.state.rows.length,0);
+  const expired=harness({ocr});await expired.photo();expired.state.pending.expires='2000-01-01T00:00:00Z';await expired.send('20.10.2026');
+  assert.equal(expired.state.pending,null);assert.equal(expired.state.rows.length,0);assert.match(expired.state.messages.at(-1).text,/Час уточнення минув/);
+  const concurrent=harness({ocr});await concurrent.photo();concurrent.options.concurrentPending=entry('income','text');await concurrent.send('20.10.2026');
+  assert.equal(concurrent.state.pending.kind,'entry');assert.equal(concurrent.state.rows.length,0);
+});
+
+test('date clarification inside income wizard preserves intended type and clears pending after saving',async()=>{
+  const h=harness({pending:entry('income','image'),ocr:receipt([{amount:10,type:'income',currency:'UAH',description:'Тестове надходження',date_text:'нерозбірливо'}])});
+  await h.photo();assert.equal(h.state.pending.kind,'receipt_date');assert.equal(h.state.rows.length,0);
+  await h.send('2026-10-20');assert.equal(h.state.rows[0]?.type,'income');assert.equal(h.state.pending,null);
+});
+
+test('transient insert failure after date clarification can retry without rereading or rewriting dates',async()=>{
+  for(const ocr of [receipt([{amount:10,type:'income',currency:'UAH',description:'Тестове надходження',date_text:'нерозбірливо'}]),
+    {has_total:true,amount:10,items_sum:10,description:'Тестовий чек',date_text:'нерозбірливо',readable:'good'}]){
+    const h=harness({ocr});await h.photo({update_id:80});h.options.insertError=true;await h.send('19.10.2026');
+    assert.equal(h.state.rows.length,0);assert.equal(h.state.pending.kind,'receipt_date');
+    h.options.insertError=false;await h.send('20.10.2026');
+    assert.equal(h.state.rows[0]?.date,'2026-10-19');assert.equal(h.state.rows[0]?.source_id,'tg:80');assert.equal(h.state.pending,null);assert.equal(h.state.requests.length,2);
+  }
+});
+
+test('positive screenshot refund is saved as income in Return category and shown with refund label',async()=>{
+  const expense={id:900,type:'expense',amount:321.45,date:'2026-10-18',description:'Тестова покупка',account_id:13};
+  const h=harness({rows:[expense],accounts:[{id:13,name:'Ощадбанк',kind:'debit',bank:'oschad',active:true}],
+    refundCategories:[{id:104,name:'Повернення',is_income:true,user_id:'u'}],
+    ocr:receipt([{amount:321.45,type:'income',currency:'UAH',description:'Тестова покупка',date:'2026-10-19',bank:'oschad'}])});
+  await h.photo();const row=h.state.rows.at(-1);
+  assert.equal(row.type,'income');assert.equal(row.category_id,104);assert.equal(row.auto_categorized,true);
+  assert.equal(row.description,'Повернення: Тестова покупка');assert.deepEqual(h.state.rows[0],expense);
+  assert.ok(h.state.messages.some(m=>m.text.startsWith('✅ Повернення: ')&&m.text.includes('Тестова покупка')));
+  assert.ok(!h.state.messages.some(m=>m.text.includes('Повернення: Тестова покупка')));
+  assert.equal(h.state.pending,null);
+});
+
+test('manual account selection classifies unresolved screenshot refund and respects manual category or concurrent edits',async()=>{
+  for(const mode of ['uncategorized','auto','manual','concurrent','failure','text','canonical']){
+    const h=harness({rows:[{id:900,type:'expense',amount:321.45,date:'2026-10-18',description:'Тестова покупка',account_id:13}],
+      accounts:[{id:13,name:'Ощадбанк',kind:'debit',bank:'oschad',active:true}],
+      refundCategories:[{id:104,name:'Повернення',is_income:true,user_id:'u'}],
+      ocr:receipt([{amount:321.45,type:'income',currency:'UAH',description:'Тестова покупка',date:'2026-10-19',bank:null}])});
+    await h.photo();const row=h.state.rows.at(-1);assert.equal(row.account_id,null);assert.equal(row.category_id,undefined);
+    if(mode==='auto'||mode==='manual'){row.category_id=500;row.auto_categorized=mode==='auto';}
+    if(mode==='concurrent')h.options.concurrentManualCategory=true;
+    if(mode==='failure')h.options.refundUpdateError=true;
+    if(mode==='text')row.receipt_url=null;
+    if(mode==='canonical'){row.description='Повернення: Тестова покупка';row.category_id=104;row.auto_categorized=true;}
+    await h.callback(`acc:${row.id}:13`);
+    assert.equal(row.account_id,13,mode);assert.equal(row.type,'income');assert.equal(h.state.rows[0].type,'expense');
+    if(['uncategorized','auto','canonical'].includes(mode)){
+      assert.equal(row.category_id,104,mode);assert.equal(row.description,'Повернення: Тестова покупка');assert.match(h.state.edits.at(-1)?.text,/^✅ Повернення:/);
+    }else{
+      assert.equal(row.category_id,mode==='manual'?500:mode==='concurrent'?999:undefined,mode);
+      assert.equal(row.description,'Тестова покупка',mode);assert.match(h.state.edits.at(-1)?.text,/^✅ Дохід:/);
+    }
   }
 });
 test('storage state and insert failures retain wizard, expired or malformed entries never become expenses',async()=>{
