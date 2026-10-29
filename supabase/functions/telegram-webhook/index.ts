@@ -45,6 +45,7 @@ const RECEIPT_SYSTEM =
   'Для кожної операції поверни date_text: точний видимий напис дати, включно з днем тижня, або null. Читай список згори донизу: заголовок дати застосовується ТІЛЬКИ до операцій НИЖЧЕ нього до наступного заголовка. Заголовок під операцією НІКОЛИ не змінює її дату заднім числом: остання операція перед наступним заголовком зберігає дату попередньої групи. Якщо попереднього заголовка не видно й у рядку немає дати, поверни null. ' +
   'Видимі «сьогодні»/«вчора» та дату без року сервер визначить відносно поточної дати за Києвом або явно вказаної дати створення скриншота. Якщо дати немає, поверни date і date_text як null: сервер поставить сьогоднішню дату за Києвом. Нерозбірливий видимий напис дати не вважай відсутньою датою. Повну історичну дату зберігай. ' +
   'Поверни account_scope: "selected", якщо підсвічено конкретну картку у верхньому фільтрі; "all", якщо вибрано всі рахунки; інакше null. Для selected поверни selected_card_last4 (чотири цифри підсвіченої картки) і selected_bank. Вибрана картка визначає джерело ВСІХ операцій, навіть коли опис називає банк контрагента. Банк відправника або отримувача не є банком власника. Для all не перенось реквізити окремої операції на весь список. Поверни спільні bank/card_last4/card_network також на верхньому рівні JSON; card_last4 — рівно чотири цифри рядком зі збереженими початковими нулями. ' +
+  'Карусель карток: якщо над «Історія» показано одну активну велику картку з останніми цифрами, її балансом і діями, це account_scope:"selected"; візьми selected_card_last4 з цієї картки. Частково видима сусідня картка не змінює джерело історії. Верхня кнопка «Усі» з іконкою карток відкриває вибір карток і сама по собі НЕ означає account_scope:"all". Лише явно спільна історія різних рахунків або застосований фільтр «Всі рахунки» означає all. Поєднання картки «Універсальна» з нижнім меню «Головний», «Кредити», «Конверти», «Привіт», «Ще» визначає bank і selected_bank:"privat". ' +
   'Скриншот застосунку Ощад 24/7 визначає bank "oschad" для всіх операцій на ньому навіть без назви банку й номера картки. ' +
   'Його ознаки (досить двох): нижнє меню «Продукти», «Платежі», «Історія», «Ще»; картка «Аналітика за <місяць>» з «Надходження» і «Витрати»; ' +
   'фільтри «За місяць», «Всі операції», «Всі рахунки»; бірюзовий акцент; копійки й ₴ дрібним надрядковим шрифтом після суми; ' +
@@ -845,21 +846,27 @@ async function markReceiptRefunds(rows: any[]) {
     }
   } catch { /* Необовʼязкова категоризація: помилка лишає звичайний дохід. */ }
 }
-function sameReceiptOperation(a: ReceiptRow, b: ReceiptRow): boolean {
+const receiptTime = (description: string | null) => description?.match(/ · ((?:[01]\d|2[0-3]):[0-5]\d)$/)?.[1] ?? null;
+function sameReceiptOperation(a: ReceiptRow, b: ReceiptRow, aTime = receiptTime(a.description), bTime = receiptTime(b.description)): boolean {
+  if (a.date === b.date && aTime && bTime && aTime !== bTime) return false;
   return a.type === b.type && Math.round(Number(a.amount) * 100) === Math.round(Number(b.amount) * 100) &&
     Math.abs(Date.parse(a.date) - Date.parse(b.date)) <= 3 * 86400000 &&
     ((a.account_id != null && b.account_id != null && String(a.account_id) === String(b.account_id)) ||
       (!!receiptDescription(a.description) && receiptDescription(a.description) === receiptDescription(b.description)));
 }
 
-// Перевірка всіх джерел до INSERT. Неповний результат або помилка не означають відсутність дубля.
-async function receiptDuplicate(rows: ReceiptRow[], times: (string | null)[] = []): Promise<string | null> {
-  const duplicate = (r: ReceiptRow, inside = false) =>
-    `${inside ? 'На зображенні є схожі операції' : 'Схожа операція вже записана'}: ${r.date.split('-').reverse().join('.')}, ${fmtMoney(Number(r.amount))}. ` +
-    'Збігаються сума, тип і рахунок або опис; дати відрізняються не більше ніж на 3 дні. Нічого не додано. Перевірте записи й надішліть лише нові операції.';
+const receiptDuplicateMessage = (r: ReceiptRow, inside = false) =>
+  `${inside ? 'На зображенні є схожі операції' : 'Схожа операція вже записана'}: ${r.date.split('-').reverse().join('.')}, ${fmtMoney(Number(r.amount))}. ` +
+  'Збігаються сума, тип і рахунок або опис; дати відрізняються не більше ніж на 3 дні. Нічого не додано. Перевірте записи й надішліть лише нові операції.';
+
+// Перевірка всіх сторінок до INSERT: навіть знайдений дубль не приховує помилку наступної сторінки.
+async function receiptDuplicateScan(rows: ReceiptRow[], times: (string | null)[] = []): Promise<{ error: string | null; matches: Map<number, ReceiptRow> }> {
+  const matches = new Map<number, ReceiptRow>();
+  const fail = (error: string) => ({error, matches});
   for (let i = 0; i < rows.length; i++) {
-    if (rows.slice(0, i).some((r, j) => sameReceiptOperation(rows[i], r) &&
-      !(rows[i].date === r.date && times[i] && times[j] && times[i] !== times[j]))) return duplicate(rows[i], true);
+    if (rows.slice(0, i).some((r, j) => sameReceiptOperation(rows[i], r, times[i] ?? receiptTime(rows[i].description), times[j] ?? receiptTime(r.description)))) {
+      return fail(receiptDuplicateMessage(rows[i], true));
+    }
   }
   const dates = rows.map((r) => r.date).sort();
   const shift = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
@@ -870,16 +877,24 @@ async function receiptDuplicate(rows: ReceiptRow[], times: (string | null)[] = [
         .select('id,amount,type,date,account_id,description')
         .gte('date', shift(dates[0], -3)).lte('date', shift(dates[dates.length - 1], 3))
         .order('id', { ascending: true }).range(page * 1000, page * 1000 + 999);
-      if (error || !Array.isArray(data)) return failure;
+      if (error || !Array.isArray(data)) return fail(failure);
       for (const existing of data) {
-        if (rows.some((r) => sameReceiptOperation(r, existing))) return duplicate(existing);
+        rows.forEach((r, i) => {
+          if (!matches.has(i) && sameReceiptOperation(r, existing, times[i] ?? receiptTime(r.description))) matches.set(i, existing);
+        });
       }
-      if (data.length < 1000) return null;
+      if (data.length < 1000) return {error: null, matches};
     }
   } catch {
-    return failure;
+    return fail(failure);
   }
-  return failure;
+  return fail(failure);
+}
+
+// Для одного чека та /yes зберігаємо відмову за збігу з наявною операцією.
+async function receiptDuplicate(rows: ReceiptRow[]): Promise<string | null> {
+  const result = await receiptDuplicateScan(rows);
+  return result.error ?? (result.matches.size ? receiptDuplicateMessage(result.matches.values().next().value!) : null);
 }
 
 // Дозволяємо лише явно перелічені обрізані крайові рядки; інші прогалини блокують увесь список.
@@ -896,7 +911,7 @@ function receiptOmissions(r: any): string[] | null {
 }
 
 // Попередження має бути доставлене ДО імпорту з пропусками чи іншим типом операцій.
-async function receiptWarnImport(chatId: number, omitted: string[], rows: ReceiptRow[], typeMismatch: boolean): Promise<boolean> {
+async function receiptWarnImport(chatId: number, omitted: string[], rows: ReceiptRow[], typeMismatch: boolean, duplicates: ReceiptRow[] = []): Promise<boolean> {
   const notes: string[] = [];
   if (typeMismatch) {
     const incomes = rows.filter((row) => row.type === 'income').length;
@@ -907,14 +922,30 @@ async function receiptWarnImport(chatId: number, omitted: string[], rows: Receip
   if (omitted.length) notes.push(`Обрізаних операцій пропущено: ${omitted.length}.\n` +
     omitted.map((description) => `• ${description}`).join('\n') +
     '\nДля пропущених надішліть окремий скриншот із цілими рядками.');
+  if (duplicates.length) notes.push(receiptSkippedMessage(duplicates));
+  const messages: string[] = [];
+  let message = '⚠️ ';
+  for (const note of [...notes, `Запишу лише повністю прочитані операції: ${rows.length}.`]) {
+    if (message.length + note.length + 1 > 4000) { messages.push(message); message = '⚠️ '; }
+    message += (message.length > 3 ? '\n' : '') + note;
+  }
+  messages.push(message);
   try {
-    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: '⚠️ ' + notes.join('\n') +
-        `\nЗапишу лише повністю прочитані операції: ${rows.length}.` }),
-    });
-    return r.ok && (await r.json())?.ok === true;
+    for (const text of messages) {
+      const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text }),
+      });
+      if (!r.ok || (await r.json())?.ok !== true) return false;
+    }
+    return true;
   } catch { return false; }
+}
+
+function receiptSkippedMessage(duplicates: ReceiptRow[]): string {
+  return `Схожих на вже записані операцій пропущено: ${duplicates.length}.\n` +
+    duplicates.map((r) => `• ${r.date.split('-').reverse().join('.')}, ${fmtMoney(Number(r.amount))}, ${r.type === 'income' ? 'дохід' : 'витрата'}: ${String(r.description || 'Без опису').slice(0, 80)}`).join('\n') +
+    '\nЗбігаються сума, тип і рахунок або опис; дати відрізняються не більше ніж на 3 дні.';
 }
 
 // Усі повністю прочитані рядки перевіряємо до одного атомарного запису.
@@ -1117,19 +1148,26 @@ async function completeReceipt(chatId: number, userId: string, res: any, context
     if (!batch) return reply(chatId, '❌ Не вдалося надійно прочитати всі операції. Нічого не записано. Надішліть чіткіший скриншот із максимум 20 операціями у гривнях.');
     const accs = await activeAccounts(true);
     const cap = caption?.trim() ? pickAccount(caption, accs, true) : null;
-    const rows = batch.map((t, i) => ({
+    const candidates = batch.map((t, i) => ({
       amount: t.amount, type: t.type, description: t.time ? `${t.description} · ${t.time}` : t.description, date: t.date, user_id: userId, source: 'telegram',
       source_id: i === 0 ? sourceId : `${sourceId}:${i}`,
       receipt_url: path, receipt_parts: null,
       account_id: cap?.matched ? cap.acc?.id ?? null : receiptAccount(t.hint, accs)?.id ?? null,
     }));
-    await linkReceiptRows(rows);
-    const duplicate = await receiptDuplicate(rows, batch.map((t) => t.time));
-    if (duplicate) return reply(chatId, duplicate);
-    await markReceiptRefunds(rows);
+    const checked = await receiptDuplicateScan(candidates, batch.map((t) => t.time));
+    if (checked.error) return reply(chatId, checked.error);
+    const rows = candidates.filter((_, i) => !checked.matches.has(i));
+    const duplicates = [...checked.matches.values()];
     const omitted = receiptOmissions(res)!;
-    const typeMismatch = !!entry && batch.some((t) => t.type !== entry.type);
-    if ((omitted.length || typeMismatch) && !await receiptWarnImport(chatId, omitted, rows, typeMismatch)) {
+    if (!rows.length) {
+      await reply(chatId, receiptSkippedMessage(duplicates) + '\nНових операцій немає. Нічого не додано.' +
+        (omitted.length ? `\nОбрізаних операцій пропущено: ${omitted.length}. Надішліть їх окремо цілими рядками.` : ''));
+      return 'duplicate';
+    }
+    await linkReceiptRows(rows);
+    await markReceiptRefunds(rows);
+    const typeMismatch = !!entry && rows.some((t) => t.type !== entry.type);
+    if ((omitted.length || typeMismatch || duplicates.length) && !await receiptWarnImport(chatId, omitted, rows, typeMismatch, duplicates)) {
       return reply(chatId, 'Не вдалося повідомити про особливості імпорту. Нічого не записано. Спробуйте ще раз.');
     }
     // Один INSERT — усі рядки разом або жодного; source_id захищає також конкурентний повтор.
@@ -1139,7 +1177,9 @@ async function completeReceipt(chatId: number, userId: string, res: any, context
       console.error('receipt batch insert error:', error);
       return reply(chatId, 'Не вдалося зберегти операції. Нічого не записано. Спробуйте ще раз.');
     }
-    await reply(chatId, `✅ Записано операцій: ${rows.length}.` + (omitted.length ? ` Обрізаних операцій пропущено: ${omitted.length}.` : ''));
+    await reply(chatId, `✅ Записано операцій: ${rows.length}.` +
+      (duplicates.length ? ` Схожих на вже записані пропущено: ${duplicates.length}.` : '') +
+      (omitted.length ? ` Обрізаних операцій пропущено: ${omitted.length}.` : ''));
     for (const row of rows) {
       const tx = inserted?.find((t: any) => t.source_id === row.source_id);
       if (!tx) continue;
