@@ -154,9 +154,9 @@ test('refund category absence, ambiguity, lookup errors and incomplete pages pre
 });
 test('refund category preserves duplicate protection across repeated import and canonical description',async()=>{
   const h=harness([batch([refundIncome()])],{existing:[refundPurchase()],accounts:[refundAccount],refundCategories:[returnCategory]});
-  await h.run(40);await h.run(41);assert.equal(h.state.inserts.length,1);assert.equal(h.state.rows.length,2);assert.match(h.state.replies.at(-1)[1],/Схожа операція/);
+  await h.run(40);await h.run(41);assert.equal(h.state.inserts.length,1);assert.equal(h.state.rows.length,2);assert.match(h.state.replies.at(-1)[1],/Схожих на вже записані операцій пропущено: 1/);
   const unresolved=harness([batch([refundIncome({bank:null})])],{existing:[h.state.rows.at(-1)],accounts:[refundAccount],refundCategories:[returnCategory]});
-  await unresolved.run(42);assert.equal(unresolved.state.inserts.length,0);assert.match(unresolved.state.replies.at(-1)[1],/Схожа операція/);
+  await unresolved.run(42);assert.equal(unresolved.state.inserts.length,0);assert.match(unresolved.state.replies.at(-1)[1],/Схожих на вже записані операцій пропущено: 1/);
 });
 test('generic purchase or refund labels without merchant never classify a refund',async()=>{
   for(const description of ['Покупка','Переказ','Магазин','Невідомо','Повернення коштів']){
@@ -237,7 +237,7 @@ test('active account query selects card suffix and filters active accounts',asyn
   assert.ok(columns.split(',').includes('card_last4'));assert.equal(active,true);
 });
 function harness(responses, options={}) {
-  const state={rows:[...(options.existing??[])],inserts:[],replies:[],txReplies:[],categories:[],requests:[],accountLoads:[],uploads:[],warnings:[],events:[],lookups:[],pending:options.pending??null};
+  const state={rows:[...(options.existing??[])],inserts:[],replies:[],txReplies:[],categories:[],requests:[],accountLoads:[],uploads:[],warnings:[],events:[],lookups:[],duplicatePages:[],pending:options.pending??null};
   const sb={
     storage:{from:()=>({upload:async(...args)=>{state.uploads.push(args);return {error:null}},download:async()=>({data:{arrayBuffer:async()=>new Uint8Array([1]).buffer}})})},
     from(table) {
@@ -279,6 +279,11 @@ function harness(responses, options={}) {
           if(options.refundIncomplete)return {data:Array.from({length:1000},(_,id)=>({id,type:'expense',amount:321.45,date:'2025-01-01',account_id:13,description:'Тестова покупка'})),error:null};
         }
         if(q.page && options.lookupError)return {data:null,error:{message:'synthetic'}};
+        if(q.page && !q.ins){
+          state.duplicatePages.push(q.page);
+          if(options.lookupFailurePage===q.page[0]/1000)return {data:null,error:{message:'synthetic later page'}};
+          if(options.duplicatePage)return {data:options.duplicatePage,error:null};
+        }
         if(q.page && options.incompletePages)return {data:Array.from({length:1000},(_,id)=>({id,amount:999999,type:'income',date:'2026-10-20'})),error:null};
         let rows=state.rows.filter(r=>q.filters.every(([k,v])=>r[k]===v) &&
           (!q.ins||q.ins.every(([k,vs])=>vs.includes(r[k]))) &&
@@ -299,7 +304,7 @@ function harness(responses, options={}) {
     if(url.includes('sendMessage')){
       state.warnings.push(JSON.parse(init.body));state.events.push('warning');
       if(options.warningError==='network')throw new Error('synthetic');
-      return {ok:options.warningError!=='http',json:async()=>({ok:options.warningError!=='api'})};
+      return {ok:options.warningError!=='http',json:async()=>({ok:options.warningError!=='api' && options.warningFailureAt!==state.warnings.length})};
     }
     if(url.includes('getFile'))return {json:async()=>({ok:true,result:{file_path:'photo.jpg'}})};
     return {ok:true,arrayBuffer:async()=>new Uint8Array(options.imageBytes??[1,2]).buffer};
@@ -556,7 +561,7 @@ test('same historical operation from another update is blocked by screenshot dat
   await h.run(40);await h.run(999999);
   assert.equal(h.state.rows.length,1);
   assert.equal(h.state.inserts.length,1);
-  assert.match(h.state.replies.at(-1)[1],/Схожа операція вже записана: 12.01.2025/);
+  assert.match(h.state.replies.at(-1)[1],/12\.01\.2025, 120.5/);
 });
 test('multipart receipt keeps one final total and its original account',async()=>{
   const h=harness([{...single,has_total:false,amount:null},single]);
@@ -702,14 +707,33 @@ test('manual account callback clears all buttons only after successful database 
     else {assert.equal(edit.body.text,'Особиста 0882');assert.deepEqual(edit.body.reply_markup,{inline_keyboard:[]});}
   }
 });
-test('Karabas Oct18 vs screenshot Oct20 same amount and account blocks whole batch across sources',async()=>{
+test('mixed screenshot saves two timed expenses while skipping an already recorded income',async()=>{
+  const response=batch([
+    transaction({amount:354,date:'2026-10-29',time:'02:08',description:'Мобільний А',bank:'privat',card_last4:'0882'}),
+    transaction({amount:354,date:'2026-10-29',time:'02:06',description:'Мобільний Б',bank:'privat',card_last4:'0882'}),
+    transaction({amount:1474,type:'income',date:'2026-10-29',description:'Повернення магазину',bank:'privat',card_last4:'0882'}),
+  ]);
+  const existing=[{id:1,amount:1474,type:'income',date:'2026-10-27',description:'Магазин',account_id:2}];
+  const h=harness([response],{today:'2026-10-29',existing,accounts:[{id:2,name:'Моя',bank:'privat',card_last4:'0882'}]});
+  await h.run();
+  assert.equal(h.state.inserts.length,1);
+  assert.deepEqual(h.state.inserts[0].map(r=>[r.amount,r.description,r.source_id]),[[354,'Мобільний А · 02:08','tg:42'],[354,'Мобільний Б · 02:06','tg:42:1']]);
+  assert.deepEqual(h.state.events,['warning','insert']);
+  assert.match(h.state.warnings[0].text,/Схожих на вже записані операцій пропущено: 1/);
+  assert.match(h.state.warnings[0].text,/27\.10\.2026.*1474/);
+  assert.match(h.state.replies.at(-1)[1],/Записано операцій: 2/);
+  assert.doesNotMatch(h.state.replies.at(-1)[1],/Нічого/);
+});
+
+test('same amount and account across sources skips only the matched screenshot row',async()=>{
   for(const source of ['mono','manual','telegram']){
     const existing=[{id:1,amount:786,type:'expense',date:'2026-10-18',account_id:2,description:'Інший опис банку',source}];
     const h=harness([batch([transaction({amount:786,date:'2026-10-20',description:'Карбас',bank:'privat',card_last4:'0882'}),transaction({amount:50})])],
       {existing,accounts:[{id:2,name:'Моя',bank:'privat',card_last4:'0882'}]});
     await h.run();
-    assert.equal(h.state.inserts.length,0);assert.equal(h.state.rows.length,1);
-    assert.match(h.state.replies.at(-1)[1],/18\.10\.2026, 786/);
+    assert.equal(h.state.inserts.length,1);assert.equal(h.state.rows.length,2);
+    assert.equal(h.state.inserts[0][0].source_id,'tg:42:1');
+    assert.match(h.state.warnings[0].text,/18\.10\.2026, 786/);
   }
 });
 test('normalized description detects duplicate when no account is known',async()=>{
@@ -854,16 +878,20 @@ test('only explicit clipped omissions are accepted and a failed warning prevents
   }
 });
 
-test('time evidence only separates same-day rows and never disables existing-transaction checks',async()=>{
+test('time evidence separates same-day payments but uncertain or matching clocks remain duplicates',async()=>{
   for(const fields of [{time:null},{time:'14:42'},{time:'25:01'},{date:'2026-10-18',time:'14:18'}]){
     const h=harness([batch([transaction({time:'14:42'}),transaction(fields)])]);await h.run();
     assert.equal(h.state.inserts.length,0,JSON.stringify(fields));
   }
-  for(const description of ['Магазин','Магазин · 14:42']){
+  for(const description of ['Магазин','Магазин · 14:18','Магазин · 25:01']){
     const h=harness([batch([transaction({time:'14:18'})])],{existing:[{id:1,amount:120.5,type:'expense',date:'2026-10-19',description,account_id:null}]});
     await h.run();assert.equal(h.state.inserts.length,0);
-    assert.match(h.state.replies.at(-1)[1],/Схожа операція вже записана/);
+    assert.match(h.state.replies.at(-1)[1],/Схожих на вже записані операцій пропущено: 1/);
   }
+  const distinct=harness([batch([transaction({time:'14:18'})])],{existing:[{id:1,amount:120.5,type:'expense',date:'2026-10-19',description:'Магазин · 14:42',account_id:null}]});
+  await distinct.run();assert.equal(distinct.state.inserts.length,1);
+  const priorDay=harness([batch([transaction({time:'14:18'})])],{existing:[{id:1,amount:120.5,type:'expense',date:'2026-10-18',description:'Магазин · 14:42',account_id:null}]});
+  await priorDay.run();assert.equal(priorDay.state.inserts.length,0);
 });
 
 test('PNG and JPEG byte signatures retain matching vision and private-storage media types',async()=>{
@@ -891,7 +919,63 @@ test('duplicate lookup failure or incomplete pagination blocks screenshot writes
 test('duplicate beyond first page is found before saving',async()=>{
   const existing=Array.from({length:1000},(_,i)=>({id:i+1,amount:9999,type:'income',date:'2026-10-19',description:'x'}));
   existing.push({id:1001,amount:120.5,type:'expense',date:'2026-10-19',description:'Магазин',account_id:null});
-  const h=harness([batch()],{existing});await h.run();assert.equal(h.state.inserts.length,0);
+  const h=harness([batch()],{existing});await h.run();assert.equal(h.state.inserts.length,1);
+  assert.equal(h.state.inserts[0].length,1);assert.equal(h.state.inserts[0][0].type,'income');
+  assert.deepEqual(h.state.duplicatePages,[[0,999],[1000,1999]]);
+});
+
+test('all matching screenshot rows report zero new operations and never insert or categorize',async()=>{
+  const existing=[{id:1,amount:120.5,type:'expense',date:'2026-10-19',description:'Магазин',account_id:null},
+    {id:2,amount:200,type:'income',date:'2026-10-20',description:'Повернення',account_id:null}];
+  const h=harness([batch()],{existing});await h.run();
+  assert.equal(h.state.inserts.length,0);assert.equal(h.state.categories.length,0);
+  assert.match(h.state.replies.at(-1)[1],/пропущено: 2/);assert.match(h.state.replies.at(-1)[1],/Нових операцій немає/);
+  assert.doesNotMatch(h.state.replies.at(-1)[1],/✅|Записано операцій/);
+});
+
+test('filtering first or last screenshot row retains source ids and replay never adds rows',async()=>{
+  for(const skippedIndex of [0,1]){
+    const original=batch().transactions[skippedIndex];
+    const existing=[{...original,id:1,account_id:null}];
+    const h=harness([batch()],{existing});await h.run(123);
+    assert.equal(h.state.inserts.length,1);assert.equal(h.state.inserts[0].length,1);
+    assert.equal(h.state.inserts[0][0].source_id,skippedIndex===0?'tg:123:1':'tg:123');
+    assert.equal(h.state.txReplies.length,1);assert.equal(h.state.txReplies[0][2].source_id,h.state.inserts[0][0].source_id);
+    await h.run(123);assert.equal(h.state.inserts.length,1);assert.equal(h.state.rows.length,2);
+    await h.run(124);assert.equal(h.state.inserts.length,1);assert.equal(h.state.rows.length,2);
+  }
+});
+
+test('duplicate warning delivery failure blocks the otherwise new rows',async()=>{
+  for(const warningError of ['network','http','api']){
+    const existing=[{id:1,amount:120.5,type:'expense',date:'2026-10-19',description:'Магазин',account_id:null}];
+    const h=harness([batch()],{existing,warningError});await h.run();
+    assert.equal(h.state.inserts.length,0);assert.equal(h.state.categories.length,0);
+    assert.match(h.state.replies.at(-1)[1],/Не вдалося повідомити/);
+  }
+});
+
+test('a duplicate on an early page cannot hide later lookup failure or truncated pagination',async()=>{
+  const first={id:1,amount:120.5,type:'expense',date:'2026-10-19',description:'Магазин',account_id:null};
+  const page=[first,...Array.from({length:999},(_,i)=>({id:i+2,amount:9999,type:'income',date:'2026-10-19',description:'Інше'}))];
+  for(const options of [{existing:page,lookupFailurePage:1},{duplicatePage:page}]){
+    const h=harness([batch()],options);await h.run();
+    assert.equal(h.state.inserts.length,0);assert.equal(h.state.warnings.length,0);
+    assert.match(h.state.replies.at(-1)[1],/Не вдалося перевірити/);
+    assert.equal(h.state.duplicatePages.length,options.duplicatePage?10:2);
+  }
+});
+
+test('long omission and duplicate warnings fit Telegram limits and every part must arrive before insert',async()=>{
+  const transactions=Array.from({length:20},(_,i)=>transaction({amount:i+1,description:'Опис '.repeat(16)+i}));
+  const existing=transactions.slice(0,19).map((t,i)=>({...t,id:i+1,account_id:null}));
+  const response={...batch(transactions),omitted:Array.from({length:20},()=>({reason:'clipped',description:'Обрізаний опис '.repeat(8)}))};
+  for(const warningFailureAt of [undefined,2]){
+    const h=harness([response],{existing,warningFailureAt});await h.run();
+    assert.equal(h.state.warnings.length,2);assert.ok(h.state.warnings.every(w=>w.text.length<=4096));
+    assert.deepEqual(h.state.events,warningFailureAt?['warning','warning']:['warning','warning','insert']);
+    assert.equal(h.state.inserts.length,warningFailureAt?0:1);
+  }
 });
 
 test('Claude receipt single, batch and confirmed receipt close the obligation without date rewrite',async()=>{
