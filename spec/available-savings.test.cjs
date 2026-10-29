@@ -1,4 +1,4 @@
-﻿const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
 const load=n=>import('../supabase/functions/_shared/'+n+'.ts');
 const html=fs.readFileSync('index.html','utf8');
 const names=['spendableFunds','kpiFunds','balanceNowCents','projectedSavingsReserveCents','projectionGrouped'];
@@ -66,7 +66,7 @@ test('savings projected own-only and funded amount reported; TS/Python parity in
 
 test('last day before payout retains consumable remainder today without forecasting today again',async()=>{
  const {financeProjection}=await load('budget'),{budgetModel}=await load('bot-reports');const d=data(),options={asof:'2026-11-05',through:'2026-12-01'},p=financeProjection(d,options),cp=p.currentPeriod;
- assert.equal(cp.end,'2026-11-06');assert.equal(cp.futureSchedule.length,0);assert.equal(cp.spendableRemainingCents,465000);assert.equal(cp.dailyCents,465000);
+ assert.equal(cp.end,'2026-11-06');assert.equal(cp.futureSchedule.length,1);assert.equal(cp.futureSchedule[0].date,options.asof);assert.equal(cp.futureSchedule[0].spendCents,cp.spendableRemainingCents);assert.equal(p.events.filter(e=>(e.kind==='variable'||e.budgetSavings)&&e.date===options.asof).length,0);assert.equal(cp.spendableRemainingCents,465000);assert.equal(cp.dailyCents,465000);
  const b=budgetModel(p,[],categories,options.asof,d,d.accounts);assert.equal(b.leftDays,1);assert.equal(b.leftCents,465000);assert.equal(b.dailyCents,465000);
  const py=spawnSync(path.resolve('.venv/Scripts/python.exe'),['scripts/budget_pool.py','--finance'],{input:JSON.stringify([{data:d,options}]),encoding:'utf8',env:{...process.env,PYTHONUTF8:'1'}});assert.equal(py.status,0,py.stderr);assert.deepEqual(p,JSON.parse(py.stdout)[0]);
 });

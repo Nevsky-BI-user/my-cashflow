@@ -113,7 +113,7 @@ def near_rows(page):
 
 
 TIP = """(()=>{const b=document.querySelector('.dv-fc .fc-box');if(!b)return null;const rb=b.getBoundingClientRect();
-const n=s=>{const t=s.replace(/[\\s\\u00a0\\u202f]/g,'');const m=t.match(/\\d+/g);return m?m.length:0};
+const n=s=>{const t=s.replace(/[\\s\\u00a0\\u202f]/g,'');const m=t.match(/\\d+(?:[.,]\\d+)?/g);return m?m.length:0};
 const rows=[...b.querySelectorAll('.fc-tip-r')].map(r=>{const v=r.querySelector('.fc-tip-n'),l=r.querySelector('.fc-tip-l'),vr=v.getBoundingClientRect(),lr=l.getBoundingClientRect();
  return {c:r.className,l:l.textContent,v:v.textContent,nums:n(v.textContent),right:vr.right,vt:vr.top,lt:lr.top,vh:vr.height,lh:parseFloat(getComputedStyle(v).lineHeight)||vr.height,d:r.dataset.d!=null?+r.dataset.d:null}});
 return {k:b.dataset.k,i:+b.dataset.i,w:rb.width,l:rb.left,r:rb.right,vw:innerWidth,rows,

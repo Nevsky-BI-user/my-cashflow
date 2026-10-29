@@ -1,0 +1,12 @@
+{
+  "accounts": [{"id": 1, "name": "Synthetic wallet", "kind": "debit", "bank": "cash", "balance": 10000, "debt": 0, "active": true, "sort_order": 0, "balance_updated_at": "2026-10-29T12:00:00Z"}],
+  "categories": [{"id": "food", "name": "Продукти", "type": "expense", "budget_limit": 100, "icon": "🛒", "color": "#7066e0", "group_id": 1, "sort_order": 0}],
+  "salary": {"rate": 0, "advance_amount": 50000, "salary_amount": 50000, "advance_day": 21, "salary_day": 6, "split_day": 15, "savings_pct": 0},
+  "fixed": [],
+  "credits": [],
+  "monthly_budgets": [
+    {"month_start": "2026-10-01", "total_cents": 3100000, "allocations": {"food": 3100000}, "mandatory_items": []},
+    {"month_start": "2026-11-01", "total_cents": 7188000, "allocations": {"food": 7188000}, "mandatory_items": []}
+  ],
+  "transactions": [{"id": 1, "account_id": 1, "type": "expense", "amount": 20924.58, "category_id": "food", "date": "2026-10-22", "created_at": "2026-10-22T12:00:00Z", "source": "manual", "description": "Synthetic current-period expense"}]
+}
