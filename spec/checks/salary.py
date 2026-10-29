@@ -33,6 +33,11 @@ def js_source():
     html = (ROOT / 'index.html').read_text(encoding='utf-8')
     parts = []
     for n in NAMES:
+        if n == 'salaryParts':
+            start = html.index('const salaryParts=')
+            end = html.index(';const nextPayout=', start)
+            parts.append(html[start:end + 1])
+            continue
         m = re.search(r'const ' + n + r'=.*?;(?=const |function )', html)
         check(m, f'у index.html не знайдено const {n}=')
         parts.append(m.group(0))

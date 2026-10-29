@@ -37,7 +37,7 @@ export type Credit = {
   id?: number | string; name: string; monthly_amount: number | string; payment_day: number;
   start_year: number; start_month: number; total_payments: number; credit_ok?: boolean | null; source?: string | null;
 };
-export type SalaryCfg = { rate?: number | string | null; advance_amount?: number | string | null; salary_amount?: number | string | null; split_day: number; advance_day: number; salary_day: number; savings_pct?: number | null; budget_manual?: number | string | null };
+export type SalaryCfg = { rate?: number | string | null; rate_schedule?: {effective_from: string; rate: number}[] | null; advance_amount?: number | string | null; salary_amount?: number | string | null; split_day: number; advance_day: number; salary_day: number; savings_pct?: number | null; budget_manual?: number | string | null };
 // paid: ключі `${fixed_id}|YYYY-MM` і `${fixed_id}|W<понеділок YYYY-MM-DD>` оплачених постійних платежів (п. 13), будує fixedPaid з операцій
 export type Snapshot = { accounts: Account[]; fixed: Fixed[]; credits: Credit[]; salary: SalaryCfg; savings_pct?: number | null; paid?: string[]; paid_credit?: string[] };
 
@@ -171,11 +171,20 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   const ym=(k: number)=>[Math.floor(k/12),k%12+1];
   const last=(y: number,m: number)=>new Date(Date.UTC(y,m,0)).getUTCDate();
   const weekdays=(y: number,m: number,lo: number,hi: number)=>{let n=0;for(let d=lo;d<=hi;d++){const w=day(date(y,m,d)).getUTCDay();if(w!==0&&w!==6)n++;}return n;};
+  // Ставка діє за відпрацьовані дні; дата виплати не змінює ставку попереднього місяця.
+  const earnedAmount=(y: number,m: number,lo: number,hi: number,fixed: unknown)=>{
+    const total=weekdays(y,m,1,last(y,m)),worked=weekdays(y,m,lo,hi),base=Number(cfg!.rate)||0;
+    const schedule=(Array.isArray(cfg!.rate_schedule)?cfg!.rate_schedule:[]).filter((x: any)=>x&&/^\d{4}-\d{2}-\d{2}$/.test(x.effective_from)&&Number.isFinite(Number(x.rate))&&Number(x.rate)>0&&x.effective_from<=date(y,m,hi)).slice().sort((a: any,b: any)=>a.effective_from.localeCompare(b.effective_from));
+    if(!schedule.length)return base>0?base/total*worked:Number(fixed)||0;
+    let weighted=0,fixedDays=0;
+    for(let d=lo;d<=hi;d++){const iso=date(y,m,d),w=day(iso).getUTCDay();if(w===0||w===6)continue;let rate=base;for(const x of schedule){if(x.effective_from>iso)break;rate=Number(x.rate);}if(rate>0)weighted+=rate;else fixedDays++;}
+    return weighted/total+(worked?fixedDays/worked*(Number(fixed)||0):0);
+  };
   const payoutList: Record<string,any>[]=[];
   if(valid)for(let k=monthIndex(asof)-2;k<=monthIndex(through)+3;k++){
     const [y,m]=ym(k),[py,pm]=ym(k-1);
     for(const kind of ['advance','salary']){let d=date(y,m,Number(cfg[kind+'_day']));const w=day(d).getUTCDay();d=plus(d,w===6?-1:w===0?1:0);const [sy,sm]=kind==='advance'?[y,m]:[py,pm];const rate=Number(cfg.rate)||0;
-      const amountCents=rate>0?cents(rate/weekdays(sy,sm,1,last(sy,sm))*weekdays(sy,sm,kind==='advance'?1:Number(cfg.split_day)+1,kind==='advance'?Number(cfg.split_day):last(sy,sm))):cents(cfg[kind+'_amount']);
+      const amountCents=cents(earnedAmount(sy,sm,kind==='advance'?1:Number(cfg.split_day)+1,kind==='advance'?Number(cfg.split_day):last(sy,sm),cfg[kind+'_amount']));
       if(amountCents>0)payoutList.push({date:d,kind,amount:amountCents/100,amountCents});
     }
   }
@@ -311,9 +320,9 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     }
     return {...m,remainingSegments,monthSignedSpendableCaps,monthDebtProgress,debtExtraOverrunCents:sum(Object.values(monthDebtProgress).map(p=>p.debtExtraOverrunCents)),signedSpendableRemainingCents:sum(remainingSegments.map(s=>s.signedSpendableRemainingCents)),rawCategories:m.categories,rawUnallocatedCents:m.unallocatedCents,rawTargetCents:m.targetCents,rawSavingsTargetCents:m.savingsTargetCents,debtBudgetTargetCents:m.debtBudgetTargetCents,rawSpendableTargetCents:m.spendableTargetCents,savingsTargetCents:sum(Object.entries(by).filter(([id])=>savingsIds.has(id)).map(([,n])=>n)),spendableTargetCents:sum(Object.entries(by).filter(([id])=>!savingsIds.has(id)).map(([,n])=>n)),targetCents:sum(Object.values(by)),categories:Object.entries(by).filter(([id])=>id!=='unallocated').map(([id,totalCents])=>({id,totalCents})),unallocatedCents:by.unallocated||0};
   };
-  const distribution=(target: number,start: string,end: string,available: number,caps?: number[],monthly?: any)=>{const count=distance(start,end),exact=monthly||monthlyPlan(start,end,target),chosen=exact?[...exact.categories.filter((c:any)=>!debtIds.has(c.id)&&!savingsIds.has(c.id)),{id:'unallocated',totalCents:exact.unallocatedCents}]:null,{rows,totals}=chosen?{rows:chosen.map((c:any)=>({id:c.id,name:(data.categories||[]).find(x=>String(x.id)===c.id)?.name||(c.id==='unallocated'?'Не розподілено':'Категорія '+c.id),weight:0})),totals:chosen.map((c:any)=>c.totalCents)}:split(count>0?target:0,caps),remaining=totals.slice(),schedule=[];let balance=available;
-    const natural=chosen?monthlyPeriodBudget(monthlyRows,start,end,monthlyOptions):null,direct=natural?.covered&&natural.targetCents===sum(totals)&&rows.every((r,i)=>(r.id==='unallocated'?natural.unallocatedCents:natural.categories.find(c=>c.id===r.id)?.totalCents||0)===totals[i]);
-    for(let i=0;i<count;i++){const effective=sum(totals),daily=direct?monthlyPeriodBudget(monthlyRows,plus(start,i),plus(start,i+1),monthlyOptions):null;let spendCents=Math.floor(effective/count)+(i<effective%count?1:0),amounts=chosen?totals.map((n,j)=>{if(daily)return rows[j].id==='unallocated'?daily.unallocatedCents:daily.categories.find(c=>c.id===rows[j].id)?.totalCents||0;const dt=plus(start,i),seg=exact.remainingSegments?.find((x:any)=>x.start<=dt&&x.end>dt);if(seg){const lo=seg.start>start?seg.start:start,hi=seg.end<end?seg.end:end,D=distance(lo,hi),k=distance(lo,dt),v=seg.categories.find((c:any)=>c.id===rows[j].id)?.totalCents||0;return Number(BigInt(v)*BigInt(k+1)/BigInt(D)-BigInt(v)*BigInt(k)/BigInt(D));}return Number(BigInt(n)*BigInt(i+1)/BigInt(count)-BigInt(n)*BigInt(i)/BigInt(count));}):i===count-1?remaining.slice():allocate(spendCents,remaining);if(chosen)spendCents=sum(amounts);amounts.forEach((n,j)=>remaining[j]-=n);balance=safe(balance-spendCents);schedule.push({date:plus(start,i),spendCents,remainingCents:balance,byCategory:rows.map((c,j)=>({id:c.id,name:c.name,amountCents:amounts[j],...(exact?.covered&&savingsIds.has(c.id)?{budgetSavings:true}:{})}))});}
+  const distribution=(target: number,start: string,end: string,available: number,caps?: number[],monthly?: any,uniform=false)=>{const count=distance(start,end),exact=monthly||monthlyPlan(start,end,target),chosen=exact?[...exact.categories.filter((c:any)=>!debtIds.has(c.id)&&!savingsIds.has(c.id)),{id:'unallocated',totalCents:exact.unallocatedCents}]:null,{rows,totals}=chosen?{rows:chosen.map((c:any)=>({id:c.id,name:(data.categories||[]).find(x=>String(x.id)===c.id)?.name||(c.id==='unallocated'?'Не розподілено':'Категорія '+c.id),weight:0})),totals:uniform?allocate(target,chosen.map((c:any)=>c.totalCents)):chosen.map((c:any)=>c.totalCents)}:split(count>0?target:0,caps),remaining=totals.slice(),schedule=[];let balance=available;
+    const natural=chosen&&!uniform?monthlyPeriodBudget(monthlyRows,start,end,monthlyOptions):null,direct=natural?.covered&&natural.targetCents===sum(totals)&&rows.every((r,i)=>(r.id==='unallocated'?natural.unallocatedCents:natural.categories.find(c=>c.id===r.id)?.totalCents||0)===totals[i]);
+    for(let i=0;i<count;i++){const effective=sum(totals),daily=direct?monthlyPeriodBudget(monthlyRows,plus(start,i),plus(start,i+1),monthlyOptions):null;let spendCents=Math.floor(effective/count)+(i<effective%count?1:0),amounts=chosen&&!uniform?totals.map((n,j)=>{if(daily)return rows[j].id==='unallocated'?daily.unallocatedCents:daily.categories.find(c=>c.id===rows[j].id)?.totalCents||0;const dt=plus(start,i),seg=exact.remainingSegments?.find((x:any)=>x.start<=dt&&x.end>dt);if(seg){const lo=seg.start>start?seg.start:start,hi=seg.end<end?seg.end:end,D=distance(lo,hi),k=distance(lo,dt),v=seg.categories.find((c:any)=>c.id===rows[j].id)?.totalCents||0;return Number(BigInt(v)*BigInt(k+1)/BigInt(D)-BigInt(v)*BigInt(k)/BigInt(D));}return Number(BigInt(n)*BigInt(i+1)/BigInt(count)-BigInt(n)*BigInt(i)/BigInt(count));}):i===count-1?remaining.slice():allocate(spendCents,remaining);if(chosen)spendCents=sum(amounts);amounts.forEach((n,j)=>remaining[j]-=n);balance=safe(balance-spendCents);schedule.push({date:plus(start,i),spendCents,remainingCents:balance,byCategory:rows.map((c,j)=>({id:c.id,name:c.name,amountCents:amounts[j],...(exact?.covered&&savingsIds.has(c.id)?{budgetSavings:true}:{})}))});}
     const savingsTargetCents=exact?.covered?exact.savingsTargetCents:0;
     return {categories:rows.map((c,i)=>({...c,totalCents:totals[i]})),schedule,savingsTargetCents,spendableTargetCents:sum(totals)};
   };
@@ -330,7 +339,11 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     // Сума в гривнях на прогноз від завтра: ліміт мінус факт змінних витрат категорії з початку періоду, не нижче 0.
     let start=payoutDates.filter(d=>d<=asof).pop()||asof,actualVariableCents=sum(txs.filter(t=>t.type==='expense'&&t.transfer_id==null&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start).map(t=>cents(t.amount))),mandatoryCentsNow=mandatory(asof,nextDate),available=safe(cashCents-mandatoryCentsNow),periodDays=distance(start,nextDate),leftDays=Math.max(0,distance(plus(asof,1),nextDate)),floorLeft=periodDays>0?Math.floor((manual!=null?manual:1500000)*leftDays/periodDays):0,freeLeft=Math.max(0,untilPayout?untilPayout.cents:0),remaining=leftDays>0?Math.max(floorLeft,manual!=null?manual-actualVariableCents:freeLeft):0,target=actualVariableCents+remaining,caps=categories.map(c=>c.limitAbsCents==null?0:Math.max(0,c.limitAbsCents-sum(txs.filter(t=>t.type==='expense'&&t.transfer_id==null&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start&&t.category_id!=null&&String(t.category_id)===c.id).map(t=>cents(t.amount))))),dist=distribution(remaining,plus(asof,1),nextDate,available,caps);
     const currentMonthly=monthlyPlan(start,nextDate,target),remainingMonthly=currentMonthly?monthlyPlan(start,nextDate,target,true):null;
-    if(currentMonthly&&remainingMonthly){target=currentMonthly.rawTargetCents;remaining=remainingMonthly.targetCents;dist=distribution(remaining,plus(asof,1),nextDate,available,undefined,leftDays>0?remainingMonthly:{...remainingMonthly,categories:[],unallocatedCents:0});}
+    if(currentMonthly&&remainingMonthly){target=currentMonthly.rawTargetCents;remaining=remainingMonthly.targetCents;
+      // Єдиний денний план: перевитрата попередньої частини періоду зменшує спільний залишок.
+      // Сьогодні має свою частку плану, але її не додаємо до фактичного балансу як вигадану витрату.
+      dist=distribution(Math.max(0,remainingMonthly.signedSpendableRemainingCents),asof,nextDate,available,undefined,remainingMonthly,true);
+    }
     const actualSavingsCents=currentMonthly?sum(txs.filter(t=>t.type==='expense'&&t.transfer_id==null&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start&&savingsIds.has(String(t.category_id))).map(t=>cents(t.amount))):0,savingsTargetCents=currentMonthly?currentMonthly.rawSavingsTargetCents:0,savingsRemainingCents=remainingMonthly?remainingMonthly.savingsTargetCents:0;
     const signedSpendableRemainingCents=remainingMonthly?remainingMonthly.signedSpendableRemainingCents:remaining-savingsRemainingCents,spendableRemainingCents=Math.max(0,signedSpendableRemainingCents);
     currentPeriod={start,end:nextDate,actualVariableCents,actualSpendableCents:actualVariableCents-actualSavingsCents,actualSavingsCents,targetCents:target,remainingTargetCents:remaining,savingsTargetCents,debtBudgetTargetCents:currentMonthly?.debtBudgetTargetCents||0,debtExtraOverrunCents:remainingMonthly?.debtExtraOverrunCents||0,spendableTargetCents:target-savingsTargetCents-(currentMonthly?.debtBudgetTargetCents||0),savingsRemainingCents,signedSpendableRemainingCents,spendableRemainingCents,periodDays,leftDays,dailyCents:currentMonthly?spendableRemainingCents/Math.max(1,distance(asof,nextDate)):leftDays>0?(remaining-savingsRemainingCents)/leftDays:0,futureSchedule:dist.schedule,...(currentMonthly?{monthlyBudget:currentMonthly,overrunCents:Math.max(0,-signedSpendableRemainingCents)}:{})};
@@ -371,7 +384,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
   const byDate: Record<string,Record<string,any>[]>={};
   const put=(e: Record<string,any>)=>{(byDate[e.date]=byDate[e.date]||[]).push(e);};
   const categoryEvent=(d:string,c:any)=>make((c.budgetSavings?'budget-savings:':'variable:')+d+':'+c.id,d,c.budgetSavings?'У заощадження: '+c.name:c.name,c.budgetSavings?'savings':'variable',c.amountCents,{categoryId:c.id,...(c.budgetSavings?{budgetSavings:true,plannedCents:c.amountCents}:{})});
-  for(const p of periods)for(const d of p.schedule)for(const c of d.byCategory)if(c.amountCents>0)events.push(categoryEvent(d.date,c));
+  for(const p of periods)for(const d of p.schedule)for(const c of d.byCategory)if(c.amountCents>0&&!(p.basis==='current'&&d.date===asof))events.push(categoryEvent(d.date,c));
   for(const e of events)if(e.date>=asof&&e.date<=simEnd)put(e);
   const debitBetween=(start: string,end: string)=>sum(events.filter(e=>e.date>=start&&e.date<end&&debitOnly(e)).map(e=>e.amountCents));
   // Старт: власні як у плитці (positiveOwnCents); мінусові залишки рахунків і мінусова поправка стають нестачею, яку гасить перше надходження
@@ -560,13 +573,21 @@ function adj(y: number, m: number, d: number): Date {
 }
 
 // Виплати місяця: аванс за 1..split поточного, зарплата за split+1..кінець попереднього
+export function salaryPeriodAmount(cfg: SalaryCfg, y: number, m: number, lo: number, hi: number, fixed: unknown): number {
+  const total=wd(y,m,1,lastDay(y,m)),worked=wd(y,m,lo,hi),base=num(cfg.rate);
+  const schedule=(Array.isArray(cfg.rate_schedule)?cfg.rate_schedule:[]).filter(x=>x&&/^\d{4}-\d{2}-\d{2}$/.test(x.effective_from)&&Number.isFinite(Number(x.rate))&&Number(x.rate)>0&&x.effective_from<=iso(mk(y,m,hi))).slice().sort((a,b)=>a.effective_from.localeCompare(b.effective_from));
+  if(!schedule.length)return base>0?round2(base/total*worked):num(fixed);
+  let weighted=0,fixedDays=0;
+  for(let d=lo;d<=hi;d++){const when=mk(y,m,d),date=iso(when),w=when.getUTCDay();if(w===0||w===6)continue;let rate=base;for(const x of schedule){if(x.effective_from>date)break;rate=Number(x.rate);}if(rate>0)weighted+=rate;else fixedDays++;}
+  return round2(weighted/total+(worked?fixedDays/worked*num(fixed):0));
+}
 export function monthPayouts(cfg: SalaryCfg, y: number, m: number): Payout[] {
   const rate = num(cfg.rate), split = Number(cfg.split_day);
   const [py, pm] = m > 1 ? [y, m - 1] : [y - 1, 12];
   const last = lastDay(y, m), plast = lastDay(py, pm);
   return [
-    { date: iso(adj(y, m, Number(cfg.advance_day))), kind: 'advance', amount: rate > 0 ? round2(rate / wd(y, m, 1, last) * wd(y, m, 1, split)) : num(cfg.advance_amount) },
-    { date: iso(adj(y, m, Number(cfg.salary_day))), kind: 'salary', amount: rate > 0 ? round2(rate / wd(py, pm, 1, plast) * wd(py, pm, split + 1, plast)) : num(cfg.salary_amount) },
+    { date: iso(adj(y, m, Number(cfg.advance_day))), kind: 'advance', amount: salaryPeriodAmount(cfg,y,m,1,split,cfg.advance_amount) },
+    { date: iso(adj(y, m, Number(cfg.salary_day))), kind: 'salary', amount: salaryPeriodAmount(cfg,py,pm,split+1,plast,cfg.salary_amount) },
   ];
 }
 

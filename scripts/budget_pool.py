@@ -54,8 +54,28 @@
 #                з цим account_id і датою (поле date, без нього перші 10 знаків created_at) у місяці «зараз»
 #   paidFixed    п. 13: [[id, YYYY-MM]] оплачених постійних платежів (відсортовано)
 #   Старі поля payout, end, obligations, oblSum, oblWhite лишаються.
-import calendar, json, re, sys
+import calendar, json, math, re, sys
 from datetime import date, datetime, timedelta
+
+
+def salary_period_amount(cfg, y, m, lo, hi, fixed):
+    """Ставка за робочими днями; до першої зміни діє базова ставка або фіксована сума."""
+    base = float(cfg.get('rate') or 0)
+    work = [date(y, m, d) for d in range(lo, hi + 1) if date(y, m, d).weekday() < 5]
+    total = sum(date(y, m, d).weekday() < 5 for d in range(1, calendar.monthrange(y, m)[1] + 1))
+    end = date(y, m, hi).isoformat()
+    schedule = sorted([x for x in (cfg.get('rate_schedule') or []) if x.get('effective_from', '') <= end and float(x.get('rate') or 0) > 0], key=lambda x: x['effective_from'])
+    if not schedule:
+        return math.floor(base / total * len(work) * 100 + 0.5) / 100 if base > 0 else float(fixed or 0)
+    weighted, fixed_days = 0, 0
+    for day in work:
+        active = [x for x in schedule if x['effective_from'] <= day.isoformat()]
+        rate = float(active[-1]['rate']) if active else base
+        if rate > 0:
+            weighted += rate
+        else:
+            fixed_days += 1
+    return math.floor((weighted / total + (fixed_days / len(work) * float(fixed or 0) if work else 0)) * 100 + 0.5) / 100
 
 
 def repay_plan(month, now=''):
@@ -179,7 +199,7 @@ def next_period_plan(data, asof):
             sy,sm = (y,m) if kind=='advance' else (py,pm)
             last = calendar.monthrange(sy,sm)[1]
             lo,hi = (1,int(cfg['split_day'])) if kind=='advance' else (int(cfg['split_day'])+1,last)
-            amount = cents(rate/weekdays(sy,sm,1,last)*weekdays(sy,sm,lo,hi))/100 if rate>0 else float(cfg.get(kind+'_amount') or 0)
+            amount = salary_period_amount(cfg,sy,sm,lo,hi,cfg.get(kind+'_amount'))
             if d>current and amount>0:
                 upcoming.append({'date':d.isoformat(),'kind':kind,'amount':amount,'amountCents':cents(amount)})
     upcoming.sort(key=lambda p:p['date'])
@@ -418,7 +438,7 @@ def finance_projection(data, options):
             for kind in ('advance','salary'):
                 d=dt(y,m,int(cfg[kind+'_day'])); w=date.fromisoformat(d).weekday(); d=plus(d,-1 if w==5 else 1 if w==6 else 0)
                 sy,sm=(y,m) if kind=='advance' else (py,pm); rate=float(cfg.get('rate') or 0); last=calendar.monthrange(sy,sm)[1]
-                amount=cents(rate/weekdays(sy,sm,1,last)*weekdays(sy,sm,1 if kind=='advance' else int(cfg['split_day'])+1,int(cfg['split_day']) if kind=='advance' else last)) if rate>0 else cents(cfg.get(kind+'_amount'))
+                amount=cents(salary_period_amount(cfg,sy,sm,1 if kind=='advance' else int(cfg['split_day'])+1,int(cfg['split_day']) if kind=='advance' else last,cfg.get(kind+'_amount')))
                 if amount>0: payout_list.append({'date':d,'kind':kind,'amount':amount/100,'amountCents':amount})
     payout_list.sort(key=lambda p:(p['date'],p['kind'])); payout_dates=sorted({p['date'] for p in payout_list})
     next_date=next((d for d in payout_dates if d>asof),''); following=next((d for d in payout_dates if next_date and d>next_date),''); has_plan=bool(next_date and following)
@@ -611,14 +631,14 @@ def finance_projection(data, options):
                 for c,n in zip(budget_rows,values): by[c['id']]=by.get(c['id'],0)+n
                 remaining_segments.append({**seg,'categories':[{'id':c['id'],'totalCents':n} for c,n in zip(budget_rows,values)],'targetCents':sum(values),'savingsTargetCents':savings_remaining,'spendableTargetCents':sum(ordinary),'signedSpendableRemainingCents':signed_remaining})
         return {**m,'remainingSegments':remaining_segments,'monthSignedSpendableCaps':month_signed_caps,'monthDebtProgress':month_debt_progress,'debtExtraOverrunCents':sum(p['debtExtraOverrunCents'] for p in month_debt_progress.values()),'signedSpendableRemainingCents':sum(s['signedSpendableRemainingCents'] for s in remaining_segments),'rawCategories':m['categories'],'rawUnallocatedCents':m['unallocatedCents'],'rawTargetCents':m['targetCents'],'rawSavingsTargetCents':m['savingsTargetCents'],'debtBudgetTargetCents':m['debtBudgetTargetCents'],'rawSpendableTargetCents':m['spendableTargetCents'],'savingsTargetCents':sum(v for k,v in by.items() if k in savings_ids),'spendableTargetCents':sum(v for k,v in by.items() if k not in savings_ids),'targetCents':sum(by.values()),'categories':[{'id':k,'totalCents':by[k]} for k in sorted(by, key=lambda k: (0,int(k)) if k.isascii() and k.isdigit() and str(int(k))==k and int(k)<4294967295 else (1,list(by).index(k))) if k!='unallocated'],'unallocatedCents':by.get('unallocated',0)}
-    def distribution(target,start,end,available,caps=None,monthly=None):
+    def distribution(target,start,end,available,caps=None,monthly=None,uniform=False):
         count=distance(start,end); exact=monthly or monthly_plan(start,end,target)
         chosen=[c for c in exact['categories'] if c['id'] not in debt_ids and c['id'] not in savings_ids]+[{'id':'unallocated','totalCents':exact['unallocatedCents']}] if exact else None
         if chosen is not None:
-            rows=[{'id':c['id'],'name':next((x['name'] for x in data.get('categories',[]) if str(x['id'])==c['id']),('Не розподілено' if c['id']=='unallocated' else 'Категорія '+c['id'])),'weight':0} for c in chosen]; totals=[c['totalCents'] for c in chosen]
+            rows=[{'id':c['id'],'name':next((x['name'] for x in data.get('categories',[]) if str(x['id'])==c['id']),('Не розподілено' if c['id']=='unallocated' else 'Категорія '+c['id'])),'weight':0} for c in chosen]; totals=allocate(target,[c['totalCents'] for c in chosen]) if uniform else [c['totalCents'] for c in chosen]
         else: rows,totals=split(target if count>0 else 0,caps)
         remaining=totals[:]; schedule=[]; balance=available
-        natural=monthly_period_budget(monthly_rows,start,end,monthly_options) if chosen is not None else None
+        natural=monthly_period_budget(monthly_rows,start,end,monthly_options) if chosen is not None and not uniform else None
         def amount_of(m,k): return m['unallocatedCents'] if k=='unallocated' else next((c['totalCents'] for c in m['categories'] if c['id']==k),0)
         direct=natural and natural['covered'] and natural['targetCents']==sum(totals) and all(amount_of(natural,r['id'])==n for r,n in zip(rows,totals))
         for i in range(count):
@@ -631,7 +651,7 @@ def finance_projection(data, options):
                     lo=max(seg['start'],start); hi=min(seg['end'],end); D=distance(lo,hi); k=distance(lo,d); v=next((c['totalCents'] for c in seg['categories'] if c['id']==r['id']),0)
                     return v*(k+1)//D-v*k//D
                 return n*(i+1)//count-n*i//count
-            amounts=[daily_amount(r,n) for r,n in zip(rows,totals)] if chosen is not None else remaining[:] if i==count-1 else allocate(spend,remaining)
+            amounts=[daily_amount(r,n) for r,n in zip(rows,totals)] if chosen is not None and not uniform else remaining[:] if i==count-1 else allocate(spend,remaining)
             if chosen is not None: spend=sum(amounts)
             remaining=[v-a for v,a in zip(remaining,amounts)]; balance=safe(balance-spend)
             schedule.append({'date':plus(start,i),'spendCents':spend,'remainingCents':balance,'byCategory':[{'id':c['id'],'name':c['name'],'amountCents':a,**({'budgetSavings':True} if exact and exact.get('covered') and c['id'] in savings_ids else {})} for c,a in zip(rows,amounts)]})
@@ -657,7 +677,7 @@ def finance_projection(data, options):
         current_monthly=monthly_plan(start,next_date,target); remaining_monthly=monthly_plan(start,next_date,target,True) if current_monthly else None
         if current_monthly and remaining_monthly:
             target=current_monthly['rawTargetCents']; remaining=remaining_monthly['targetCents']
-            dist=distribution(remaining,plus(asof,1),next_date,available,monthly=remaining_monthly if left_days>0 else {**remaining_monthly,'categories':[],'unallocatedCents':0})
+            dist=distribution(max(0,remaining_monthly['signedSpendableRemainingCents']),asof,next_date,available,None,remaining_monthly,True)
         actual_savings=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and all(t.get(k) is None for k in ('transfer_id','fixed_id','credit_id')) and txdate(t)>=start and str(t.get('category_id')) in savings_ids) if current_monthly else 0
         savings_target=current_monthly['rawSavingsTargetCents'] if current_monthly else 0; savings_remaining=remaining_monthly['savingsTargetCents'] if remaining_monthly else 0
         signed_remaining=remaining_monthly['signedSpendableRemainingCents'] if remaining_monthly else remaining-savings_remaining; spendable_remaining=max(0,signed_remaining)
@@ -685,7 +705,7 @@ def finance_projection(data, options):
     for p in periods:
         for d in p['schedule']:
             for c in d['byCategory']:
-                if c['amountCents']>0: events.append(category_event(d['date'],c))
+                if c['amountCents']>0 and not (p['basis']=='current' and d['date']==asof): events.append(category_event(d['date'],c))
     for e in events:
         if asof<=e['date']<=sim_end: put(e)
     def debit_between(start,end): return total(e['amountCents'] for e in events if start<=e['date']<end and debit_only(e))
@@ -926,8 +946,8 @@ def payouts(y, m):
     py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
     plast = calendar.monthrange(py, pm)[1]
     return [
-        (adj(y, m, ADV), 'аванс', round(RATE / wd(y, m, 1, last) * wd(y, m, 1, SPLIT), 2) if RATE > 0 else float(cfg.get('advance_amount') or 0)),
-        (adj(y, m, SAL), 'зарплата', round(RATE / wd(py, pm, 1, plast) * wd(py, pm, SPLIT + 1, plast), 2) if RATE > 0 else float(cfg.get('salary_amount') or 0)),
+        (adj(y, m, ADV), 'аванс', salary_period_amount(cfg,y,m,1,SPLIT,cfg.get('advance_amount'))),
+        (adj(y, m, SAL), 'зарплата', salary_period_amount(cfg,py,pm,SPLIT+1,plast,cfg.get('salary_amount'))),
     ]
 
 
