@@ -55,6 +55,7 @@
 #   paidFixed    п. 13: [[id, YYYY-MM]] оплачених постійних платежів (відсортовано)
 #   Старі поля payout, end, obligations, oblSum, oblWhite лишаються.
 import calendar, json, math, re, sys
+from monthly_settings import normalize_monthly_budgets
 from datetime import date, datetime, timedelta
 
 
@@ -318,8 +319,8 @@ def monthly_period_budget(rows, start, end, options=None):
             covered=True; source=str(row['month_start']); estimated=source!=month
             pool=max(0,valid(row['total_cents'])-sum(valid(x['amount_cents']) for x in row.get('mandatory_items') or []))
             allocation={str(k):valid(v) for k,v in (row.get('allocations') or {}).items()}; used=sum(allocation.values())
-            if used>pool: raise ValueError('Monthly allocation exceeds variable pool')
-            rest=prefix(pool-used,a,b,D); allocation={k:prefix(v,a,b,D) for k,v in allocation.items()}
+            if used>pool and not row.get('settings_deficit_cents'): raise ValueError('Monthly allocation exceeds variable pool')
+            rest=0 if row.get('settings_deficit_cents') else prefix(pool-used,a,b,D); allocation={k:0 if row.get('settings_deficit_cents') else prefix(v,a,b,D) for k,v in allocation.items()}
         else:
             total=valid(options.get('legacyTargetCents') or 0); raw=options.get('legacyAllocations') or {}; used=sum(valid(v) for v in raw.values())
             if used>total: raise ValueError('Legacy allocation exceeds target')
@@ -549,7 +550,9 @@ def finance_projection(data, options):
             n=min(caps[i] if caps is not None else categories[i]['limitAbsCents'],left); totals[i]=n; left-=n
         if any(w>0 for w in weights): return categories,[t+a for t,a in zip(totals,allocate(left,weights))]
         return (categories+[{'id':'unallocated','name':'Не розподілено','weight':1}],totals+[left]) if left>0 else (categories,totals)
-    monthly_rows=data.get('monthly_budgets') or []; monthly_options={'categories':data.get('categories') or []}
+    monthly_rows=normalize_monthly_budgets(data.get('monthly_budgets') or [],data,asof,end_generation,salary_period_amount); monthly_options={'categories':data.get('categories') or []}
+    for row in monthly_rows:
+        if row.get('settings_deficit_cents',0)>0 and row['month_start']<=through: snapshot['warnings'].append({'kind':'budget_settings_deficit','date':row['month_start'],'shortCents':row['settings_deficit_cents']})
     role_plan=monthly_period_budget([],asof,asof,monthly_options); savings_ids=set(role_plan['savingsCategoryIds']); debt_ids=set(role_plan['debtCategoryIds'])
     def actual_card_repayment(target):
         raw=next((a for a in data.get('accounts',[]) if str(a.get('id'))==str(target.get('account_id'))),None)

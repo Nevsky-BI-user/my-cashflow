@@ -1,3 +1,4 @@
+import { normalizeMonthlyBudgets } from './monthly-settings.ts';
 // Дані для звітів бота і ранкового підсумку: ті самі таблиці й та сама проєкція, що в статусі «Баланс» (freeBlock).
 // Клієнт Supabase передається ззовні, тож модуль спільний для telegram-webhook і telegram-digest.
 import { financeProjection, lastPayout, type AccTx } from './budget.ts';
@@ -41,7 +42,7 @@ async function loadTxs(sb: any, from: string, today: string, since: number): Pro
 export async function loadMonthlyBudgets(sb:any){
  const rows:any[]=[];
  for(let page=0;page<100;page++){
-  const {data,error}=await sb.from('monthly_budgets').select('month_start,total_cents,allocations,mandatory_items').order('month_start').range(page*1000,page*1000+999);
+  const {data,error}=await sb.from('monthly_budgets').select('month_start,total_cents,allocations,mandatory_items,income_basis_cents').order('month_start').range(page*1000,page*1000+999);
   if(error)throw new Error('monthly budgets lookup failed');rows.push(...(data||[]));if(!data||data.length<1000)return rows;
  }
  throw new Error('monthly budgets pagination limit');
@@ -74,6 +75,7 @@ export async function loadFinance(sb: any, today: string): Promise<FinanceData> 
   }
   const categories = (cats.data || []).map((c: any) => ({ ...c, type: c.is_income ? 'income' : 'expense' }));
   const input = { monthly_budgets, accounts, fixed: fix.data || [], credits: cred.data || [], salary: sal.data, categories, transactions: txs };
+  input.monthly_budgets=normalizeMonthlyBudgets(monthly_budgets,input,today,shift(today,120));
   const projection = financeProjection(input, { asof: today, through: shift(today, 120) });
   return { today, projection, txs, accounts, fixed: fix.data || [], credits: cred.data || [], cats: categories.filter((c:any)=>!c.budget_role), salary: sal.data, firstOwnDate, input };
 }

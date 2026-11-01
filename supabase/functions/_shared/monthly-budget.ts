@@ -1,4 +1,4 @@
-﻿// Єдина сума змінного бюджету: збережений місячний план і точні цілі копійки.
+// Єдина сума змінного бюджету: збережений місячний план і точні цілі копійки.
 export function monthlyPeriodBudget(rows:any[],start:string,end:string,options:{legacyTargetCents?:number;legacyAllocations?:Record<string,number>;categories?:any[]}={}){
  const savingsCategoryIds=(options.categories||[]).filter(c=>!c.is_income&&!c.isIncome&&c.type!=='income'&&(String(c.id)==='savings'||String(c.name||'').normalize('NFKC').trim().toLocaleLowerCase('uk-UA')==='заощадження')).map(c=>String(c.id));
  const saving=new Set(savingsCategoryIds),debtCategoryIds=(options.categories||[]).filter(c=>['debt_card','debt_installment'].includes(c.budget_role)).map(c=>String(c.id)),debt=new Set(debtCategoryIds);
@@ -13,8 +13,8 @@ export function monthlyPeriodBudget(rows:any[],start:string,end:string,options:{
   const row=saved.filter(r=>String(r.month_start)<=month).pop();let allocation:Record<string,number>,unallocated:number,sourceMonth:string|null=null,estimated=false;
   if(row){covered=true;sourceMonth=String(row.month_start);estimated=sourceMonth!==month;
    const mandatory=(row.mandatory_items||[]).reduce((n:number,x:any)=>n+valid(x.amount_cents),0),pool=Math.max(0,valid(row.total_cents)-mandatory);
-   allocation=Object.fromEntries(Object.entries(row.allocations||{}).map(([id,n])=>[id,valid(n)]));const used=Object.values(allocation).reduce((n,v)=>n+v,0);if(used>pool)throw new RangeError('Monthly allocation exceeds variable pool');
-   unallocated=prefix(pool-used,a,b,D);allocation=Object.fromEntries(Object.entries(allocation).map(([id,n])=>[id,prefix(n,a,b,D)]));
+   allocation=Object.fromEntries(Object.entries(row.allocations||{}).map(([id,n])=>[id,valid(n)]));const used=Object.values(allocation).reduce((n,v)=>n+v,0);if(used>pool&&!row.settings_deficit_cents)throw new RangeError('Monthly allocation exceeds variable pool');
+   if(row.settings_deficit_cents){allocation=Object.fromEntries(Object.keys(allocation).map(id=>[id,0]));unallocated=0;}else{unallocated=prefix(pool-used,a,b,D);allocation=Object.fromEntries(Object.entries(allocation).map(([id,n])=>[id,prefix(n,a,b,D)]));}
   }else{
    const total=valid(options.legacyTargetCents||0),raw=options.legacyAllocations||{},used=Object.values(raw).reduce((n,v)=>n+valid(v),0);
    if(used>total)throw new RangeError('Legacy allocation exceeds target');

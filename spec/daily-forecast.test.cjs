@@ -32,7 +32,7 @@ test('uniform current daily cap preserves category totals without including savi
 });
 test('current daily forecast has complete TS, inline browser and Python parity',async()=>{
  const {financeProjection}=await backend(),cases=[];for(const amount of [20924.58,21004.58,23924.58]){const data=fixture();data.transactions[0].amount=amount;cases.push({data,options});}
- const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8'),inline=new Function(html.split('/* CANONICAL MONTHLY PERIOD BUDGET */')[1].split('/* END CANONICAL MONTHLY PERIOD BUDGET */')[0]+html.split('/* CANONICAL FINANCE PROJECTION */')[1].split('/* END CANONICAL FINANCE PROJECTION */')[0]+';return financeProjection')();
+ const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8'),inline=new Function(html.split('/* CANONICAL MONTHLY SETTINGS */')[1].split('/* END CANONICAL MONTHLY SETTINGS */')[0]+html.split('/* CANONICAL MONTHLY PERIOD BUDGET */')[1].split('/* END CANONICAL MONTHLY PERIOD BUDGET */')[0]+html.split('/* CANONICAL FINANCE PROJECTION */')[1].split('/* END CANONICAL FINANCE PROJECTION */')[0]+';return financeProjection')();
  const py=spawnSync(path.resolve('.venv/Scripts/python.exe'),['scripts/budget_pool.py','--finance'],{input:JSON.stringify(cases),encoding:'utf8',maxBuffer:16*1024*1024,env:{...process.env,PYTHONUTF8:'1'}});assert.equal(py.status,0,py.stderr);const oracle=JSON.parse(py.stdout);
  cases.forEach((c,i)=>{const p=financeProjection(c.data,c.options);assert.deepEqual(p,inline(c.data,c.options));assert.deepEqual(p,oracle[i]);});
 });

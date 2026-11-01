@@ -41,7 +41,7 @@ test('multiple rates and year rollover retain the earning-month boundary',()=>{
 });
 test('scheduled forecast has full frontend, backend and independent Python parity',async()=>{
  const {financeProjection,monthPayouts}=await backend();
- const embed=new Function(html.split('/* CANONICAL MONTHLY PERIOD BUDGET */')[1].split('/* END CANONICAL MONTHLY PERIOD BUDGET */')[0]+html.split('/* CANONICAL FINANCE PROJECTION */')[1].split('/* END CANONICAL FINANCE PROJECTION */')[0]+';return financeProjection')();
+ const embed=new Function(html.split('/* CANONICAL MONTHLY SETTINGS */')[1].split('/* END CANONICAL MONTHLY SETTINGS */')[0]+html.split('/* CANONICAL MONTHLY PERIOD BUDGET */')[1].split('/* END CANONICAL MONTHLY PERIOD BUDGET */')[0]+html.split('/* CANONICAL FINANCE PROJECTION */')[1].split('/* END CANONICAL FINANCE PROJECTION */')[0]+';return financeProjection')();
  const inputs=[
   [cfg([change('2026-11-01',42000)]),'2026-10-01','2027-01-31'],
   [cfg([change('2026-10-12',44000)]),'2026-09-30','2026-12-31'],
