@@ -66,7 +66,7 @@ def debt_budget(page):
     expand_groups(page)
     check(page.locator('.bud-cat[data-cat=dc]').get_attribute('aria-disabled') == 'true', 'system category opens ordinary editor')
     go_tab(page, 0)
-    wait_money(page, '.kpi-funds .dv-kpi-v', 104000)
+    wait_money(page, '.kpi-funds [data-r=capacity] .kpi-rv', 104000)
     check(page.locator('.kpi-funds [data-r=savings]').count() == 0, 'provisional savings deducted before actual payment')
     page.locator('.kpi-funds .kpi-i').click()
     formula = page.locator('[data-funds-formula]')
@@ -84,7 +84,7 @@ def debt_budget(page):
     # Фактичне відкладання списується один раз; його план не додає другого списання.
     page.evaluate("()=>{__liveMock.data.transactions=[{id:10,type:'expense',account_id:1,category_id:'savings',amount:5,date:'2026-10-10',created_at:'2026-10-10T09:00:00Z',source:'manual'}];__liveMock.event('transactions')}")
     page.wait_for_function('__financeInput.transactions.some(t=>t.id===10)')
-    wait_money(page, '.kpi-funds .dv-kpi-v', 103500)
+    wait_money(page, '.kpi-funds [data-r=capacity] .kpi-rv', 103500)
     go_tab(page, 1)
     wait_money(page, '.bud-avail .bud-kpi-v', 8000)
     page.locator('.bud-cat[data-cat=savings]').click()
