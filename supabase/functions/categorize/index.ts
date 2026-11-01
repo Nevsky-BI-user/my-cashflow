@@ -28,14 +28,14 @@ async function sha256Hex(text: string): Promise<string> {
 
 // Позначити транзакцію категорією; лише якщо її досі не категоризовано вручну
 async function currentCategory(txId: number) {
-  const { data, error } = await sb.from('transactions').select('category_id, transfer_id, categorize_attempts').eq('id', txId).maybeSingle();
+  const { data, error } = await sb.from('transactions').select('category_id, transfer_id, expense_allocations, categorize_attempts').eq('id', txId).maybeSingle();
   if (error) return { error: true };
   return { skipped: true, category_id: data?.category_id ?? null, reason: data?.transfer_id != null ? 'internal_transfer' : data?.category_id != null ? 'already_categorized' : 'concurrent_change', attempts: data?.categorize_attempts ?? 0 };
 }
 
 // Умови повторюються в UPDATE: за час відповіді моделі операція могла стати переказом.
 async function applyCategory(txId: number, categoryId: number) {
-  const { data, error } = await sb.from('transactions').update({ category_id: categoryId, auto_categorized: true }).eq('id', txId).is('category_id', null).is('transfer_id', null).select('id');
+  const { data, error } = await sb.from('transactions').update({ category_id: categoryId, auto_categorized: true }).eq('id', txId).is('category_id', null).eq('expense_allocations', '[]').is('transfer_id', null).select('id');
   if (error) { console.error('categorize: category update failed', { txId }); return { error: true }; }
   if (data?.length) return { applied: true };
   return currentCategory(txId);
@@ -47,7 +47,7 @@ async function giveUp(txId: number, reason: string) {
   if (current.error) return json({ error: 'update_failed' }, 500);
   if (current.reason !== 'concurrent_change') return json(current);
   const attempts = (current.attempts ?? 0) + 1;
-  const { data, error } = await sb.from('transactions').update({ categorize_attempts: attempts }).eq('id', txId).is('category_id', null).is('transfer_id', null).select('id');
+  const { data, error } = await sb.from('transactions').update({ categorize_attempts: attempts }).eq('id', txId).is('category_id', null).eq('expense_allocations', '[]').is('transfer_id', null).select('id');
   if (error) return json({ error: 'update_failed' }, 500);
   if (!data?.length) { const latest = await currentCategory(txId); return latest.error ? json({ error: 'update_failed' }, 500) : json(latest); }
   return json({ category_id: null, reason, attempts, gave_up: attempts >= MAX_ATTEMPTS });
@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
   // Транзакція
   const { data: tx, error: txErr } = await sb
     .from('transactions')
-    .select('id, description, mcc, amount, type, category_id, user_id, transfer_id')
+    .select('id, description, mcc, amount, type, category_id, user_id, transfer_id, expense_allocations')
     .eq('id', txId)
     .maybeSingle();
   if (txErr) {
@@ -85,6 +85,7 @@ Deno.serve(async (req) => {
   }
   if (!tx) return json({ error: 'not_found' }, 404);
   // Внутрішній переказ має дві пов’язані частини: звичайну категорію їм не призначаємо.
+  if (Array.isArray(tx.expense_allocations) && tx.expense_allocations.length) return json({ category_id: tx.category_id, skipped: true, reason: 'expense_allocations' });
   if (tx.transfer_id != null) return json({ category_id: null, skipped: true, reason: 'internal_transfer' });
   if (tx.category_id != null) return json({ category_id: tx.category_id, skipped: true });
   if (!CLAUDE_API_KEY) return json({ error: 'no_claude_key', error_code: 'configuration', retryable: false }, 400);

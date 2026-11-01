@@ -38,7 +38,7 @@ async function countUncategorized(): Promise<number | null> {
   const { count, error } = await sb
     .from('transactions')
     .select('id', { count: 'exact', head: true })
-    .is('category_id', null)
+    .is('category_id', null).eq('expense_allocations', '[]')
     .is('transfer_id', null)
     .lt('categorize_attempts', MAX_ATTEMPTS);
   if (error) {
@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
   const { data: txs, error: txErr } = await sb
     .from('transactions')
     .select('id')
-    .is('category_id', null)
+    .is('category_id', null).eq('expense_allocations', '[]')
     .is('transfer_id', null)
     .lt('categorize_attempts', MAX_ATTEMPTS)
     .order('date', { ascending: false })
