@@ -31,7 +31,7 @@ const repayOf=(r,id)=>r.events.filter(e=>e.kind==='repay'&&e.id.startsWith('repa
 
 // функції фронтенду рівно так, як вони лежать в index.html: вбудована копія рушія і обгортки, без копій правила
 function front(){
- const monthly=html.split('/* CANONICAL MONTHLY PERIOD BUDGET */')[1].split('/* END CANONICAL MONTHLY PERIOD BUDGET */')[0];
+ const monthly=html.split('/* CANONICAL MONTHLY SETTINGS */')[1].split('/* END CANONICAL MONTHLY SETTINGS */')[0]+html.split('/* CANONICAL MONTHLY PERIOD BUDGET */')[1].split('/* END CANONICAL MONTHLY PERIOD BUDGET */')[0];
  const canon=html.split('/* CANONICAL FINANCE PROJECTION */')[1].split('/* END CANONICAL FINANCE PROJECTION */')[0];
  const pick=re=>{const m=html.match(re);assert.ok(m,'не знайдено в index.html: '+re);return m[0];};
  const src=[pick(/const pbIso=[^;]+;/),pick(/const pbDate=v=>\{.*?\};/),pick(/const pbDiff=[^;]+;/),pick(/const pbDm=[^;]+;/),

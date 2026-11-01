@@ -1,3 +1,4 @@
+import { normalizeMonthlyBudgets } from './monthly-settings.ts';
 import { monthlyPeriodBudget } from './monthly-budget.ts';
 // Активна модель застосунку й Telegram: financeProjection (docs/redesign/projection-contract.md, 10.10.2026).
 // Старі periodBudget/freeToPayout та nextPeriodPlan залишено для сумісності й історичних перевірок.
@@ -273,7 +274,8 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     if(weights.some(w=>w>0)){allocate(left,weights).forEach((n,i)=>totals[i]+=n);return {rows:categories,totals};}
     return left>0?{rows:[...categories,{id:'unallocated',name:'Не розподілено',weight:1}],totals:[...totals,left]}:{rows:categories,totals};
   };
-  const monthlyRows=data.monthly_budgets||[],monthlyOptions={categories:data.categories||[]};
+  const monthlyRows=normalizeMonthlyBudgets(data.monthly_budgets||[],data,asof,endGeneration),monthlyOptions={categories:data.categories||[]};
+  for(const row of monthlyRows)if(row.settings_deficit_cents>0&&row.month_start<=through)snapshot.warnings.push({kind:'budget_settings_deficit',date:row.month_start,shortCents:row.settings_deficit_cents});
   const rolePlan=monthlyPeriodBudget([],asof,asof,monthlyOptions),savingsIds=new Set(rolePlan.savingsCategoryIds),debtIds=new Set(rolePlan.debtCategoryIds);
   const actualCardRepayment=(target:any,rows:any[],original:any[],effective:any[])=>{
  const raw=original.find(a=>String(a.id)===String(target.account_id)),current=effective.find(a=>String(a.id)===String(target.account_id));if(!raw||!current)return 0;
