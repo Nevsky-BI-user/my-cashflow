@@ -28,7 +28,7 @@ const prevMonthStart = (d: string) => {
 async function loadTxs(sb: any, from: string, today: string, since: number): Promise<BotTx[]> {
   const rows: BotTx[] = [];
   for (let page = 0; page < 100; page++) {
-    let q = sb.from('transactions').select('id,account_id,category_id,fixed_id,credit_id,payment_due_date,transfer_id,type,amount,created_at,date,source,description')
+    let q = sb.from('transactions').select('id,account_id,category_id,expense_allocations,allocation_revision,fixed_id,credit_id,payment_due_date,transfer_id,type,amount,created_at,date,source,description')
       .lte('date', today).order('id', { ascending: true }).range(page * 1000, page * 1000 + 999);
     q = Number.isFinite(since) ? q.or(`created_at.gt."${new Date(since).toISOString()}",date.gte.${from},payment_due_date.gte.${from}`) : q.or(`date.gte.${from},payment_due_date.gte.${from}`);
     const { data, error } = await q;

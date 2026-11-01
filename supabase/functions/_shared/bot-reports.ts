@@ -1,3 +1,4 @@
+import { expenseCategoryParts } from './expense-allocations.ts';
 import { ownCashSeries } from './own-history.ts';
 // Звіти Telegram-бота з тієї самої проєкції, що й застосунок: Графік, Бюджет, Тиждень, Місяць, ранковий підсумок,
 // нагадування про платежі на завтра і запис «Оплачено». Чисті функції без I/O: їх перевіряють node-тести.
@@ -248,7 +249,7 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
   const exp = (cats || []).filter((c) => !c.is_income && c.type !== 'income' && !c.budget_role && !savingsIds.has(String(c.id)));
   const fact: Record<string, number> = {};
   let none = 0;
-  for (const t of uniq(txs)) {
+  for (const t of uniq(txs).flatMap(t => expenseCategoryParts(t, cats))) {
     const d = txDate(t);
     if (t.type !== 'expense' || t.transfer_id != null || t.fixed_id != null || t.credit_id != null || d < cp.start || d > today || savingsIds.has(String(t.category_id))) continue;
     const c = t.category_id != null ? exp.find((x) => String(x.id) === String(t.category_id)) : null;
@@ -453,10 +454,12 @@ export function monthModel(txs: Tx[], cats: P[], accounts: P[], today: string): 
     if (t.type !== 'expense') continue;
     if (prevFull && !cur) prevFullSpent += c;
     if (!cur && !prev) continue;
-    const name = (t.category_id != null && names.get(String(t.category_id))) || 'Без категорії';
+    for (const part of expenseCategoryParts(t, cats)) {
+    const name = (part.category_id != null && names.get(String(part.category_id))) || 'Без категорії';
     const row = by[name] = by[name] || { name, cur: 0, prev: 0 };
+      if (cur) row.cur += part.amount_cents; else row.prev += part.amount_cents;
+    }
     if (cur) {
-      row.cur += c;
       curSpent += c;
       const desc = String(t.description || '').trim();
       if (desc) {
@@ -466,7 +469,6 @@ export function monthModel(txs: Tx[], cats: P[], accounts: P[], today: string): 
         p.count++;
       }
     } else {
-      row.prev += c;
       prevSpent += c;
     }
   }

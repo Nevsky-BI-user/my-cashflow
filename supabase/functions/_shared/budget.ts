@@ -18,6 +18,7 @@ export type Account = {
 // date: дата операції (YYYY-MM-DD), потрібна для порогу мінімальних витрат (без неї перші 10 знаків created_at)
 // fixed_id: операція оплачує постійний платіж (п. 13), див. fixedPaid; credit_id: оплата розстрочки свого місяця
 export type AccTx = {
+  expense_allocations?: unknown; allocation_revision?: number;
   id?: string | number; category_id?: string | number | null;
   account_id: number | string | null; type: string; amount: number | string; created_at: string; source?: string | null; date?: string | null;
   fixed_id?: number | string | null; credit_id?: number | string | null; payment_due_date?: string | null; transfer_id?: string | null;
@@ -106,6 +107,23 @@ export function payoutBudget(ownCents: number, reserveCents: number, debtCents: 
 // Канонічна проєкція: вхід у гривнях, вихід у копійках; без I/O та мутації входу.
 // Функція самодостатня, щоб автономний фронтенд міг вбудувати той самий алгоритм.
 export function financeProjection(data: NextPeriodInput, options: {asof: string; through: string; scenario?: {selections: {occurrenceId: string; accountId: string | number; amountCents: number}[]} | null}) {
+function expenseCategoryParts(tx: any, categories?: any[]): any[] {
+  const total = Math.round(Number(tx.amount) * 100);
+  const fallback = () => [{ ...tx, amount_cents: total, originalTransactionId: tx.id }];
+  const ordinary = (c: any) => c && c.type !== 'income' && !c.is_income && !c.isIncome && !c.budget_role && String(c.id) !== 'savings' && String(c.name || '').normalize('NFKC').trim().toLocaleLowerCase('uk-UA') !== 'заощадження';
+  const rows = tx.expense_allocations;
+  if (tx.type !== 'expense' || tx.transfer_id != null || tx.fixed_id != null || tx.credit_id != null || !Number.isSafeInteger(total) || total <= 0 || !Array.isArray(rows) || rows.length < 2 || rows.length > 100) return fallback();
+  if (categories && tx.category_id != null && !ordinary(categories.find(c => String(c.id) === String(tx.category_id)))) return fallback();
+  let sum = 0;
+  for (const r of rows) {
+    if (!r || typeof r !== 'object' || Array.isArray(r) || !((Number.isSafeInteger(r.category_id) && r.category_id > 0) || (typeof r.category_id === 'string' && r.category_id.trim().length > 0)) || !Number.isSafeInteger(r.amount_cents) || r.amount_cents <= 0 || (r.label !== undefined && (typeof r.label !== 'string' || [...r.label].length > 160)) || (categories && !ordinary(categories.find(c => String(c.id) === String(r.category_id))))) return fallback();
+    sum += r.amount_cents;
+    if (!Number.isSafeInteger(sum)) return fallback();
+  }
+  if (sum !== total) return fallback();
+  return rows.map((r, i) => ({ ...tx, category_id: r.category_id, amount: r.amount_cents / 100, amount_cents: r.amount_cents, allocationLabel: r.label || '', allocationIndex: i, originalTransactionId: tx.id }));
+}
+
   const {asof, through} = options;
   const cmp = (a: any, b: any) => a < b ? -1 : a > b ? 1 : 0;
   const day = (s: string) => new Date(s + 'T00:00:00Z');
@@ -303,7 +321,7 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     let completedDeficitCents=0;
     for(const seg of m.segments){
       const md=day(seg.month),monthEnd=date(md.getUTCFullYear(),md.getUTCMonth()+2,1),full=monthlyPeriodBudget(monthlyRows,seg.month,monthEnd,monthlyOptions),budgetRows=[...seg.categories,{id:'unallocated',totalCents:seg.unallocatedCents}],fullRows=[...full.categories,{id:'unallocated',totalCents:full.unallocatedCents}];
-      const fact=txs.filter(t=>t.type==='expense'&&t.fixed_id==null&&t.credit_id==null&&t.transfer_id==null&&txDate(t)>=seg.month&&txDate(t)<monthEnd),known=new Set((seg.legacy?seg.categories:full.categories).map((c:any)=>c.id));
+      const fact=txs.flatMap(t=>expenseCategoryParts(t,data.categories)).filter(t=>t.type==='expense'&&t.fixed_id==null&&t.credit_id==null&&t.transfer_id==null&&txDate(t)>=seg.month&&txDate(t)<monthEnd),known=new Set((seg.legacy?seg.categories:full.categories).map((c:any)=>c.id));
       const cat=(t:AccTx)=>t.category_id!=null&&!debtIds.has(String(t.category_id))&&known.has(String(t.category_id))?String(t.category_id):'unallocated';
       const projected=events.filter(e=>(e.kind==='variable'||e.budgetSavings)&&e.date>=seg.month&&e.date<seg.start);
       let values=budgetRows.map(c=>{if(debtIds.has(c.id))return 0;const spent=sum(fact.filter(t=>cat(t)===c.id).map(t=>cents(t.amount))),part=subtractActual?sum(fact.filter(t=>cat(t)===c.id&&txDate(t)>=seg.start&&txDate(t)<seg.end).map(t=>cents(t.amount))):0;
@@ -342,14 +360,14 @@ export function financeProjection(data: NextPeriodInput, options: {asof: string;
     // Поточний період: каса мінус обовʼязкові до виплати; борг карток резервується один раз у nextPlan.
     // Темп щоденних витрат від завтра до дня перед виплатою: більше з 15 000 ₴ на весь період [start; виплата) і untilPayout на дні, що лишились.
     // Сума в гривнях на прогноз від завтра: ліміт мінус факт змінних витрат категорії з початку періоду, не нижче 0.
-    let start=payoutDates.filter(d=>d<=asof).pop()||asof,actualVariableCents=sum(txs.filter(t=>t.type==='expense'&&t.transfer_id==null&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start).map(t=>cents(t.amount))),mandatoryCentsNow=mandatory(asof,nextDate),available=safe(cashCents-mandatoryCentsNow),periodDays=distance(start,nextDate),leftDays=Math.max(0,distance(plus(asof,1),nextDate)),floorLeft=periodDays>0?Math.floor((manual!=null?manual:1500000)*leftDays/periodDays):0,freeLeft=Math.max(0,untilPayout?untilPayout.cents:0),remaining=leftDays>0?Math.max(floorLeft,manual!=null?manual-actualVariableCents:freeLeft):0,target=actualVariableCents+remaining,caps=categories.map(c=>c.limitAbsCents==null?0:Math.max(0,c.limitAbsCents-sum(txs.filter(t=>t.type==='expense'&&t.transfer_id==null&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start&&t.category_id!=null&&String(t.category_id)===c.id).map(t=>cents(t.amount))))),dist=distribution(remaining,plus(asof,1),nextDate,available,caps);
+    let start=payoutDates.filter(d=>d<=asof).pop()||asof,actualVariableCents=sum(txs.filter(t=>t.type==='expense'&&t.transfer_id==null&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start).map(t=>cents(t.amount))),mandatoryCentsNow=mandatory(asof,nextDate),available=safe(cashCents-mandatoryCentsNow),periodDays=distance(start,nextDate),leftDays=Math.max(0,distance(plus(asof,1),nextDate)),floorLeft=periodDays>0?Math.floor((manual!=null?manual:1500000)*leftDays/periodDays):0,freeLeft=Math.max(0,untilPayout?untilPayout.cents:0),remaining=leftDays>0?Math.max(floorLeft,manual!=null?manual-actualVariableCents:freeLeft):0,target=actualVariableCents+remaining,caps=categories.map(c=>c.limitAbsCents==null?0:Math.max(0,c.limitAbsCents-sum(txs.flatMap(t=>expenseCategoryParts(t,data.categories)).filter(t=>t.type==='expense'&&t.transfer_id==null&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start&&t.category_id!=null&&String(t.category_id)===c.id).map(t=>cents(t.amount))))),dist=distribution(remaining,plus(asof,1),nextDate,available,caps);
     const currentMonthly=monthlyPlan(start,nextDate,target),remainingMonthly=currentMonthly?monthlyPlan(start,nextDate,target,true):null;
     if(currentMonthly&&remainingMonthly){target=currentMonthly.rawTargetCents;remaining=remainingMonthly.targetCents;
       // Єдиний денний план: перевитрата попередньої частини періоду зменшує спільний залишок.
       // Сьогодні має свою частку плану, але її не додаємо до фактичного балансу як вигадану витрату.
       dist=distribution(Math.max(0,remainingMonthly.signedSpendableRemainingCents),asof,nextDate,available,undefined,remainingMonthly,true);
     }
-    const actualSavingsCents=currentMonthly?sum(txs.filter(t=>t.type==='expense'&&t.transfer_id==null&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start&&savingsIds.has(String(t.category_id))).map(t=>cents(t.amount))):0,savingsTargetCents=currentMonthly?currentMonthly.rawSavingsTargetCents:0,savingsRemainingCents=remainingMonthly?remainingMonthly.savingsTargetCents:0;
+    const actualSavingsCents=currentMonthly?sum(txs.flatMap(t=>expenseCategoryParts(t,data.categories)).filter(t=>t.type==='expense'&&t.transfer_id==null&&t.fixed_id==null&&t.credit_id==null&&txDate(t)>=start&&savingsIds.has(String(t.category_id))).map(t=>cents(t.amount))):0,savingsTargetCents=currentMonthly?currentMonthly.rawSavingsTargetCents:0,savingsRemainingCents=remainingMonthly?remainingMonthly.savingsTargetCents:0;
     const signedSpendableRemainingCents=remainingMonthly?remainingMonthly.signedSpendableRemainingCents:remaining-savingsRemainingCents,spendableRemainingCents=Math.max(0,signedSpendableRemainingCents);
     currentPeriod={start,end:nextDate,actualVariableCents,actualSpendableCents:actualVariableCents-actualSavingsCents,actualSavingsCents,targetCents:target,remainingTargetCents:remaining,savingsTargetCents,debtBudgetTargetCents:currentMonthly?.debtBudgetTargetCents||0,debtExtraOverrunCents:remainingMonthly?.debtExtraOverrunCents||0,spendableTargetCents:target-savingsTargetCents-(currentMonthly?.debtBudgetTargetCents||0),savingsRemainingCents,signedSpendableRemainingCents,spendableRemainingCents,periodDays,leftDays,dailyCents:currentMonthly?spendableRemainingCents/Math.max(1,distance(asof,nextDate)):leftDays>0?(remaining-savingsRemainingCents)/leftDays:0,futureSchedule:dist.schedule,...(currentMonthly?{monthlyBudget:currentMonthly,overrunCents:Math.max(0,-signedSpendableRemainingCents)}:{})};
     periods.push({start,end:nextDate,basis:'current',openingCashCents:cashCents,payoutCents:0,mandatoryCents:mandatoryCentsNow,debtReserveCents:0,availableCents:available,targetCents:target,gapCents:Math.max(0,remaining-available),...dist,...(currentMonthly?{monthlyBudget:currentMonthly}:{})});

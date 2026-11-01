@@ -1,3 +1,4 @@
+from expense_allocations import expense_category_parts
 # Активний еталон: finance_projection / --finance, контракт docs/redesign/projection-contract.md (10.10.2026).
 # Нижче також збережено історичний CLI та його опис для сумісності з попередніми перевірками.
 # Правило каси (п. 12, варіант А): відсотків не платимо, усе, що лягло на кредитку за місяць M, гаситься власними
@@ -605,7 +606,7 @@ def finance_projection(data, options):
             full=monthly_period_budget(monthly_rows,seg['month'],month_end,monthly_options)
             budget_rows=seg['categories']+[{'id':'unallocated','totalCents':seg['unallocatedCents']}]
             full_rows=full['categories']+[{'id':'unallocated','totalCents':full['unallocatedCents']}]
-            fact=[t for t in txs if t.get('type')=='expense' and all(t.get(k) is None for k in ('fixed_id','credit_id','transfer_id')) and seg['month']<=txdate(t)<month_end]
+            fact=[part for t in txs for part in expense_category_parts(t,data.get('categories', [])) if part.get('type')=='expense' and all(part.get(k) is None for k in ('fixed_id','credit_id','transfer_id')) and seg['month']<=txdate(part)<month_end]
             known={c['id'] for c in (seg['categories'] if seg['legacy'] else full['categories'])}
             def cat(t): return str(t['category_id']) if t.get('category_id') is not None and str(t['category_id']) not in debt_ids and str(t['category_id']) in known else 'unallocated'
             projected=[e for e in events if (e['kind']=='variable' or e.get('budgetSavings')) and seg['month']<=e['date']<seg['start']]
@@ -676,13 +677,13 @@ def finance_projection(data, options):
         start=next((d for d in reversed(payout_dates) if d<=asof),asof); actual=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('transfer_id') is None and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start); mandatory_now=mandatory(asof,next_date); available=safe(cash-mandatory_now)
         period_days=distance(start,next_date); left_days=max(0,distance(plus(asof,1),next_date)); floor_left=(manual if manual is not None else 1500000)*left_days//period_days if period_days>0 else 0; free_left=max(0,until_payout['cents'] if until_payout else 0); remaining=max(floor_left,manual-actual if manual is not None else free_left) if left_days>0 else 0; target=actual+remaining
         # сума в гривнях на прогноз від завтра: ліміт мінус факт змінних витрат категорії з початку періоду, не нижче 0
-        caps=[max(0,c['limitAbsCents']-total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and t.get('transfer_id') is None and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start and t.get('category_id') is not None and sid(t['category_id'])==c['id'])) if 'limitAbsCents' in c else 0 for c in categories]
+        caps=[max(0,c['limitAbsCents']-total(cents(t.get('amount')) for tx in txs for t in expense_category_parts(tx,data.get('categories', [])) if t.get('type')=='expense' and t.get('transfer_id') is None and t.get('fixed_id') is None and t.get('credit_id') is None and txdate(t)>=start and t.get('category_id') is not None and sid(t['category_id'])==c['id'])) if 'limitAbsCents' in c else 0 for c in categories]
         dist=distribution(remaining,plus(asof,1),next_date,available,caps)
         current_monthly=monthly_plan(start,next_date,target); remaining_monthly=monthly_plan(start,next_date,target,True) if current_monthly else None
         if current_monthly and remaining_monthly:
             target=current_monthly['rawTargetCents']; remaining=remaining_monthly['targetCents']
             dist=distribution(max(0,remaining_monthly['signedSpendableRemainingCents']),asof,next_date,available,None,remaining_monthly,True)
-        actual_savings=total(cents(t.get('amount')) for t in txs if t.get('type')=='expense' and all(t.get(k) is None for k in ('transfer_id','fixed_id','credit_id')) and txdate(t)>=start and str(t.get('category_id')) in savings_ids) if current_monthly else 0
+        actual_savings=total(cents(t.get('amount')) for tx in txs for t in expense_category_parts(tx,data.get('categories', [])) if t.get('type')=='expense' and all(t.get(k) is None for k in ('transfer_id','fixed_id','credit_id')) and txdate(t)>=start and str(t.get('category_id')) in savings_ids) if current_monthly else 0
         savings_target=current_monthly['rawSavingsTargetCents'] if current_monthly else 0; savings_remaining=remaining_monthly['savingsTargetCents'] if remaining_monthly else 0
         signed_remaining=remaining_monthly['signedSpendableRemainingCents'] if remaining_monthly else remaining-savings_remaining; spendable_remaining=max(0,signed_remaining)
         current_period={'start':start,'end':next_date,'actualVariableCents':actual,'actualSpendableCents':actual-actual_savings,'actualSavingsCents':actual_savings,'targetCents':target,'remainingTargetCents':remaining,'savingsTargetCents':savings_target,'debtBudgetTargetCents':current_monthly['debtBudgetTargetCents'] if current_monthly else 0,'debtExtraOverrunCents':remaining_monthly['debtExtraOverrunCents'] if remaining_monthly else 0,'spendableTargetCents':target-savings_target-(current_monthly['debtBudgetTargetCents'] if current_monthly else 0),'savingsRemainingCents':savings_remaining,'signedSpendableRemainingCents':signed_remaining,'spendableRemainingCents':spendable_remaining,'periodDays':period_days,'leftDays':left_days,'dailyCents':spendable_remaining/max(1,distance(asof,next_date)) if current_monthly else (remaining-savings_remaining)/left_days if left_days>0 else 0,'futureSchedule':dist['schedule'],**({'monthlyBudget':current_monthly,'overrunCents':max(0,-signed_remaining)} if current_monthly else {})}
