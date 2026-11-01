@@ -26,7 +26,7 @@ const clean=(manual)=>({accounts:[{id:1,kind:'debit',balance:0,debt:0,balance_up
  salary:{rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:60000,salary_amount:60000,budget_manual:manual}});
 const at=(r,d)=>r.periods.find(p=>p.start===d);
 
-test('payoutBudget: budget is reserved before repayment; manual sum replaces the auto rule; uncovered due is dueShortCents',async()=>{
+test('payoutBudget: due debt precedes discretionary budget; early debt respects manual budget',async()=>{
  const {payoutBudget}=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/budget.ts')).href);
  // авто: вільні 43 500, борг 40 000: погашення 28 500, A 15 000
  assert.deepEqual(payoutBudget(6000000,1650000,4000000,0,true),{repayCents:2850000,dueShortCents:0,availableCents:1500000,targetCents:1500000});
@@ -34,9 +34,9 @@ test('payoutBudget: budget is reserved before repayment; manual sum replaces the
  assert.deepEqual(payoutBudget(6000000,1650000,4000000,0,true,1000000),{repayCents:3350000,dueShortCents:0,availableCents:1000000,targetCents:1000000});
  assert.deepEqual(payoutBudget(6000000,1650000,4000000,0,true,2500000),{repayCents:1850000,dueShortCents:0,availableCents:2500000,targetCents:2500000});
  // належне 20 000 понад вільні після бюджету (18 500): погашення 18 500, нестача 1 500 (не погашення з повітря)
- assert.deepEqual(payoutBudget(5000000,1650000,4000000,2000000,true),{repayCents:1850000,dueShortCents:150000,availableCents:1500000,targetCents:1500000});
+ assert.deepEqual(payoutBudget(5000000,1650000,4000000,2000000,true),{repayCents:2000000,dueShortCents:0,availableCents:1350000,targetCents:1500000});
  // ручна сума більша за вільні: погашення 0, бюджет лишається ручним (розрив показує UI), нестача = все належне
- assert.deepEqual(payoutBudget(3000000,1650000,4000000,500000,true,2000000),{repayCents:0,dueShortCents:500000,availableCents:1350000,targetCents:2000000});
+ assert.deepEqual(payoutBudget(3000000,1650000,4000000,500000,true,2000000),{repayCents:500000,dueShortCents:0,availableCents:850000,targetCents:2000000});
  // 0 теж ручна сума
  assert.equal(payoutBudget(6000000,1650000,4000000,0,true,0).repayCents,4000000);
 });

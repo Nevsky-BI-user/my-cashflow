@@ -1,5 +1,5 @@
 # ПК-Потік: фільтри, підсумок вибірки, таблиця по днях, дровер деталей зі стрілками; телефон: мобільний список і модалка
-from helpers import SHOTS, check, dialog, freeze, go_tab, shot
+from helpers import freeze_demo, SHOTS, check, dialog, freeze, go_tab, shot
 
 ROWS = '.p-flow.desk .flow-row.tx'
 DESCS = "[...document.querySelectorAll('.p-flow.desk .flow-row.tx .flow-desc')].map(e=>e.innerText)"
@@ -162,6 +162,7 @@ def all_chips(page):
 
 
 def subscription(page):
+    freeze_demo(page)
     go_tab(page, 2)
     hint = page.locator('.flow-hint')
     check(hint.count() == 1 and 'Spotify' in hint.inner_text(), 'немає підказки про підписку Spotify')
@@ -199,6 +200,7 @@ def subscription_known(page):
 
 
 def subscription_no(page):
+    freeze_demo(page)
     # «Ні» ховає підказку для цієї назви назавжди (localStorage, лише цей глядач)
     go_tab(page, 2)
     hint = page.locator('.flow-hint')

@@ -1,14 +1,15 @@
 # План проти фактів: новий постійний платіж із вікна «Платежі» одразу видно в «Найближче» Огляду і в Потоці
 from datetime import date, timedelta
 
-from helpers import check, dialog, go_tab, open_payout
+from helpers import freeze_demo, check, dialog, go_tab, open_payout
 
 FAB = "()=>{const b=[...document.querySelectorAll('button')].filter(x=>getComputedStyle(x).position==='fixed'&&!x.closest('.tab-bar'));b[b.length-1].click()}"
 NAME = 'Спортзал тест'
 
 
 def fixed_appears(page):
-    t = date.today()
+    freeze_demo(page)
+    t = date(*page.evaluate("()=>{const d=new Date();return [d.getFullYear(),d.getMonth()+1,d.getDate()]}"))
     # день у переглядуваному періоді (за замовчуванням поточний, відкритий останньою виплатою) і не раніше сьогодні:
     # завтра, якщо воно ще в періоді й у цьому місяці, інакше сьогодні
     start, kind = open_payout(t)

@@ -2,7 +2,7 @@
 import re as _re
 from datetime import datetime as _dt
 
-from helpers import check, dialog, shot, touch_drag
+from helpers import freeze_demo, check, dialog, shot, touch_drag
 
 SETR = """(el,v)=>{const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;s.call(el,String(v));el.dispatchEvent(new Event('input',{bubbles:true}))}"""
 NO_HSCROLL = 'document.documentElement.scrollWidth <= document.documentElement.clientWidth'
@@ -18,6 +18,7 @@ def num(t):
 
 
 def desktop(page):
+    freeze_demo(page)
     cards = page.locator('.dv-cards .bcard')
     check(cards.count() == 3, f'на ПК {cards.count()} карток замість 3')
     # Непримітний «+» стоїть праворуч після всіх рахунків.

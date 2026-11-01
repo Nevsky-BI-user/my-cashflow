@@ -44,6 +44,7 @@ def verify_amounts(page):
         if key.startswith('carry') and q['leftoverCents'] == 0:
             check(cell.count() == 0 and cents == 0, 'zero legacy carry still presented as a separate distribution')
             continue
+        check(cell.count() == 1, f'{key}: expected one money row for {cents} cents, found {cell.count()}')
         check(int(cell.get_attribute('data-cents')) == cents, f'{key}: wrong raw cents')
         check(abs(num(cell.inner_text()) * 100 - cents) < .01, f'{key}: displayed money loses cents')
     check(expected['sources'] == expected['arrears'] + expected['carry'] + expected['own'], 'source conservation')

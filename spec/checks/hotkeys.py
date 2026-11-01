@@ -1,7 +1,7 @@
 # Гарячі клавіші на ПК: N, Esc, S, T, ?, і поле вводу їх не віддає
 import re
 
-from helpers import check, dialog, go_tab
+from helpers import freeze_demo, check, dialog, go_tab
 
 ADD = '.sheet:has-text("Нова транзакція")'
 
@@ -85,6 +85,7 @@ def field_keeps_keys(page):
 
 
 def form_keys(page):
+    freeze_demo(page)
     # форма операції: Enter без суми лишає форму з помилкою, +/- перемикають тип, 1-5 у полі суми не перемикають екран
     page.keyboard.press('n')
     page.wait_for_timeout(300)
