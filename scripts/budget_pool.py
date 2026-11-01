@@ -940,6 +940,9 @@ def finance_projection(data, options):
         base=next_plan['baseAvailableCents'] if next_plan else 0
         gain=total(e['amountCents'] for e in events if e['funding']=='credit' and next_plan['start']<=e['date']<next_plan['end'])-total(e['amountCents'] for e in scenario['repayments'] if next_plan['start']<=e['date']<next_plan['end']) if next_plan else 0
         scenario['cashPlanCents']=safe(base+gain); scenario['gapCents']=max(0,(next_plan['targetCents'] if next_plan else 1500000)-scenario['cashPlanCents'])
+    if current_period is not None:
+        planned=safe(math.floor(current_period['spendableTargetCents']+0.5)); actual=safe(math.floor(current_period['actualSpendableCents']+0.5)); signed=safe(math.floor(current_period['signedSpendableRemainingCents']+0.5))
+        current_period['reconciliation']={'plannedCents':planned,'actualCents':actual,'adjustmentCents':safe(planned-actual-signed),'signedRemainingCents':signed,'availableCents':max(0,signed),'overrunCents':max(0,-signed)}
     visible=sorted([e for e in events if asof<=e['date']<=through],key=event_key)
     return {'snapshot':snapshot,'nextPlan':next_plan,'reason':None if next_plan else 'no_next_payout','currentPeriod':current_period,'untilPayout':until_payout,'periods':periods,'events':visible,'days':days,'scenario':scenario,'minSpend':min_spend}
 

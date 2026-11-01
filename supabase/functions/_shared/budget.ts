@@ -527,6 +527,11 @@ function expenseCategoryParts(tx: any, categories?: any[]): any[] {
   }
   if(nextPlan&&head)Object.assign(nextPlan,{baseAvailableCents:head.availableCents,targetCents:head.targetCents,gapCents:head.gapCents,averageDailyCents:head.spendableTargetCents/nextPlan.days,savingsTargetCents:head.savingsTargetCents,spendableTargetCents:head.spendableTargetCents,reserveCents:head.reserveCents,repayCents:head.repayCents,savingsCents:head.savingsCents,cashOutCents:head.cashOutCents,toMonoCents:head.toMonoCents,monoOffsetCents:head.monoOffsetCents,categories:head.categories,schedule:head.schedule});
   if(scenario){const base=nextPlan?.baseAvailableCents??0;const gain=nextPlan?sum(events.filter(e=>e.funding==='credit'&&e.date>=nextPlan.start&&e.date<nextPlan.end).map(e=>e.amountCents))-sum(scenario.repayments.filter(e=>e.date>=nextPlan.start&&e.date<nextPlan.end).map(e=>e.amountCents)):0;scenario.cashPlanCents=safe(base+gain);scenario.gapCents=Math.max(0,(nextPlan?.targetCents??1500000)-scenario.cashPlanCents);}
+  // Звірка пояснює остаточний залишок після всіх обмежень, не змінюючи план чи фактичні витрати.
+  if(currentPeriod){
+    const plannedCents=safe(Math.round(currentPeriod.spendableTargetCents)),actualCents=safe(Math.round(currentPeriod.actualSpendableCents)),signedRemainingCents=safe(Math.round(currentPeriod.signedSpendableRemainingCents));
+    currentPeriod.reconciliation={plannedCents,actualCents,adjustmentCents:safe(plannedCents-actualCents-signedRemainingCents),signedRemainingCents,availableCents:Math.max(0,signedRemainingCents),overrunCents:Math.max(0,-signedRemainingCents)};
+  }
   const visible=events.filter(e=>e.date>=asof&&e.date<=through).sort(compareEvents);
   return {snapshot,nextPlan,reason:nextPlan?null:'no_next_payout',currentPeriod,untilPayout,periods,events:visible,days,scenario,minSpend};
 }

@@ -21,7 +21,7 @@ def _tiles(page, scope):
 
 
 def kpi_values(page, scope):
-    """Плитки: «Доступні кошти» = готівка + карти + кредитні (вільний ліміт), «Баланс» = власні мінус борг, розстрочки форматом
+    """Плитки: «Доступні кошти» = min(ресурс рахунків, ліміт поточного періоду), «Баланс» = власні мінус борг, розстрочки форматом
     «Назва · X ₴ × n · до DD.MM.YYYY»; значення з проєкції."""
     r = finance_ref(page)
     snap = r['snapshot']
@@ -36,7 +36,7 @@ def kpi_values(page, scope):
     print(f'      Доступні {total} = готівка {rows["cash"]} + карти {rows["cards"]} + кредитні {rows["credit"]}; еталон власні {own:.2f} + ліміт {credit:.2f}')
     check(abs(rows['cash'] + rows['cards'] - own) <= 1, f'готівка + карти {rows["cash"] + rows["cards"]}, а власні {own:.2f}')
     check(abs(rows['credit'] - credit) <= 1, f'кредитні {rows["credit"]}, еталон {credit:.2f}')
-    check(abs(total - (rows['cash'] + rows['cards'] + rows['credit'])) <= 1, f'«Доступні кошти» {total} не сума рядків {rows}')
+    check(abs(total - min(rows['cash'] + rows['cards'] + rows['credit'], r['currentPeriod']['reconciliation']['availableCents'] / 100)) <= 1, f'«Доступні кошти» {total} не сума рядків {rows}')
     b = page.locator(f'{scope} .kpi-balance')
     bal = num(b.locator('.dv-kpi-v').inner_text())
     want = (snap['positiveOwnCents'] - snap['creditDebtCents']) / 100

@@ -10,7 +10,7 @@ import json
 import os
 from datetime import date, datetime, timedelta
 
-from helpers import ROOT, check, freeze, go_tab, num, open_payout, settle
+from helpers import ROOT, finance_ref, check, freeze, go_tab, num, open_payout, settle
 from checks.visual_layout import overview_bounds
 
 from checks.visual_layout import overview_plot_minimum
@@ -34,9 +34,15 @@ def _expected(page=None):
         const p=financeProjection(window.__financeInput,Object.assign({},window.__financeOptions,{through:to}));
         return {days:p.days.filter(d=>d.date>from&&d.date<=to).map(d=>({date:d.date,cents:d.netCents})),
           savings:p.events.filter(e=>e.kind==='savings'&&e.date>from&&e.date<=to).reduce((s,e)=>s+e.amountCents,0)}}""")
+        current = finance_ref(page)['currentPeriod']
         peak = max(raw['days'], key=lambda d:d['cents'])
         money = lambda cents: f'{int(abs(cents)/100+0.5):,}'.replace(',', ' ') + ' ₴'
         for snapshot in data.values():
+            funds = snapshot['kpis']['kpi-funds']
+            cap = current['reconciliation']['availableCents']
+            funds_money = lambda cents: (f'{cents / 100:,.2f}'.replace(',', ' ').replace('.', ',').removesuffix(',00') + ' ₴')
+            funds['v'] = funds_money(min(3750000, cap))
+            funds['rows'] = ['Готівка0 ₴', 'На картках17 500 ₴', 'Невикористаний кредит20 000 ₴', 'Кошти й кредитний ресурс37 500 ₴', 'Ліміт до '+_dm(current['end'])+funds_money(cap)]
             parts = snapshot['fc'].split(' · ')
             # Фікстура має історичний мінімум; новий прогноз його не перевищує вниз.
             check(min(d['cents'] for d in raw['days']) > -18982400, 'forecast crossed historical fixture minimum')

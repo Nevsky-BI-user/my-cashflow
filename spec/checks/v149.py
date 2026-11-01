@@ -57,9 +57,7 @@ return {k:t.dataset.k||t.className,top:Math.round(r.top),h:Math.round(r.height),
 
 
 def kpi_plan(page):
-    """п. 4: плитки KPI в одному ряду однакової висоти, вміст угорі; v151 (знахідка 2): «За планом» у «Доступні кошти» = бюджет
-    періоду з наступної виплати за правилом рушія: A = nextPlan.baseAvailableCents, бюджет min(20 000, A), якщо A > 15 000, інакше 15 000;
-    розклад у підказці «i»."""
+    """Ліміт поточного періоду, пояснення та однакова висота плиток."""
     freeze(page, DAY)
     go_tab(page, 0)
     ref = finance_ref(page)
@@ -68,11 +66,11 @@ def kpi_plan(page):
     plan = min(2000000, a) if a > 1500000 else 1500000
     check(n['targetCents'] == plan, f'ціль наступного періоду {n["targetCents"]} не за правилом від A {a}')
     v = num(page.inner_text('.kpi-funds [data-r=plan] .kpi-rv'))
-    check(abs(v - plan / 100) <= 1, f'«За планом» {v}, а за рушієм {plan / 100}')
+    check(abs(v - ref['currentPeriod']['reconciliation']['availableCents'] / 100) <= 1, f'«За планом» {v}, а за рушієм {plan / 100}')
     page.locator('.kpi-funds .kpi-i').click()
     page.wait_for_selector('.kpi-tip[data-k=funds]')
     tip = page.inner_text('.kpi-tip[data-k=funds]')
-    check('За планом, ' in tip and '= A ' in tip and '; бюджет ' in tip, f'у підказці немає розкладу «За планом»: {tip!r}')
+    check('За планом поточного періоду' in tip and 'менша сума' in tip, f'у підказці немає розкладу «За планом»: {tip!r}')
     page.keyboard.press('Escape')
     rows = {}
     for t in page.evaluate(KPI):

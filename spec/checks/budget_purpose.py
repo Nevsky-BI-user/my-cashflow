@@ -26,7 +26,14 @@ def verify(page, desktop):
     check(sum(expected['parts'].values())==expected['total'],'суми не зберігають копійки')
     avail=page.locator('.kpi-budget [data-r="avail"] .kpi-rv')
     if avail.count():
-        check(abs(num(section.locator('.purpose-heading b').inner_text())-abs(num(avail.first.inner_text())))<0.01,'залишок графіка не збігається з головним KPI')
+        equation = section.locator('[data-period-part=remaining]')
+        if equation.count():
+            signed = int(equation.get_attribute('data-cents'))
+            expected_sign = -1 if page.locator('.kpi-budget [data-r=avail]').first.get_attribute('data-over') == '1' else 1
+            check(abs(num(equation.inner_text()) * 100 - signed) < 1, 'знак видимого залишку не відповідає звірці')
+            check(abs(signed - expected_sign * num(avail.first.inner_text()) * 100) < 1, 'залишок звірки не збігається з головним KPI')
+        else:
+            check(abs(num(section.locator('.purpose-heading b').inner_text())-abs(num(avail.first.inner_text())))<0.01,'залишок графіка не збігається з головним KPI')
     bounds=section.evaluate("""e=>{const r=e.getBoundingClientRect(),host=e.closest('.surface,.o-budget').getBoundingClientRect();return{bottom:r.bottom,hostBottom:host.bottom,bad:[...e.querySelectorAll('*')].filter(x=>{const q=x.getBoundingClientRect();return x.scrollWidth>x.clientWidth+1||q.left<r.left-1||q.right>r.right+1||q.top<r.top-1||q.bottom>r.bottom+1}).map(x=>x.className)}}""")
     check(not bounds['bad'] and bounds['bottom']<=bounds['hostBottom']+1,f'графік або суми обрізано {bounds}')
     if desktop:

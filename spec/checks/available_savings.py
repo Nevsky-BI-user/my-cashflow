@@ -39,14 +39,14 @@ def savings(page):
     wait_plan(page, 0)
     page.wait_for_function('__periodBudget.monthly===true')
     baseline = page.evaluate('({funds:kpiFunds(__financeProjection),period:__periodBudget})')
-    wait_money(page, '.kpi-funds .dv-kpi-v', baseline['funds']['total'])
+    wait_money(page, '.kpi-funds [data-r=capacity] .kpi-rv', baseline['funds']['total'])
     check(page.locator('.kpi-funds [data-r=savings]').count() == 0, 'zero reserve occupies a row')
 
     # Орієнтовна ціль звужує бюджет витрат, але не списує фактичні кошти наперед.
     page.evaluate('rows=>testSetMonthlyRows(rows)', SAVINGS_PLAN)
     wait_plan(page, 310000)
     expected_funds = baseline['funds']['total']
-    wait_money(page, '.kpi-funds .dv-kpi-v', expected_funds)
+    wait_money(page, '.kpi-funds [data-r=capacity] .kpi-rv', expected_funds)
     check(page.evaluate('testSavingsLog.length') == 0, 'allocation generated a ledger contribution')
     check(page.locator('.kpi-funds [data-r=savings]').count() == 0, 'provisional goal deducted from actual funds')
     current = page.evaluate('__periodBudget')
@@ -86,7 +86,7 @@ def savings(page):
     page.wait_for_function('testSavingsLog.length===1')
     check(page.evaluate('JSON.stringify(__financeProjection)') == projection, 'ledger changed projection')
     check(page.evaluate('__periodBudget.avail') == expected_left, 'ledger changed daily spending basis')
-    wait_money(page, '.kpi-funds .dv-kpi-v', expected_funds)
+    wait_money(page, '.kpi-funds [data-r=capacity] .kpi-rv', expected_funds)
 
     # Фактична витрата списує рахунок один раз; бюджетна ціль не списується вдруге.
     page.evaluate("""()=>testSetDemoEd({add:[{id:'fixture-saving',date:'2026-10-25',created_at:new Date().toISOString(),
@@ -95,7 +95,7 @@ def savings(page):
     page.wait_for_function('__financeProjection.snapshot.positiveOwnCents===1650000')
     reserve = page.evaluate("monthlySavingsReserve(__financeInput.monthly_budgets,__financeInput.categories,__financeInput.transactions,'2026-10-25')")
     check(reserve['reserveCents'] == 0 and reserve['plannedCents'] == 310000 and reserve['factCents'] == 100000, 'provisional goal, actual saving and cash reserve conflated')
-    wait_money(page, '.kpi-funds .dv-kpi-v', expected_funds - 100000)
+    wait_money(page, '.kpi-funds [data-r=capacity] .kpi-rv', expected_funds - 100000)
     check(page.evaluate('__periodBudget.avail') == expected_left, 'actual saving deducted twice from spending budget')
     wait_money(page, '.kpi-budget [data-r=daily] .kpi-rv', current['daily'])
 
@@ -127,7 +127,7 @@ def savings(page):
     page.evaluate('edits=>testSetDemoEd(edits)', EMPTY_EDITS)
     page.evaluate('testSetSavings([]);testSetMonthlyRows({})')
     page.wait_for_function('__financeInput.monthly_budgets.length===0 && __financeInput.transactions.length===0 && testSavingsLog.length===0')
-    wait_money(page, '.kpi-funds .dv-kpi-v', legacy['funds'])
+    wait_money(page, '.kpi-funds [data-r=capacity] .kpi-rv', legacy['funds'])
     check(page.locator('.kpi-funds [data-r=savings]').count() == 0, 'absent plan left a reserve row')
     check(abs(page.evaluate('__periodBudget.daily') - legacy['daily']) < 0.001, 'absent plan changed legacy daily')
     check(page.evaluate('document.documentElement.scrollWidth<=innerWidth'), 'reserve widened page')

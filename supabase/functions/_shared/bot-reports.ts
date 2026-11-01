@@ -238,6 +238,8 @@ export type BudgetRow = { id: string; name: string; color?: string | null; fact:
 export type BudgetModel = {
   start: string; end: string; poolCents: number; spentCents: number; leftCents: number; dailyCents: number; leftDays: number;
   rows: BudgetRow[]; topOver: BudgetRow[];
+  reconciliation?: {plannedCents:number;actualCents:number;adjustmentCents:number;signedRemainingCents:number;availableCents:number;overrunCents:number};
+  monthlyBudgetCovered?: boolean;
 };
 
 export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, accounts: P[]): BudgetModel | null {
@@ -274,7 +276,9 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
   const topOver = rows.filter((r) => r.over).sort((a, b) => (b.fact - b.plan) - (a.fact - a.plan)).slice(0, 3);
   return {
     start: cp.start, end: cp.end, poolCents: pb.budget, spentCents: pb.spent,
-    leftCents: cp.monthlyBudget?.covered && cp.signedSpendableRemainingCents != null ? cp.signedSpendableRemainingCents : pb.avail,
+    leftCents: cp.monthlyBudget?.covered ? (cp.reconciliation?.signedRemainingCents ?? cp.signedSpendableRemainingCents ?? pb.avail) : pb.avail,
+    ...(cp.reconciliation ? {reconciliation:cp.reconciliation} : {}),
+    monthlyBudgetCovered:!!cp.monthlyBudget?.covered,
     dailyCents: pb.daily, leftDays: Math.max(0, isoDiff(cp.start > today ? cp.start : today, cp.end)), rows, topOver,
   };
 }
@@ -283,8 +287,13 @@ export function formatBudget(m: BudgetModel | null): string {
   if (!m) return 'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.';
   const lines = [`📊 Бюджет періоду ${day(m.start)}-${day(m.end)}`,
     `Бюджет: ${money(m.poolCents)} · витрачено ${money(m.spentCents)} (${pct(m.spentCents, m.poolCents)}%) · ${leftOrOver(m.leftCents)}`];
+  if(m.monthlyBudgetCovered&&m.reconciliation?.adjustmentCents)lines.push(reconciliationLine(m.reconciliation));
   if (m.leftDays > 0 && m.leftCents >= 0) lines.push(`До ${day(m.end)}: ${money(m.dailyCents)}/день (${m.leftDays} дн.)`);
   return lines.join('\n');
+}
+
+function reconciliationLine(r: NonNullable<BudgetModel['reconciliation']>): string {
+  return `Звірка: план ${money(r.plannedCents)} − витрати ${money(r.actualCents)} ${r.adjustmentCents<0?'+':'−'} коригування ${money(Math.abs(r.adjustmentCents))} = ${money(r.signedRemainingCents)}. Коригування враховує місячні межі та доступні кошти.`;
 }
 
 // ---------- Тиждень: події 7 днів з рушія ----------
@@ -575,6 +584,7 @@ export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string, budg
   const lines = [`☀️ Доброго ранку! ${day(today)}`, `Баланс: ${money(s.positiveOwnCents - s.creditDebtCents)}`];
   if(pr.currentPeriod?.monthlyBudget?.covered)lines.push('Бюджет періоду: '+money(pr.currentPeriod.spendableTargetCents)+' · '+((pr.currentPeriod.overrunCents||0)>0?leftOrOver(-pr.currentPeriod.overrunCents):leftOrOver(pr.currentPeriod.spendableRemainingCents,'залишок'))+(budget&&(pr.currentPeriod.overrunCents||0)<=0?dailyPart(budget):'')+(pr.currentPeriod.monthlyBudget.estimated?' (прогноз за останнім місячним планом)':''));
   else if (budget) lines.push(budgetLeftLine(budget));
+  if(pr.currentPeriod?.monthlyBudget?.covered&&pr.currentPeriod?.reconciliation?.adjustmentCents)lines.push(reconciliationLine(pr.currentPeriod.reconciliation));
   const short = u && u.days > 0 ? untilPayoutLine(u) : null;
   if (short) lines.push(short);
   const list = (title: string, empty: string, rows: { name: string; cents: number }[]) => rows.length
