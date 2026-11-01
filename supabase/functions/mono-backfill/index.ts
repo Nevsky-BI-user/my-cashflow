@@ -76,21 +76,13 @@ Deno.serve(async (req) => {
   if (!prof?.mono_token) return json({ error: 'no_token' }, 400);
 
   // Рахунок Monobank власника токена (один запит на виклик)
-  const { data: acc, error: accErr } = await sb
-    .from('accounts')
-    .select('id, mono_account_id')
-    .eq('user_id', prof.id)
-    .eq('bank', 'mono')
-    .order('id')
-    .limit(1)
-    .maybeSingle();
-  if (accErr) console.error('mono-backfill: account lookup failed', accErr.message);
-  const account = String(bodyIn.account || acc?.mono_account_id || '0');
-  // Привʼязка: mono_account_id ще не відомий або запитано саме його
-  const accountId: number | null =
-    acc && (!acc.mono_account_id || acc.mono_account_id === account) ? acc.id : null;
+  const { data: accounts, error: accErr } = await sb.from('accounts').select('id,mono_account_id').eq('user_id', prof.id).eq('bank', 'mono').not('mono_account_id', 'is', null);
+  if (accErr) return json({ error: 'account lookup failed' }, 500);
+  const candidates = (accounts || []).filter(a => a.mono_account_id && (!bodyIn.account || a.mono_account_id === bodyIn.account));
+  if (candidates.length !== 1) return json({ error: 'ambiguous_or_unknown_account' }, 400);
+  const account = candidates[0].mono_account_id;
+  const accountId = candidates[0].id;
 
-  // Один запит до Monobank (rate limit: 1 запит / 60с на токен)
   const to = Math.floor(Date.now() / 1000);
   const from = to - days * 24 * 3600;
   const monoRes = await fetch(

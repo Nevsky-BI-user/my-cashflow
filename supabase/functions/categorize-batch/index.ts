@@ -39,6 +39,7 @@ async function countUncategorized(): Promise<number | null> {
     .from('transactions')
     .select('id', { count: 'exact', head: true })
     .is('category_id', null)
+    .is('transfer_id', null)
     .lt('categorize_attempts', MAX_ATTEMPTS);
   if (error) {
     console.error('categorize-batch: count failed', error);
@@ -84,6 +85,7 @@ Deno.serve(async (req) => {
     .from('transactions')
     .select('id')
     .is('category_id', null)
+    .is('transfer_id', null)
     .lt('categorize_attempts', MAX_ATTEMPTS)
     .order('date', { ascending: false })
     .limit(limit);
@@ -97,7 +99,19 @@ Deno.serve(async (req) => {
   let categorized = 0;
   let fromCache = 0;
   let errors = 0;
-  // Пропущені з даних (нема опису, нема категорій потрібного типу): не помилки
+  const reasons = new Map<string, { code: string; status?: number; retryable: boolean; count: number }>();
+  // Дозволені причини без описів операцій, сирих відповідей чи секретів.
+  const allowed = new Set(['configuration','credit_balance','provider_auth','rate_limit','provider_unavailable','provider_request','network','database','invalid_request','not_found','internal_auth','bad_model_answer','unknown']);
+  const recordError = (body: any, httpStatus?: number) => {
+    const status = Number.isInteger(body?.status) && body.status >= 100 && body.status <= 599 ? body.status : httpStatus;
+    const code = allowed.has(body?.error_code) ? body.error_code : body?.reason === 'bad_model_answer' ? 'bad_model_answer' : body?.error === 'no_claude_key' ? 'configuration' : body?.error === 'claude_error' ? status === 401 || status === 403 ? 'provider_auth' : status === 429 ? 'rate_limit' : status && status >= 500 ? 'provider_unavailable' : 'provider_request' : ['transaction_lookup_failed','categories_lookup_failed','update_failed'].includes(body?.error) ? 'database' : httpStatus === 401 || httpStatus === 403 ? 'internal_auth' : httpStatus === 404 ? 'not_found' : httpStatus === 400 ? 'invalid_request' : 'unknown';
+    const retryable = ['rate_limit','provider_unavailable','network','database','unknown'].includes(code);
+    const key = code + ':' + String(status || '');
+    const previous = reasons.get(key);
+    if (previous) previous.count++; else reasons.set(key, { code, ...(status ? { status } : {}), retryable, count: 1 });
+    errors++;
+  };
+  // Внутрішні перекази та відсутні опис/категорії пропускаємо без помилки.
   let skipped = 0;
 
   for (const tx of txs || []) {
@@ -114,24 +128,23 @@ Deno.serve(async (req) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ transaction_id: tx.id }),
+        signal: AbortSignal.timeout(25_000),
       });
       if (!res.ok) {
-        const text = await res.text();
-        console.error('categorize-batch: categorize http error', {
-          id: tx.id,
-          status: res.status,
-          detail: text.slice(0, 200),
-        });
-        errors++;
+        const failure = await res.json().catch(() => null);
+        recordError(failure, res.status);
+        console.error('categorize-batch: categorize http error', { status: res.status });
       } else {
         const r = await res.json();
-        if (r?.category_id == null) {
-          if (r?.reason === 'no_description' || r?.reason === 'no_categories') {
+        if (r?.skipped) {
+          skipped++;
+        } else if (r?.category_id == null) {
+          if (r?.reason === 'no_description' || r?.reason === 'no_categories' || r?.reason === 'internal_transfer') {
             console.warn('categorize-batch: skipped', { id: tx.id, reason: r.reason });
             skipped++;
           } else {
             console.error('categorize-batch: no category', { id: tx.id, reason: r?.reason });
-            errors++;
+            recordError(r);
           }
         } else if (r.skipped) {
           // категорію вже поставили (UI або паралельний виклик): не наш результат
@@ -142,8 +155,8 @@ Deno.serve(async (req) => {
         }
       }
     } catch (e) {
-      console.error('categorize-batch: categorize failed', { id: tx.id, e: String(e) });
-      errors++;
+      console.error('categorize-batch: categorize failed');
+      recordError({ error_code: 'network' });
     }
     await sleep(PAUSE_MS);
   }
@@ -155,6 +168,7 @@ Deno.serve(async (req) => {
     categorized,
     from_cache: fromCache,
     errors,
+    error_reasons: [...reasons.values()],
     skipped,
     remaining,
   });
