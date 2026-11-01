@@ -1,7 +1,7 @@
 """Щільність, палітра й доступність компонування без зміни фінансової логіки."""
 import json
 from pathlib import Path
-from helpers import check, finance_ref, freeze, go_tab, open_calendar_day, settle
+from helpers import freeze_demo, check, finance_ref, freeze, go_tab, open_calendar_day, settle
 from checks.a11y import CONTRAST
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -112,6 +112,7 @@ def audit(page):
 
 
 def current_overview(page):
+    freeze_demo(page)
     for width, height in ((1280, 800), (1280, 860), (1440, 900)):
         page.set_viewport_size({'width': width, 'height': height})
         go_tab(page, 0)
@@ -156,7 +157,7 @@ def calendar_geometry(page):
             details = open_calendar_day(page, iso)
             scheduled = details.locator('.cal-day-events .cal-day-row').filter(has_not_text='Щоденні витрати, прогноз')
             check(scheduled.count() == want, 'Лічильник не відповідає запланованим подіям дня')
-            from helpers import finance_ref, num
+            from helpers import freeze_demo, finance_ref, num
             forecast = details.locator('.cal-day-events .cal-day-row', has_text='Щоденні витрати, прогноз')
             variable = [e for e in finance_ref(page)['events'] if e['date'] == iso and e['kind'] == 'variable']
             check(forecast.count() == bool(variable), 'Щоденний прогноз загублено або продубльовано')

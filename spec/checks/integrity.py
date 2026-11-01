@@ -1,5 +1,5 @@
 # Локальні календарні дати й захист операції від повторного запису.
-from helpers import check, dialog, go_tab
+from helpers import freeze_demo, check, dialog, go_tab
 
 
 def add_saving(page):
@@ -116,6 +116,7 @@ def clicks_and_retry(page):
 
 
 def demo_save(page):
+    freeze_demo(page)
     page.keyboard.press('n')
     tx = dialog(page, 'Нова операція')
     tx.locator('.amt-in').fill('321')

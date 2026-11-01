@@ -27,19 +27,19 @@ def contract(page):
     r=finance_ref(page, verify_ts=True)
     n=r['nextPlan']
     # Виплата50000 мінус накопичена нестача3200 =46800 власних.
-    # Усі обов'язкові28000 + звичайний бюджет15000 захищені; кредитці лишається3800.
+    # Обов'язкові28000 і належний борг16000 захищені; змінним витратам лишається2800.
     p=next(p for p in r['periods'] if p['start']=='2026-10-21')
-    check((p['ownCents'],p['reserveCents'],p['repayCents'],p['savingsCents'])==(4680000,2800000,380000,0), 'mandatory and ordinary amounts were not protected before repayment')
-    check(p['ownCents']==p['reserveCents']+p['repayCents']+1500000, 'payout own-funds conservation failed')
-    check([n[k] for k in ('baseAvailableCents','targetCents','gapCents','days','averageDailyCents')]==[1500000,1500000,0,16,93750], '15000/15000/0/16/937.50 acceptance example failed')
-    check([c['totalCents'] for c in n['categories']]==[600000,300000,225000,150000,150000,75000], 'category allocation differs from 40/20/15/10/10/5 of15000')
+    check((p['ownCents'],p['reserveCents'],p['repayCents'],p['savingsCents'])==(4680000,2800000,1600000,0), 'mandatory reserve and due debt priority mismatch')
+    check(p['ownCents']==p['reserveCents']+p['repayCents']+280000, 'payout own-funds conservation failed')
+    check([n[k] for k in ('baseAvailableCents','targetCents','gapCents','days','averageDailyCents')]==[280000,1500000,1220000,16,17500], 'funded2800/target15000/gap12200/16days acceptance example failed')
+    check([c['totalCents'] for c in n['categories']]==[112000,56000,42000,28000,28000,14000], 'category allocation differs from 40/20/15/10/10/5 of2800')
     check(not any(e['funding']=='credit' for e in r['events']), 'base projection automatically used credit')
     # v150 (модель «власні ≥ 0»): власні не мінус, нестача окремо (arrearsCents) і в балансі дня
     check(all(d['closingCashCents']>=0 for d in r['days']) and any(d['arrearsCents']>0 and d['netCents']==d['closingCashCents']-d['debtCents']-d['arrearsCents'] for d in r['days']), 'cash shortfall was hidden or own funds went negative')
     # v145: «доступно після виплати» живе в підказці плитки «Бюджет періоду»; кнопки там же; v151: це A рушія (рядок «Після виплати»)
     tip=_budget_tip(page)
     m=re.search(r'Після виплати [^\n]*= ([\d   ]+(?:,\d+)?) ₴', tip)
-    check(m and num(m.group(1))==15000, f'overview does not show15000: {tip!r}')
+    check(m and num(m.group(1))==2800, f'overview does not show2800: {tip!r}')
     page.locator('.kpi-tip[data-k=budget]').get_by_role('button',name='Як пораховано',exact=True).click()
     check('28' in page.locator('dialog[open]').inner_text(), 'explanation omits mandatory28000')
     page.locator('dialog[open]').get_by_role('button',name='Закрити',exact=True).click()
@@ -55,15 +55,15 @@ def scenario(page):
     d.get_by_label('Дозволений платіж').select_option('fixed:1:2026-10')
     d.get_by_label('Кредитний рахунок').select_option('2')
     # Перенесення частини обов'язкового платежу додає рівно цю суму
-    # до базових15000 власних; сценарний борг показується окремо.
-    for amount,plan,gap in [(6200,2120000,0),(4000,1900000,0)]:
+    # до базових2800 власних; сценарний борг показується окремо.
+    for amount,plan,gap in [(6200,900000,600000),(4000,680000,820000)]:
         d.get_by_label('Сума перенесення',exact=True).fill(str(amount))
         d.get_by_role('button',name='Переглянути сценарій').click()
         r=finance_ref(page,verify_ts=True)
         s=r['scenario']
         check((s['newDebtCents'],s['cashPlanCents'],s['gapCents'])==(amount*100,plan,gap), 'scenario debt/plan/gap mismatch')
         check(s['repayments'][0]['date']=='2026-11-20' and not s['errors'], 'scenario repayment date or errors mismatch')
-        check(r['nextPlan']['baseAvailableCents']==1500000, 'scenario replaced base headline')
+        check(r['nextPlan']['baseAvailableCents']==280000, 'scenario replaced base headline')
     d.get_by_label('Сума перенесення',exact=True).fill('21000')
     d.get_by_role('button',name='Переглянути сценарій').click()
     r=finance_ref(page)

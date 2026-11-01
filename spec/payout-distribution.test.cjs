@@ -21,8 +21,8 @@ function verify(pr,today){
  assert.equal(v.pool.free,v.placement.cash+v.placement.mono);
  assert.equal(v.budget.target,v.budget.covered+v.budget.gap);
  assert.equal(v.pool.free,v.budget.covered+v.budget.surplus);
- assert.equal(v.categories.reduce((n,c)=>n+c.cents,0),v.budget.target);
- assert.equal(v.schedule.reduce((n,d)=>n+d.cents,0),v.budget.target);
+ assert.equal(v.categories.reduce((n,c)=>n+c.cents,0),q.spendableTargetCents??v.budget.target);
+ assert.equal(v.schedule.reduce((n,d)=>n+d.cents,0),q.spendableTargetCents??v.budget.target);
  for(const group of ['sources','carry','pool','budget','placement'])for(const n of Object.values(v[group]))assert.ok(Number.isSafeInteger(n)&&n>=0);
  if(v.periodComplete){const period=pr.events.filter(e=>e.date>=q.start&&e.date<q.end);assert.equal(v.period.newCredit,sum(period.map(e=>Math.max(0,e.debtDeltaCents))));assert.equal(v.period.short,sum(period.map(e=>e.shortCents||0)));}
  return v;
@@ -65,3 +65,9 @@ test('corrupt or absent decomposition cannot silently show zeros',async()=>{cons
 test('synthetic positive Mono offset is netted once, not an extra source',async()=>{const {pr,today}=await project();const q=pr.periods.find(q=>q.start===pr.nextPlan.start);q.monoOffsetCents=12345;q.payoutRepayCents+=12345;q.repayCents+=12345;const v=adapt(pr,today);assert.equal(v.status,'available');assert.equal(v.pool.free,1500000-12345);assert.equal(v.placement.mono,1200000-12345);assert.equal(v.pool.repay,12345);assert.equal(v.sources.total,5000000);assert.equal(v.pool.savings,3500000);});
 
 test('underfunded mandatory costs remain visible without inventing a reserve or savings',async()=>{const data=fixture();data.salary.advance_amount=10000;data.fixed=[{id:'bill',name:'Mandatory',type:'payment',amount:50000,day_of_month:25,credit_ok:true}];const {pr,today}=await project(data);const v=verify(pr,today);assert.equal(v.pool.requiredReserve,5000000);assert.equal(v.pool.reserve,1000000);assert.equal(v.pool.reserveGap,4000000);assert.equal(v.pool.savings,0);assert.equal(v.pool.free,0);});
+
+test('due debt reduces funded schedule without hiding the desired budget or distribution',async()=>{
+ const data=fixture();data.salary.budget_manual=null;data.accounts[0].balance=2800;data.accounts.push({id:'credit',kind:'credit',balance:0,debt:16000,credit_limit:20000,debt_month:'2026-09-01'});data.fixed=[{id:1,name:'Mandatory',type:'expense',amount:28000,day_of_month:25,credit_ok:true}];
+ const {pr,today}=await project(data,{asof:'2026-10-10'}),v=verify(pr,today);assert.equal(v.pool.repay,1600000);assert.equal(v.pool.reserve,2800000);assert.equal(v.pool.free,280000);assert.equal(v.budget.target,1500000);assert.equal(v.budget.gap,1220000);assert.equal(v.schedule.reduce((n,d)=>n+d.cents,0),280000);
+ const bad=structuredClone(pr);bad.periods.find(q=>q.start===pr.nextPlan.start).spendableTargetCents+=1;assert.equal(adapt(bad,today).reason,'inconsistent');
+});

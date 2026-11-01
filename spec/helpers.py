@@ -119,6 +119,16 @@ from datetime import date as _date, timedelta as _td
 ADV_DAY, SAL_DAY = 21, 6  # SAL_ADV_DAY, SAL_MAIN_DAY з index.html (демо без БД)
 
 
+def freeze_demo(page):
+    """Сталі жовтневі демо-дані; поточний час потрібен перевірці оновлення рахунку."""
+    from datetime import datetime
+    page.clock.set_fixed_time(datetime.now().replace(year=2026, month=10, day=13))
+    page.reload()
+    page.wait_for_selector('.side' if page.viewport_size['width'] >= 1024 else '.tab-bar', timeout=20000)
+    page.wait_for_timeout(400)
+    settle(page)
+
+
 def freeze(page, iso, patch=None):
     """Перезавантажує сторінку із замороженою датою iso (YYYY-MM-DD, полудень); patch: [(старе, нове)] заміни в index.html."""
     page.clock.set_fixed_time(iso + 'T12:00:00')
