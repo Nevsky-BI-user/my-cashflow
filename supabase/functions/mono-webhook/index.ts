@@ -1,3 +1,4 @@
+import { allowedMonoOwner, exactMonoAccount } from '../_shared/mono-accounts.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
 
@@ -49,18 +50,17 @@ Deno.serve(async (req) => {
   const si = body.data?.statementItem;
   if (!si?.id) return new Response('no statement', { status: 400 });
 
-  const { data: prof, error: profErr } = await sb
-    .from('profiles')
-    .select('id')
-    .not('mono_token', 'is', null)
-    .limit(1)
-    .maybeSingle();
-
-  if (profErr) {
-    console.error('profile lookup error:', profErr);
-    return new Response('profile error', { status: 500 });
-  }
-  if (!prof) return new Response('no user with mono_token');
+  const monoId = body.data?.account;
+  if (typeof monoId !== 'string' || !monoId) return new Response('no account', { status: 400 });
+  const { data: matches, error: matchErr } = await sb.from('accounts').select('id,user_id,bank,mono_account_id').eq('bank', 'mono').eq('mono_account_id', monoId);
+  if (matchErr) return new Response('account lookup failed', { status: 500 });
+  const acc = exactMonoAccount(matches || [], monoId);
+  if (!acc) return new Response('ignored unknown account');
+  const { data: owner, error: ownerErr } = await sb.auth.admin.getUserById(acc.user_id);
+  if (ownerErr) return new Response('owner lookup failed', { status: 500 });
+  if (!allowedMonoOwner(owner?.user?.email)) return new Response('forbidden', { status: 403 });
+  const prof = { id: acc.user_id };
+  const accountId = acc.id;
 
   const { data: dup } = await sb
     .from('transactions')
@@ -68,22 +68,6 @@ Deno.serve(async (req) => {
     .eq('source_id', si.id)
     .maybeSingle();
   if (dup) return new Response('duplicate');
-
-  // Рахунок Monobank власника токена: привʼязуємо, якщо mono_account_id ще не відомий
-  // або збігається з рахунком події; операції інших рахунків клієнта лишаються без account_id
-  let accountId: number | null = null;
-  const { data: acc, error: accErr } = await sb
-    .from('accounts')
-    .select('id, mono_account_id')
-    .eq('user_id', prof.id)
-    .eq('bank', 'mono')
-    .order('id')
-    .limit(1)
-    .maybeSingle();
-  if (accErr) console.error('account lookup error:', accErr.message);
-  if (acc && (!acc.mono_account_id || acc.mono_account_id === body.data?.account)) {
-    accountId = acc.id;
-  }
 
   const amount = Math.abs(si.amount) / 100;
   const type = si.amount < 0 ? 'expense' : 'income';

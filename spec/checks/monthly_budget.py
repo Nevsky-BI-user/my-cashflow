@@ -133,8 +133,14 @@ def errors(page):
     page.evaluate("__liveMock.data.salary_config[0].advance_amount=0;__liveMock.data.salary_config[0].salary_amount=0;__liveMock.data.fixed_payments=[];__liveMock.event('salary_config')")
     page.wait_for_function("n=>__liveMock.reads.filter(x=>x.table==='salary_config').length>n",arg=reads)
     updated(page)
-    sheet=edit(page,'0','0')
+    check(num(page.locator('.bud-pool .bud-kpi-v').inner_text())==234,'salary change lost the saved manual income adjustment')
+    check(page.evaluate("__liveMock.data.monthly_budgets[0].allocations['1']")==40000,'salary change overwrote manual category allocation')
+    sheet=edit(page,'234','0')
     save(page,sheet)
+    page.evaluate("__liveMock.data.monthly_budgets[0].total_cents=0;__liveMock.event('monthly_budgets')")
+    page.wait_for_function("document.querySelector('.bud-pool .bud-kpi-v').textContent.trim().startsWith('0 ')")
+    updated(page)
+    save(page,edit(page,'0','0'))
     check(num(page.locator('.bud-pool .bud-kpi-v').inner_text())==0,'explicit zero treated as unset')
 
 
@@ -179,7 +185,11 @@ def obligations(page):
     check(sum(x['amount_cents'] for x in saved['mandatory_items'])==25000,'mandatory snapshot not saved atomically')
     page.evaluate("__liveMock.event('fixed_payments')")
     updated(page)
-    check(num(page.locator('.bud-pool .bud-kpi-v').inner_text())==1000,'paid obligation or changed salary inflated saved category budget')
+    check(num(page.locator('.bud-pool .bud-kpi-v').inner_text())==1300,'saved budget did not follow changed salary basis')
+    check(page.evaluate("__liveMock.data.monthly_budgets[0].allocations['1']")==40000,'salary refresh overwrote manual category allocation')
+    check(num(page.locator('.bud-mandatory .bud-kpi-v').inner_text())==250,'paid flag removed mandatory monthly reserve')
+    history=page.evaluate("(()=>{const row={...__liveMock.data.monthly_budgets[0],month_start:'2026-09-01'};return normalizeMonthlyBudgets([row],{salary:__liveMock.data.salary_config[0],fixed:[],credits:[]},'2026-10-03','2026-10-03').find(r=>r.month_start==='2026-09-01')})()")
+    check(history['total_cents']==100000 and history['allocations']['1']==40000 and sum(x['amount_cents'] for x in history['mandatory_items'])==25000,'salary refresh rewrote closed-month snapshot')
     sheet=edit(page,'1300','400')
     check(num(sheet.locator('.monthly-mandatory-total').inner_text())==250,'paid obligation removed from next allocation envelope')
     check(num(sheet.locator('.monthly-capacity').inner_text())==1050,'new editor did not use changed salary')
@@ -188,7 +198,7 @@ def obligations(page):
     page.wait_for_selector('.side')
     updated(page)
     go_tab(page,1)
-    check(num(page.locator('.bud-pool .bud-kpi-v').inner_text())==1000,'reload lost saved gross/mandatory snapshot')
+    check(num(page.locator('.bud-pool .bud-kpi-v').inner_text())==1000,'reload lost saved snapshot when mock salary returned to original basis')
 
 
 CHECKS=[('monthly_budget: independent calendar, category, save and history desktop','desktop',contract),
