@@ -22,7 +22,7 @@ MOUNT = r"""({mobile,deck})=>{
   {accountId:803,spent:875,min:24000,left:23125,fee:600,feeDate:'2026-11-01'},
  ];
  window.__cardFitAccounts=accounts;window.__cardFitOpened=null;window.__cardFitRoot=ReactDOM.createRoot(host);
- const props={accounts,today,minSpend,advice:[],unassigned:[],onOpen:a=>window.__cardFitOpened=a.id,onAdd:()=>{},onOrder:()=>{},onRefresh:()=>{},onUnassigned:()=>{}};
+ const props={accounts,today,minSpend,advice:[{accountId:801,text:'Ощадбанк: до порогу бракує 14 750 ₴. Якщо оплатити з нього Інтернет 300 ₴, Підписки 450 ₴, можна покрити 750 ₴; залишиться 14 000 ₴.'}],unassigned:[],onOpen:a=>window.__cardFitOpened=a.id,onAdd:()=>{},onOrder:()=>{},onRefresh:()=>{},onUnassigned:()=>{}};
  window.__cardFitRoot.render(deck?h(MobileAccountDeck,props):h('div',{className:mobile?'acc-list':'dv-cards',style:mobile?{display:'flex',flexWrap:'wrap',gap:12}:undefined},...accounts.map(a=>h(BankCard,{key:a.id,a,size:mobile?'sm':'d',today,ms:minSpend.find(r=>r.accountId===a.id),onClick:()=>window.__cardFitOpened=a.id})),h(AddAccTile,{key:'add',onClick:()=>{}})));
 }"""
 
@@ -91,6 +91,10 @@ def mobile(page):
         _mount(page, mobile=True, deck=True)
         current = page.locator('#card-fit-fixture .o-bank-card[aria-current=true]')
         check(current.count() == 1 and 'жовтні' in current.inner_text(), 'mobile deck lost visible month')
+        # довга порада Ощаду під «i»: усі картки колоди однієї висоти, як картка без порогу
+        heights = page.locator('#card-fit-fixture .o-bank-card').evaluate_all('es=>es.map(e=>e.offsetHeight)')
+        check(len(set(heights)) == 1 and heights[0] <= 240, f'{width}: mobile deck card heights differ or grew: {heights}')
+        check(current.locator('.bank-advice-info').count() == 1 and current.locator('.bank-advice').count() == 0, 'Oschad advice not folded into info')
         check(current.locator('.ms-txt>span').evaluate_all('es=>es.every(e=>e.scrollWidth<=e.clientWidth+1&&e.scrollHeight<=e.clientHeight+1)'), 'mobile deck spending text clipped')
         current.focus()
         page.keyboard.press('ArrowRight')

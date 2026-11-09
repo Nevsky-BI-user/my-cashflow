@@ -233,7 +233,8 @@ def min_spend_phone(page):
     check(summary == expected, f'поріг картки {summary!r}, очікували {expected!r}')
     row = card.locator('.ms-wrap[data-acc="l1"]')
     check(row.count() == 1 and 'у жовтні' in row.inner_text() and page.locator('.o-ms-list').count() == 0, 'поріг має бути всередині картки')
-    check(card.locator('.bank-advice').count() == 1, 'на картці телефона немає поради')
+    # порада під «i» у куті, щоб картки колоди лишались однієї висоти
+    check(card.locator('.bank-advice-info').count() == 1 and card.locator('.bank-advice').count() == 0, 'на картці телефона немає «i» з порадою')
     check(page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth'), 'горизонтальна прокрутка на 375')
     shot(page, 'ms-ov-375.jpg', full=False)
 
