@@ -679,12 +679,12 @@ test('account callback permits Mono for photo transactions only',async()=>{
     if(receipt_url){
       const edited=calls.find(c=>c.method==='editMessageText').body;
       assert.equal(edited.text,'Картка для покупок');
-      assert.deepEqual(edited.reply_markup,{inline_keyboard:[]});
+      assert.deepEqual(edited.reply_markup,{inline_keyboard:[[{text:'⇄ Це переказ',callback_data:'trf:42'}]]});
     }
     else assert.equal(calls[0].body.text,'Рахунок недоступний');
   }
 });
-test('manual account callback clears all buttons only after successful database update',async()=>{
+test('manual account callback keeps only the transfer button after successful database update',async()=>{
   const callback=stripTypeScriptTypes(source.slice(source.indexOf('async function onCallback('),source.indexOf('function todayKyiv(')));
   for(const failed of [false,true]){
     const calls=[];
@@ -704,7 +704,7 @@ test('manual account callback clears all buttons only after successful database 
     await run({id:'cb',data:'acc:42:11',message:{chat:{id:1},message_id:2}});
     const edit=calls.find(c=>c.method==='editMessageText');
     if(failed){assert.equal(edit,undefined);assert.equal(calls[0].body.text,'Не вдалося змінити рахунок');}
-    else {assert.equal(edit.body.text,'Особиста 0882');assert.deepEqual(edit.body.reply_markup,{inline_keyboard:[]});}
+    else {assert.equal(edit.body.text,'Особиста 0882');assert.deepEqual(edit.body.reply_markup,{inline_keyboard:[[{text:'⇄ Це переказ',callback_data:'trf:42'}]]});}
   }
 });
 test('mixed screenshot saves two timed expenses while skipping an already recorded income',async()=>{
@@ -1027,4 +1027,25 @@ test('failed strong verification never saves an otherwise valid cheap batch or c
 });
 test('valid ordinary receipt still uses one cheap request',async()=>{
  const h=harness([single]);await h.run();assert.equal(h.state.requests.length,1);assert.equal(h.state.inserts.length,1);
+});
+test('transfer buttons offer other accounts and save through the transfer RPC',async()=>{
+  const code=stripTypeScriptTypes(source.slice(source.indexOf('const TRANSFER_BTN ='),source.indexOf('// Inline-кнопки інших активних рахунків')));
+  const accs=[{id:1,name:'Ощадбанк'},{id:2,name:'ПриватБанк кредитна'},{id:3,name:'Mono'}];
+  for(const rpcError of [null,{message:'Already a transfer'}]){
+    const calls=[],answers=[];let rpc=null;
+    const sb={from(){const q={select(){return q},eq(){return q},maybeSingle(){return q},then(resolve){return Promise.resolve({data:{id:160,type:'income',amount:18000,account_id:2,transfer_id:null}}).then(resolve)}};return q},
+      async rpc(name,args){rpc={name,args};return {error:rpcError}}};
+    const api=new Function('sb','activeAccounts','fmtMoney','reply','tgCall','console',code+';return {offerTransfer,confirmTransfer,TRANSFER_BTN};')(
+      sb,async()=>accs,v=>v+' грн',async(chat,text,kb)=>calls.push({text,kb}),async(method,body)=>calls.push({method,body}),{error(){}});
+    assert.deepEqual(api.TRANSFER_BTN(160),{text:'⇄ Це переказ',callback_data:'trf:160'});
+    await api.offerTransfer(1,160,async t=>answers.push(t));
+    assert.equal(calls[0].text,'З якого рахунку прийшли 18000 грн?');
+    assert.deepEqual(calls[0].kb.inline_keyboard.map(r=>r[0].callback_data),['trfa:160:1','trfa:160:3']);
+    await api.confirmTransfer(1,9,'actor',160,1,async t=>answers.push(t));
+    assert.equal(rpc.name,'mark_transaction_transfer');
+    assert.equal(rpc.args.p_transaction_id,160);assert.equal(rpc.args.p_other_account_id,1);assert.equal(rpc.args.p_actor_id,'actor');
+    const edit=calls.find(c=>c.method==='editMessageText');
+    if(rpcError){assert.equal(edit,undefined);assert.equal(answers.at(-1),'Операція вже є переказом');}
+    else {assert.equal(edit.body.text,'⇄ Переказ 18000 грн: Ощадбанк → ПриватБанк кредитна');assert.equal(answers.at(-1),'Збережено як переказ');}
+  }
 });

@@ -489,5 +489,5 @@ test('confirmation completion restores report keyboard even for a known account'
   const ordinary=harness({accounts});await ordinary.send('150 кава приват');
   assert.ok(ordinary.state.messages.every(m=>!m.reply_markup?.keyboard));
   assert.equal(accountChoices(ordinary).length,0);
-  assert.ok(ordinary.state.messages.flatMap(m=>m.reply_markup?.inline_keyboard?.flat()||[]).every(b=>b.callback_data?.startsWith('flpick:')));
+  assert.ok(ordinary.state.messages.flatMap(m=>m.reply_markup?.inline_keyboard?.flat()||[]).every(b=>/^(flpick|trf):/.test(b.callback_data||'')));
 });

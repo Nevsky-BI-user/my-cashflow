@@ -259,6 +259,38 @@ function txText(t: TxView, accName: string | null): string {
     ` · ${accName || 'рахунок не вибрано. З якого рахунку?'}`;
 }
 
+// Позначити операцію як переказ між власними рахунками: trf:<txId> → trfa:<txId>:<accountId>
+const TRANSFER_BTN = (txId: number) => ({ text: '⇄ Це переказ', callback_data: `trf:${txId}` });
+
+async function offerTransfer(chatId: number, txId: number, answer: (t: string) => Promise<unknown>) {
+  const { data: tx, error } = await sb.from('transactions').select('id,type,amount,account_id,transfer_id').eq('id', txId).maybeSingle();
+  if (error) return answer('Помилка, спробуйте ще раз');
+  if (!tx) return answer('Операцію не знайдено');
+  if (tx.transfer_id) return answer('Операція вже є переказом');
+  if (tx.account_id == null) return answer('Спершу оберіть рахунок операції');
+  const accs = (await activeAccounts(true)).filter((a) => a.id !== tx.account_id);
+  if (!accs.length) return answer('Немає іншого рахунку');
+  await answer('Оберіть рахунок');
+  const q = tx.type === 'income' ? `З якого рахунку прийшли ${fmtMoney(Number(tx.amount))}?` : `На який рахунок пішли ${fmtMoney(Number(tx.amount))}?`;
+  return reply(chatId, q, { inline_keyboard: accs.map((a) => [{ text: a.name, callback_data: `trfa:${txId}:${a.id}` }]) });
+}
+
+async function confirmTransfer(chatId: number, msgId: number, actorId: string, txId: number, otherId: number, answer: (t: string) => Promise<unknown>) {
+  const { error } = await sb.rpc('mark_transaction_transfer', { p_request_id: crypto.randomUUID(), p_transaction_id: txId, p_other_account_id: otherId, p_actor_id: actorId });
+  if (error) {
+    const m = String(error.message || '');
+    console.error('mark transfer error:', m);
+    return answer(/Already a transfer/.test(m) ? 'Операція вже є переказом' : /Mono counterpart/.test(m) ? 'У Monobank ще немає зустрічної операції' : /Operation is linked/.test(m) ? 'Операцію привʼязано до платежу чи зарплати' : 'Не вдалося зберегти переказ');
+  }
+  const { data: tx } = await sb.from('transactions').select('type,amount,account_id').eq('id', txId).maybeSingle();
+  const accs = await activeAccounts(true);
+  const name = (id: number | null | undefined) => accs.find((a) => a.id === id)?.name || 'рахунок';
+  const inc = tx?.type === 'income';
+  const from = inc ? name(otherId) : name(tx?.account_id), to = inc ? name(tx?.account_id) : name(otherId);
+  await answer('Збережено як переказ');
+  return tgCall('editMessageText', { chat_id: chatId, message_id: msgId, text: `⇄ Переказ ${fmtMoney(Number(tx?.amount || 0))}: ${from} → ${to}`, reply_markup: { inline_keyboard: [] } });
+}
+
 // Inline-кнопки інших активних рахунків: callback_data acc:<txId>:<accountId> (до 64 байт)
 function accKeyboard(txId: number, accs: Acc[], currentId: number | null) {
   const rows = accs
@@ -279,9 +311,10 @@ async function replyTx(
   const accountKb = opts.accountResolved && name ? null : accKeyboard(txId, accs, accountId);
   const kb = accountKb || {inline_keyboard:[]};
   if(t.type==='expense')kb.inline_keyboard.push([{text:'Привʼязати обовʼязковий платіж',callback_data:`flpick:${txId}`}]);
+  kb.inline_keyboard.push([TRANSFER_BTN(txId)]);
   if (opts.restoreKb) {
     await reply(chatId, text, MAIN_KB);
-    if (accountKb) await reply(chatId, 'Змінити рахунок:', kb);
+    await reply(chatId, accountKb ? 'Змінити рахунок:' : 'Дії з операцією:', kb);
     return;
   }
   if (!kb.inline_keyboard.length) return reply(chatId, text);
@@ -422,6 +455,10 @@ async function onCallback(cq: any) {
       }
       return answer('Некоректна дія');
     }
+    const trf=String(cq?.data||'').match(/^trf:([0-9]+)$/);
+    if(trf)return offerTransfer(chatId,Number(trf[1]),answer);
+    const trfa=String(cq?.data||'').match(/^trfa:([0-9]+):([0-9]+)$/);
+    if(trfa)return confirmTransfer(chatId,msgId,prof.id,Number(trfa[1]),Number(trfa[2]),answer);
     const link=String(cq?.data||'').match(/^fl:(\d+):(\d+):(\d{4}-\d{2}-\d{2})$/);
     if(link)return confirmFixedLink(chatId,prof.id,Number(link[1]),Number(link[2]),link[3],answer);
     const pd = parsePaidCallback(String(cq?.data || ''));
@@ -461,7 +498,7 @@ async function onCallback(cq: any) {
     await answer(`Рахунок: ${acc.name}`);
     await tgCall('editMessageText', {
       chat_id: chatId, message_id: msgId, text: txText(shown as TxView, acc.name),
-      reply_markup: { inline_keyboard: [] },
+      reply_markup: { inline_keyboard: [[{ text: '⇄ Це переказ', callback_data: `trf:${txId}` }]] },
     });
   } catch (e) {
     console.error('callback error:', (e as Error)?.message);
