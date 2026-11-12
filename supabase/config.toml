@@ -27,3 +27,8 @@ verify_jwt = true
 # Ранковий підсумок: кличе pg_cron без JWT, захист заголовком x-digest-secret (секрет DIGEST_SECRET, у cron з Vault)
 [functions.telegram-digest]
 verify_jwt = false
+
+# Курси НБУ і ПриватБанку: застосунок кличе з JWT користувача (whitelist у коді),
+# pg_cron раз на день з Bearer <service role> із Vault (секрет rates_refresh_service_key)
+[functions.rates-refresh]
+verify_jwt = true
