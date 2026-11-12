@@ -30,3 +30,21 @@ export function registrationTarget(accounts: any[], owner: string, card: any, la
   if (manual.length > 1) throw new Error('ambiguous_account');
   return manual[0] || null;
 }
+// Monobank мігрує рахунок на новий id: старий зникає з client-info, на ньому «Зарахування коштів в рамках міграції рахунку».
+// Перепривʼязка лише однозначна: старого id у списку немає, а серед гривневих карток не ФОП рівно одна вільна
+// (не привʼязана до жодного рахунку) з тим самим видом ліміту, що й у збереженого. Інакше null: не вгадуємо.
+export function migratedMonoAccount(cards: any[], acc: any, linkedIds: string[]) {
+  const uah = (cards || []).filter(a => a?.id && a.currencyCode === 980);
+  if (!acc?.mono_account_id || uah.some(a => a.id === acc.mono_account_id)) return null;
+  const credit = Number(acc.credit_limit) > 0;
+  const same = uah.filter(a => !linkedIds.includes(a.id) && a.type !== 'fop' && (Number(a.creditLimit) > 0) === credit);
+  return same.length === 1 ? same[0] : null;
+}
+// Рядки transactions із виписки Monobank (той самий вигляд, що в mono-webhook і mono-backfill)
+export function statementRows(items: any[], userId: string, accountId: number) {
+  return (Array.isArray(items) ? items : []).filter((si: any) => si?.id).map((si: any) => ({
+    user_id: userId, amount: Math.abs(si.amount) / 100, type: si.amount < 0 ? 'expense' : 'income',
+    description: si.description || null, source: 'mono', source_id: String(si.id), mcc: si.mcc || null,
+    date: new Date(si.time * 1000).toISOString().split('T')[0], account_id: accountId,
+  }));
+}
