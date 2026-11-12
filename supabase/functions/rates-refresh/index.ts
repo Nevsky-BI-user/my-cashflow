@@ -3,7 +3,7 @@ import { NBU_URL, PRIVAT_URL, parseNbu, parsePrivat, type RateRow } from '../_sh
 
 // Оновлення курсів USD/EUR у exchange_rates: офіційний НБУ (source 'nbu') і готівковий ПриватБанку (source 'privat').
 // Кличуть: застосунок (JWT користувача з whitelist), коли збережені курси старші за 12 год,
-// і pg_cron раз на день (Bearer <service role> із Vault, див. міграцію exchange_rates_sources).
+// або сервер із service role (задачі cron немає: ключ лише в env функцій).
 // Пише лише те джерело, що відповіло валідно; збій одного не чіпає рядків іншого, нулів не пише ніколи.
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
 
   const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
   if (!jwt) return json({ error: 'no auth' }, 401);
-  // pg_cron: service role із Vault; інакше користувач із whitelist
+  // service role (виклик з іншої функції); інакше користувач із whitelist
   const service = jwt === SERVICE_ROLE;
   if (!service) {
     const { data, error } = await sb.auth.getUser(jwt);

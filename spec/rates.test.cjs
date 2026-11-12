@@ -87,9 +87,9 @@ test('goal bar split: same shares as the pool, segment UAH sums to goal fill, cu
 });
 
 test('migration keeps secrets out of git and makes rates read-only for clients',()=>{
- const sql=fs.readFileSync(path.join(root,'supabase/migrations/20261112120000_exchange_rates_sources.sql'),'utf8');
+ const sql=fs.readFileSync(path.join(root,'supabase/migrations/20261112130000_exchange_rates_sources.sql'),'utf8');
  assert.equal(sql,fs.readFileSync(path.join(root,'52-exchange-rates-sources.sql'),'utf8'),'root copy identical');
- assert.match(sql,/vault\.decrypted_secrets where name = 'rates_refresh_service_key'/);
+ assert.doesNotMatch(sql,/vault\.|cron\.schedule/,'no cron job and no service key in Vault');
  assert.doesNotMatch(sql,/eyJ[A-Za-z0-9_-]{10,}/,'no JWT in migration');
  assert.match(sql,/create policy "family read" on public\.exchange_rates for select using \(public\.is_family_member\(\)\)/);
  assert.match(sql,/drop policy if exists "family full" on public\.exchange_rates/);

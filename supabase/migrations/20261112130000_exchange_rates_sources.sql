@@ -1,5 +1,5 @@
 -- 52: курси НБУ і ПриватБанку в exchange_rates, курс внеску в savings_log, щоденне оновлення курсів.
--- Повторне застосування безпечне: if not exists, перевірка обмежень і перестворення політик та задачі cron.
+-- Повторне застосування безпечне: if not exists, перевірка обмежень і перестворення політик.
 
 -- 1. exchange_rates: джерело курсу. Наявні рядки (USD/EUR, оновлені вручну 17.04.2026) були курсом ПриватБанку.
 alter table public.exchange_rates add column if not exists source text;
@@ -51,28 +51,5 @@ end $$;
 comment on column public.savings_log.rate is 'Курс внеску: гривень за 1 одиницю валюти на дату внеску; для UAH порожньо.';
 comment on column public.savings_log.rate_source is 'Звідки курс внеску: privat, nbu або manual (введено вручну).';
 
--- 3. Щоденне оновлення курсів: pg_cron о 04:10 UTC (06:10 або 07:10 за Києвом) кличе rates-refresh через pg_net.
--- Ключ НЕ пишеться в цей файл і в git: cron читає його з Supabase Vault на кожному запуску.
--- Покласти ключ один раз (SQL Editor у Dashboard; значення: service_role key з Project Settings, API):
---   select vault.create_secret('<service role key>', 'rates_refresh_service_key', 'Bearer для rates-refresh з pg_cron');
--- Без ключа у Vault заголовок порожній, функція відповідає 401 і нічого не пише; застосунок тоді оновлює курси сам.
-create extension if not exists pg_cron;
-create extension if not exists pg_net with schema extensions;
-
-select cron.unschedule(jobid) from cron.job where jobname = 'rates-refresh';
-
-select cron.schedule(
-  'rates-refresh',
-  '10 4 * * *',
-  $$
-  select net.http_post(
-    url := 'https://lisedsqwdzshsxydghag.supabase.co/functions/v1/rates-refresh',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer ' || coalesce((select decrypted_secret from vault.decrypted_secrets where name = 'rates_refresh_service_key'), '')
-    ),
-    body := '{"force":true}'::jsonb,
-    timeout_milliseconds := 30000
-  );
-  $$
-);
+-- 3. Курси оновлює застосунок (rates-refresh раз за сесію, якщо курсам понад 12 год). Задачі cron немає:
+-- ключ service role лишається лише в env функцій (CLAUDE.md), у Vault його не кладемо.
