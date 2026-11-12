@@ -63,6 +63,7 @@ function harness(options={}){
           }
           return {data:q.one?rows[0]??null:rows,error:null};
         }
+        if(table==='salary_payouts'){const found=(options.salaryPayouts??[]).filter(r=>q.filters.every(([k,v])=>r[k]===v));return {data:q.one?found[0]??null:found,error:null};}
         return {data:q.one?null:[],error:null};
       }).then(resolve,reject);return q;
     }};
@@ -90,7 +91,7 @@ function harness(options={}){
   };
   const bindings={salaryOptions:options.salaryOptions??(async()=>({choices:[]})),...salaryBot,recordSalary:async(...args)=>{state.salary=(state.salary??[]).concat([args.slice(1)]);return options.recordSalary?options.recordSalary(...args):{status:'invalid'}},
     editSalaryAmount:async(...args)=>{state.salaryEdits=(state.salaryEdits??[]).concat([args.slice(1)]);return options.editSalaryAmount?options.editSalaryAmount(...args):{status:'missing'}},
-    loadFinance:async()=>({input:{},projection:{}}),repaymentAdvice:()=>({}),repaymentAdviceText:()=>'',...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
+    loadFinance:async()=>{if(options.adviceError)throw new Error('synthetic');return {input:{},projection:{}}},repaymentAdvice:()=>({}),repaymentAdviceText:()=>'',...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
     creditPaid:()=>[],matchCredit:()=>null,parsePaidCallback:todayReports.parsePaidCallback,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
     todayExpensesModel:todayReports.todayExpensesModel,formatTodayExpenses:m=>options.todayPages??todayReports.formatTodayExpenses(m),
     setTimeout:(fn,ms)=>{state.delays.push(ms);state.reportEvents.push('pause:'+ms);fn();return 0},
@@ -617,4 +618,24 @@ test('v215: «Змінити суму» записаної виплати: ли�
  for(const id of [92,93,404]){const x=harness({rows});await x.callback('saled:'+id);assert.equal(x.state.pending,null,String(id));assert.equal(x.state.messages.length,0);}
  const failed=harness({pending:{kind:'salary_edit',tx_id:91,expires:new Date(NOW+600000).toISOString()},editSalaryAmount:async()=>{throw new Error('rpc')}});
  await failed.send('21500');assert.equal(failed.state.pending,null);assert.equal(failed.state.messages.at(-1).text,'Не вдалося записати суму. Спробуйте ще раз.');
+});
+
+test('v215: уже записана виплата веде до «Змінити суму», а збій поради не ламає збереження',async()=>{
+ const choice={kind:'salary',date:'2026-10-21',accountId:7,accountName:'Картка',amount:20000};
+ const already=async()=>({status:'already',id:91});
+ const press=harness({salaryOptions:async()=>({choices:[choice]}),recordSalary:already});await press.callback('sal:s:2026-10-21:7');
+ assert.deepEqual(press.state.messages.at(-1).reply_markup,{inline_keyboard:[[{text:'✏️ Змінити суму',callback_data:'saled:91'}]]});
+ const typed=harness({pending:{kind:'salary_amount',salary_kind:'s',date:'2026-10-21',account_id:7,expires:new Date(NOW+600000).toISOString()},recordSalary:already});
+ await typed.send('19000');assert.equal(typed.state.pending,null);assert.equal(typed.state.messages.length,1);
+ assert.equal(typed.state.messages[0].reply_markup.inline_keyboard[0][0].callback_data,'saled:91');
+ // «Інша сума» на вже записаній виплаті одразу просить виправлення записаного доходу
+ const rows=[{id:91,type:'income',amount:20000,source:'telegram',salary_payouts:[{transaction_id:91}]}];
+ const salaryPayouts=[{account_id:7,kind:'salary',due_date:'2026-10-21',transaction_id:91}];
+ const other=harness({rows,salaryPayouts,salaryOptions:async()=>({choices:[choice]})});await other.callback('salx:s:2026-10-21:7');
+ assert.deepEqual([other.state.pending?.kind,other.state.pending?.tx_id],['salary_edit',91]);assert.match(other.state.messages.at(-1).text,/Введіть правильну суму/);
+ const fresh=harness({rows,salaryOptions:async()=>({choices:[choice]})});await fresh.callback('salx:s:2026-10-21:7');assert.equal(fresh.state.pending?.kind,'salary_amount');
+ // збій поради після збереження: лише повідомлення про збережену виплату
+ const saved=async(sb,u,t,k,d,a,e,amount)=>({status:'saved',id:91,payout:{...choice,amount}});
+ const advice=harness({adviceError:true,recordSalary:saved,pending:{kind:'salary_amount',salary_kind:'s',date:'2026-10-21',account_id:7,expires:new Date(NOW+600000).toISOString()}});
+ await advice.send('19000');assert.equal(advice.state.messages.length,1);assert.match(advice.state.messages[0].text,/^✅ Зарплата/);
 });

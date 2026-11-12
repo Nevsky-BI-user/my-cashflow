@@ -417,7 +417,11 @@ async function onSalary(chatId:number,userId:string,parts:string[],answer:(s:str
  const amount=cents!=null?cents/100:undefined;
  const result=await recordSalary(sb,userId,todayKyiv(),parts[1]==='s'?'salary':'advance',parts[2],parts[3],parts[4]?Number(parts[4]):undefined,amount);
  if(result.status==='invalid')return answer('Виплата недоступна або дата ще не настала');
- if(result.status==='already')return answer('Цю виплату вже враховано');
+ if(result.status==='already'){
+  // Уже записану виплату (зокрема розрахованою сумою) можна виправити кнопкою під цим повідомленням
+  await answer('Цю виплату вже враховано');
+  return reply(chatId,'Цю виплату вже записано. Якщо сума інша, натисніть «✏️ Змінити суму».',salaryEditKeyboard(result.id));
+ }
  if(result.status==='awaiting')return answer(amount!=null?'Чекаємо надходження цієї суми з Monobank':'Чекаємо надходження з Monobank');
  if(result.status==='choose'){
   await answer('Оберіть наявний дохід');
@@ -428,8 +432,11 @@ async function onSalary(chatId:number,userId:string,parts:string[],answer:(s:str
  await answer('Виплату враховано');
  // v215: під записаною виплатою кнопка виправлення суми (для доходу з Monobank бот відповість, що суму задає банк)
  await reply(chatId,'✅ '+(result.payout.kind==='salary'?'Зарплата':'Аванс')+': '+fmtMoney(result.payout.amount)+' · '+result.payout.accountName,salaryEditKeyboard(result.id));
- const finance=await loadFinance(sb,todayKyiv()),advice=repaymentAdviceText(repaymentAdvice(finance.input,finance.projection,result.payout.accountId,todayKyiv()));
- if(advice)await reply(chatId,advice);
+ // Порада щодо погашення окремо: її збій не має виглядати як збій уже збереженої виплати
+ try{
+  const finance=await loadFinance(sb,todayKyiv()),advice=repaymentAdviceText(repaymentAdvice(finance.input,finance.projection,result.payout.accountId,todayKyiv()));
+  if(advice)await reply(chatId,advice);
+ }catch(e){console.error('salary advice failed',(e as Error)?.message);}
 }
 
 // v215: очікування фактичної суми виплати. salary_amount: нова виплата («Інша сума»), salary_edit: виправлення записаної.
@@ -453,6 +460,10 @@ async function onSalaryOther(chatId: number, userId: string, parts: string[], an
   const data = await salaryOptions(sb, todayKyiv());
   const choice = data.choices.find((c: any) => c.kind === kind && c.date === parts[2] && String(c.accountId) === parts[3]);
   if (!choice) return answer('Виплата недоступна або дата ще не настала');
+  // Виплату вже записано: одразу виправлення суми записаного доходу
+  const done = await sb.from('salary_payouts').select('transaction_id').eq('account_id', choice.accountId).eq('kind', kind).eq('due_date', parts[2]).maybeSingle();
+  if (done.error) { console.error('salary payout lookup error:', done.error); return answer('Помилка, спробуйте ще раз'); }
+  if (done.data) return onSalaryEdit(chatId, userId, Number(done.data.transaction_id), answer);
   const next: SalaryAmountPending = { kind: 'salary_amount', salary_kind: parts[1] as 's' | 'a', date: parts[2], account_id: Number(parts[3]),
     expires: new Date(Date.now() + PENDING_TTL_MS).toISOString() };
   return askSalaryAmount(chatId, userId, next, `Введіть фактичну суму: ${kind === 'salary' ? 'зарплата' : 'аванс'} за ${ddmm(parts[2])} · ${choice.accountName}. ` +
@@ -481,7 +492,7 @@ async function answerSalaryAmount(chatId: number, userId: string, text: string, 
       let note = '';
       await onSalary(chatId, userId, ['', pending.salary_kind, pending.date, String(pending.account_id)], async (s) => { note = s; }, Math.round(amount * 100));
       // Відповіді без повідомлення (недоступно, вже враховано, чекаємо Monobank) повторюємо текстом
-      if (note && !['Виплату враховано', 'Оберіть наявний дохід'].includes(note)) await reply(chatId, note + '. Нічого не записано.', MAIN_KB);
+      if (note && !['Виплату враховано', 'Оберіть наявний дохід', 'Цю виплату вже враховано'].includes(note)) await reply(chatId, note + '. Нічого не записано.', MAIN_KB);
       return;
     }
     const result = await editSalaryAmount(sb, userId, pending.tx_id, amount);
