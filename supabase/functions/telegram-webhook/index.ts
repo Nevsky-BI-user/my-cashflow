@@ -1,5 +1,5 @@
 import { repaymentAdvice, repaymentAdviceText } from '../_shared/repayment.ts';
-import { salaryOptions, salaryKeyboard, recordSalary } from '../_shared/salary-bot.ts';
+import { salaryOptions, salaryKeyboard, recordSalary, salaryEditKeyboard, parseSalaryAmount, editSalaryAmount } from '../_shared/salary-bot.ts';
 import { fixedCandidates, fixedOccurrence, fixedOccurrenceKey } from '../_shared/fixedmatch.ts';
 // Telegram-бот (Фази 4.1, 4.2, 5.1): текстові витрати/доходи, /income з дедупом Monobank і /yes,
 // фото чеків, привʼязка кодом, /balance і розділи статусу (/cards, /installments, /payments, /operations), /last; звіти Графік, Бюджет, Тиждень, Місяць і кнопка «Оплачено» під нагадуваннями.
@@ -412,19 +412,87 @@ async function offerSalary(chatId:number,explicit=false){
  if(!data.choices.length){if(explicit)await reply(chatId,'Налаштуйте зарплатний рахунок, суми й дати виплат у застосунку.');return;}
  await reply(chatId,'Підтвердіть отриману виплату:',salaryKeyboard(data.choices));
 }
-async function onSalary(chatId:number,userId:string,parts:RegExpMatchArray,answer:(s:string)=>Promise<unknown>){
- const result=await recordSalary(sb,userId,todayKyiv(),parts[1]==='s'?'salary':'advance',parts[2],parts[3],parts[4]?Number(parts[4]):undefined);
+// parts: [_, 's'|'a', дата, рахунок, id наявного доходу?]; cents: фактична сума в копійках («Інша сума»), інакше сума з налаштувань
+async function onSalary(chatId:number,userId:string,parts:string[],answer:(s:string)=>Promise<unknown>,cents?:number){
+ const amount=cents!=null?cents/100:undefined;
+ const result=await recordSalary(sb,userId,todayKyiv(),parts[1]==='s'?'salary':'advance',parts[2],parts[3],parts[4]?Number(parts[4]):undefined,amount);
  if(result.status==='invalid')return answer('Виплата недоступна або дата ще не настала');
  if(result.status==='already')return answer('Цю виплату вже враховано');
- if(result.status==='awaiting')return answer('Чекаємо надходження з Monobank');
+ if(result.status==='awaiting')return answer(amount!=null?'Чекаємо надходження цієї суми з Monobank':'Чекаємо надходження з Monobank');
  if(result.status==='choose'){
   await answer('Оберіть наявний дохід');
-  return reply(chatId,'Є кілька однакових доходів. Оберіть виплату:',{inline_keyboard:result.rows.map((t:any)=>[{text:t.date+' · '+fmtMoney(t.amount),callback_data:'sal:'+parts[1]+':'+parts[2]+':'+parts[3]+':'+t.id}])});
+  const code=parts[1]+':'+parts[2]+':'+parts[3];
+  return reply(chatId,'Є кілька однакових доходів. Оберіть виплату:',{inline_keyboard:result.rows.map((t:any)=>[{text:t.date+' · '+fmtMoney(t.amount),
+   callback_data:cents!=null?'salv:'+code+':'+cents+':'+t.id:'sal:'+code+':'+t.id}])});
  }
  await answer('Виплату враховано');
- await reply(chatId,'✅ '+(result.payout.kind==='salary'?'Зарплата':'Аванс')+': '+fmtMoney(result.payout.amount)+' · '+result.payout.accountName);
+ // v215: під записаною виплатою кнопка виправлення суми (для доходу з Monobank бот відповість, що суму задає банк)
+ await reply(chatId,'✅ '+(result.payout.kind==='salary'?'Зарплата':'Аванс')+': '+fmtMoney(result.payout.amount)+' · '+result.payout.accountName,salaryEditKeyboard(result.id));
  const finance=await loadFinance(sb,todayKyiv()),advice=repaymentAdviceText(repaymentAdvice(finance.input,finance.projection,result.payout.accountId,todayKyiv()));
  if(advice)await reply(chatId,advice);
+}
+
+// v215: очікування фактичної суми виплати. salary_amount: нова виплата («Інша сума»), salary_edit: виправлення записаної.
+// Стан у profiles.telegram_pending, як очікування дати чека; живе 10 хв, /no скасовує.
+type SalaryAmountPending = { kind: 'salary_amount'; salary_kind: 's' | 'a'; date: string; account_id: number; expires: string };
+type SalaryEditPending = { kind: 'salary_edit'; tx_id: number; expires: string };
+const isSalaryPending = (p: any): p is SalaryAmountPending | SalaryEditPending => p?.kind === 'salary_amount' || p?.kind === 'salary_edit';
+const livePending = (p: any) => !!p && !!p.expires && Date.parse(p.expires) >= Date.now();
+async function askSalaryAmount(chatId: number, userId: string, next: SalaryAmountPending | SalaryEditPending, prompt: string, answer: (s: string) => Promise<unknown>) {
+  const { data, error } = await sb.from('profiles').select('telegram_pending').eq('id', userId).maybeSingle();
+  if (error) { console.error('salary pending lookup error:', error); return answer('Помилка, спробуйте ще раз'); }
+  const current = data?.telegram_pending ?? null;
+  // Живе очікування іншої дії (підтвердження, чек) не перезаписуємо; введення кнопкою, прострочене чи інше очікування суми замінюємо
+  if (livePending(current) && current.kind !== 'entry' && !isSalaryPending(current)) return answer('Спочатку завершіть або скасуйте попередню дію');
+  if (!await replacePending(userId, current, next)) return answer('Не вдалося, спробуйте ще раз');
+  await answer('Введіть суму');
+  return reply(chatId, prompt);
+}
+async function onSalaryOther(chatId: number, userId: string, parts: string[], answer: (s: string) => Promise<unknown>) {
+  const kind = parts[1] === 's' ? 'salary' : 'advance';
+  const data = await salaryOptions(sb, todayKyiv());
+  const choice = data.choices.find((c: any) => c.kind === kind && c.date === parts[2] && String(c.accountId) === parts[3]);
+  if (!choice) return answer('Виплата недоступна або дата ще не настала');
+  const next: SalaryAmountPending = { kind: 'salary_amount', salary_kind: parts[1] as 's' | 'a', date: parts[2], account_id: Number(parts[3]),
+    expires: new Date(Date.now() + PENDING_TTL_MS).toISOString() };
+  return askSalaryAmount(chatId, userId, next, `Введіть фактичну суму: ${kind === 'salary' ? 'зарплата' : 'аванс'} за ${ddmm(parts[2])} · ${choice.accountName}. ` +
+    `Розрахована сума ${fmtMoney(choice.amount)}. Наприклад: 51234,56. Скасувати: /no. Чекаю 10 хв.`, answer);
+}
+async function onSalaryEdit(chatId: number, userId: string, txId: number, answer: (s: string) => Promise<unknown>) {
+  const { data: tx, error } = await sb.from('transactions').select('id,amount,source,salary_payouts(transaction_id)').eq('id', txId).maybeSingle();
+  if (error) { console.error('salary edit lookup error:', error); return answer('Помилка, спробуйте ще раз'); }
+  const linked = tx && (Array.isArray(tx.salary_payouts) ? tx.salary_payouts.length > 0 : !!tx.salary_payouts);
+  if (!linked) return answer('Виплату не знайдено');
+  if (tx.source === 'mono') return answer('Суму з Monobank задає банк');
+  const next: SalaryEditPending = { kind: 'salary_edit', tx_id: txId, expires: new Date(Date.now() + PENDING_TTL_MS).toISOString() };
+  return askSalaryAmount(chatId, userId, next, `Введіть правильну суму виплати. Зараз записано ${fmtMoney(Number(tx.amount))}. Наприклад: 51234,56. Скасувати: /no. Чекаю 10 хв.`, answer);
+}
+// Повідомлення з сумою на очікування виплати. Неправильний формат лишає очікування; запис іде після зняття стану.
+async function answerSalaryAmount(chatId: number, userId: string, text: string, pending: SalaryAmountPending | SalaryEditPending) {
+  if (!livePending(pending)) {
+    const cleared = await replacePending(userId, pending, null);
+    return reply(chatId, cleared ? 'Час введення суми минув. Нічого не записано. Натисніть кнопку виплати знову.' : 'Не вдалося очистити стан. Спробуйте ще раз.', cleared ? MAIN_KB : undefined);
+  }
+  const amount = parseSalaryAmount(text);
+  if (amount == null) return reply(chatId, 'Надішліть лише суму, наприклад 51234,56 або 51 234. Скасувати: /no.');
+  if (!await replacePending(userId, pending, null)) return reply(chatId, 'Стан змінився. Нічого не записано. Спробуйте ще раз.');
+  try {
+    if (pending.kind === 'salary_amount') {
+      let note = '';
+      await onSalary(chatId, userId, ['', pending.salary_kind, pending.date, String(pending.account_id)], async (s) => { note = s; }, Math.round(amount * 100));
+      // Відповіді без повідомлення (недоступно, вже враховано, чекаємо Monobank) повторюємо текстом
+      if (note && !['Виплату враховано', 'Оберіть наявний дохід'].includes(note)) await reply(chatId, note + '. Нічого не записано.', MAIN_KB);
+      return;
+    }
+    const result = await editSalaryAmount(sb, userId, pending.tx_id, amount);
+    if (result.status === 'missing') return reply(chatId, 'Виплату не знайдено. Нічого не змінено.', MAIN_KB);
+    if (result.status === 'bank') return reply(chatId, 'Суму з Monobank задає банк. Нічого не змінено.', MAIN_KB);
+    if (result.status === 'invalid') return reply(chatId, 'Сума некоректна. Нічого не змінено.', MAIN_KB);
+    return reply(chatId, `✅ Суму виплати змінено: ${fmtMoney(result.old)} → ${fmtMoney(result.amount)}`, salaryEditKeyboard(pending.tx_id));
+  } catch (e) {
+    console.error('salary amount failed', (e as Error)?.message);
+    return reply(chatId, 'Не вдалося записати суму. Спробуйте ще раз.', MAIN_KB);
+  }
 }
 
 async function onCallback(cq: any) {
@@ -442,7 +510,13 @@ async function onCallback(cq: any) {
     }
     if (!prof) return answer('Доступ закритий');
     const salary=String(cq?.data||'').match(/^sal:([sa]):(\d{4}-\d{2}-\d{2}):(\d+)(?::(\d+))?$/);
-    if(salary)return onSalary(chatId,prof.id,salary,answer);
+    if(salary)return onSalary(chatId,prof.id,[...salary],answer);
+    const salaryOther=String(cq?.data||'').match(/^salx:([sa]):(\d{4}-\d{2}-\d{2}):(\d+)$/);
+    if(salaryOther)return onSalaryOther(chatId,prof.id,[...salaryOther],answer);
+    const salaryValue=String(cq?.data||'').match(/^salv:([sa]):(\d{4}-\d{2}-\d{2}):(\d+):(\d{1,10}):(\d+)$/);
+    if(salaryValue)return onSalary(chatId,prof.id,[salaryValue[0],salaryValue[1],salaryValue[2],salaryValue[3],salaryValue[5]],answer,Number(salaryValue[4]));
+    const salaryEdit=String(cq?.data||'').match(/^saled:(\d+)$/);
+    if(salaryEdit)return onSalaryEdit(chatId,prof.id,Number(salaryEdit[1]),answer);
     const pick=String(cq?.data||'').match(/^flpick:(\d+)$/);
     if(pick){await answer('Оберіть зобовʼязання');return offerFixedLink(chatId,prof.id,Number(pick[1]));}
     const payment=String(cq?.data||'').match(/^(pl|po|pc):(\d+):([fca]):(\d+)(?::(\d+|\d{4}-\d{2}-\d{2}))?$/);
@@ -1890,6 +1964,9 @@ Deno.serve(async (req) => {
   }
   if (!navigation && pending?.kind === 'receipt_date') {
     await answerReceiptDate(chatId, prof.id, text, pending); return done();
+  }
+  if (!navigation && isSalaryPending(pending)) {
+    await answerSalaryAmount(chatId, prof.id, text, pending); return done();
   }
   if (/^\/yes$/i.test(text) || text === BTN.yes) { await confirmPending(chatId, prof.id); return done(); }
   const entryType = text === BTN.income || /^\/(?:income|дохід)$/i.test(text) ? 'income'
