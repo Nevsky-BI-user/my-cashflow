@@ -100,15 +100,14 @@ def mobile(page):
 
 
 def row_gate(dlg, tag):
-    boxes = [dlg.locator('#sav-rate').bounding_box()] + [dlg.locator('.sav-rate-chip').nth(i).bounding_box() for i in range(2)]
-    check(all(boxes), f'{tag}: немає поля курсу або чипів')
-    check(all(abs(b['y'] - boxes[0]['y']) <= 1 and abs(b['height'] - boxes[0]['height']) <= 1 for b in boxes),
-          f'{tag}: поле і чипи не в одному рядку однакової висоти: {[(round(b["y"]), round(b["height"])) for b in boxes]}')
-    check(boxes[0]['x'] + boxes[0]['width'] <= boxes[1]['x'] and boxes[1]['x'] + boxes[1]['width'] <= boxes[2]['x'], f'{tag}: поле і чипи перекриваються')
+    box = dlg.locator('#sav-rate').bounding_box()
+    dbox = dlg.bounding_box()
+    check(box and dbox, f'{tag}: немає поля курсу')
+    check(box['x'] >= dbox['x'] and box['x'] + box['width'] <= dbox['x'] + dbox['width'] + 1, f'{tag}: поле курсу виходить за форму')
 
 
 def form(page):
-    """Форма поповнення: курс ПриватБанку за замовчуванням, НБУ одним дотиком, ручне введення з комою; запис зберігає курс."""
+    """Форма поповнення: курс вписує користувач (поле порожнє, курси банків лише в підказці), без курсу не зберігається."""
     freeze(page, DAY, patch=PATCH)
     go_tab(page, 4)
     page.locator('.goals-log').get_by_role('button', name='+ Внесок', exact=True).click()
@@ -117,30 +116,26 @@ def form(page):
     check(dlg.locator('#sav-rate').count() == 0, 'поле курсу для гривні')
     dlg.get_by_role('button', name='$ USD').click()
     rate = dlg.locator('#sav-rate')
-    check(rate.input_value() == '41,80', f'курс за замовчуванням {rate.input_value()!r}, а не продаж ПриватБанку 41,80')
+    check(rate.input_value() == '', f'курс підставлено сам {rate.input_value()!r}: його вписує користувач')
+    check(rate.get_attribute('placeholder') == 'ПриватБанк 41,80 · НБУ 41,50', f'підказка курсів {rate.get_attribute("placeholder")!r}')
+    check(dlg.locator('.sav-rate-chip').count() == 0, 'лишились чипи автозаповнення')
     row_gate(dlg, 'ПК 1280')
-    chips = dlg.locator('.sav-rate-chip')
-    check(chips.count() == 2 and chips.nth(0).get_attribute('aria-pressed') == 'true', 'немає вибраного чипа ПриватБанку')
-    chips.nth(1).click()
-    check(rate.input_value() == '41,50' and chips.nth(1).get_attribute('aria-pressed') == 'true', 'чип НБУ не підставив 41,5')
     dlg.get_by_placeholder('Сума').fill('100')
-    check(num(dlg.locator('.sav-rate-cost').inner_text()) == 4150, f'собівартість {dlg.locator(".sav-rate-cost").inner_text()!r}')
-    rate.fill('')
     dlg.get_by_role('button', name='Зберегти').click()
     page.wait_for_timeout(200)
     check('Вкажіть курс' in dlg.inner_text(), 'порожній курс зберігся без помилки')
-    rate.fill('42,10')
+    rate.fill('41,5')
     check('Вкажіть курс' not in dlg.inner_text(), 'помилка курсу лишилась після введення')
-    check(chips.nth(0).get_attribute('aria-pressed') == 'false' and chips.nth(1).get_attribute('aria-pressed') == 'false', 'ручний курс лишив вибраний чип')
+    check(num(dlg.locator('.sav-rate-cost').inner_text()) == 4150, f'собівартість {dlg.locator(".sav-rate-cost").inner_text()!r}')
     shot(page, 'savings-rates-form-1280.jpg', full=False)
     dlg.get_by_role('button', name='Зберегти').click()
     page.wait_for_timeout(400)
     rows = page.locator('.goals-log .sav-rate').all_inner_texts()
-    check(any('за курсом 42,10' in r and num(r.split('·')[1]) == 4210 for r in rows), f'новий внесок без курсу 42,10 у списку: {rows}')
+    check(any('за курсом 41,50' in r and num(r.split('·')[1]) == 4150 for r in rows), f'новий внесок без курсу 41,50 у списку: {rows}')
 
 
 def form_mobile(page):
-    """Телефон 375: поле курсу і два чипи в один рядок, без горизонтальної прокрутки."""
+    """Телефон 375: порожнє поле курсу в межах вікна, без горизонтальної прокрутки."""
     freeze(page, DAY, patch=PATCH)
     go_tab(page, 4)
     # довге натискання FAB: мінішит «Швидке додавання», далі «Поповнення цілі»
@@ -153,7 +148,7 @@ def form_mobile(page):
     dlg.get_by_role('button', name='€ EUR').click()
     row_gate(dlg, 'телефон 375')
     check(dlg.evaluate('e=>e.scrollWidth<=e.clientWidth+1'), 'вікно поповнення ширше за екран')
-    check(dlg.locator('#sav-rate').input_value() == '45,60', f'EUR за замовчуванням {dlg.locator("#sav-rate").input_value()!r}')
+    check(dlg.locator('#sav-rate').input_value() == '', f'EUR курс підставлено сам {dlg.locator("#sav-rate").input_value()!r}')
     shot(page, 'savings-rates-form-375.jpg', full=False)
 
 
@@ -204,9 +199,9 @@ def loader(page):
     page.wait_for_timeout(300)
     dlg = page.locator('[role=dialog]').last
     dlg.get_by_role('button', name='$ USD').click()
-    chips = dlg.locator('.sav-rate-chip').all_inner_texts()
-    check([c.replace('\n', ' ') for c in chips] == ['ПриватБанк 45,95', 'НБУ 45,3222'], f'чипи після оновлення курсів: {chips}')
-    check(dlg.locator('#sav-rate').input_value() == '45,95', f'курс ПриватБанку {dlg.locator("#sav-rate").input_value()!r}')
+    ph = dlg.locator('#sav-rate').get_attribute('placeholder')
+    check(ph == 'ПриватБанк 45,95 · НБУ 45,3222', f'підказка після оновлення курсів: {ph!r}')
+    check(dlg.locator('#sav-rate').input_value() == '', 'курс підставлено сам після оновлення курсів')
 
 
 def loader_fresh(page):
