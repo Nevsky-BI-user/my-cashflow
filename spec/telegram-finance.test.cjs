@@ -25,10 +25,10 @@ function mock(tables,failTable=null){
 }
 async function block(sb,capture){
  const core=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/budget.ts')).href);
- const {formatFinanceMessage}=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/finance-message.ts')).href);
+ const {financeSections}=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/finance-message.ts')).href);
  const {loadMonthlyBudgets}=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/bot-data.ts')).href);
- const factory=new Function('loadMonthlyBudgets','sb','financeProjection','lastPayout','formatFinanceMessage','shiftDate',isolated+';return freeBlock;');
- return factory(loadMonthlyBudgets,sb,(data,options)=>{capture.data=data;capture.options=options;return core.financeProjection(data,options);},core.lastPayout,formatFinanceMessage,
+ const factory=new Function('loadMonthlyBudgets','sb','financeProjection','lastPayout','financeSections','shiftDate',isolated+';return freeBlock;');
+ return factory(loadMonthlyBudgets,sb,(data,options)=>{capture.data=data;capture.options=options;return core.financeProjection(data,options);},core.lastPayout,financeSections,
    (day,n)=>new Date(Date.parse(day+'T00:00:00Z')+n*86400000).toISOString().slice(0,10));
 }
 test('real Telegram consumer loads every page and maps categories into the canonical engine',async()=>{
@@ -37,13 +37,13 @@ test('real Telegram consumer loads every page and maps categories into the canon
  salary_config:[{rate:0,advance_day:21,salary_day:6,split_day:15,advance_amount:50000,salary_amount:50000}],
  categories:[{id:1,name:'Їжа',is_income:false,budget_limit:100},{id:2,name:'Зарплата',is_income:true,budget_limit:0}],
  transactions:Array.from({length:1001},(_,i)=>({id:i,account_id:null,type:'expense',amount:1,date:'2026-10-10',created_at:'2026-10-10T00:00:00Z',source:'mono'}))});
- const capture={};const run=await block(sb,capture);const text=(await run('2026-10-10')).replace(/[\u00a0\u202f]/g,' ');
+ const capture={};const run=await block(sb,capture);const sections=await run('2026-10-10');const text=sections.top.join('\n').replace(/[\u00a0\u202f]/g,' ');
  assert.equal(capture.data.transactions.length,1001);assert.equal(capture.data.categories[0].type,'expense');assert.equal(capture.data.categories[1].type,'income');
  assert.equal(capture.data.accounts[1].credit_limit,20000);assert.equal(capture.options.through,'2027-01-08');
  assert.ok(text.includes('Власні кошти:'),text);// v150: бюджет наступного періоду за правилом рушія: min(20 000, A), якщо A (власні після резерву й погашення) > 15 000, інакше 15 000
  const core=await import(pathToFileURL(path.join(root,'supabase/functions/_shared/budget.ts')).href);const plan=core.financeProjection(capture.data,capture.options).nextPlan;
  assert.equal(plan.targetCents,plan.baseAvailableCents>1500000?Math.min(2000000,plan.baseAvailableCents):1500000);/* v153 (А): платіж 28 000 25.10 credit_ok резервувався з виплати 21.10, A нижче 15 000, бюджет 15 000; v154: credit_ok не резервується, A понад 20 000, бюджет 20 000 */assert.equal(plan.targetCents,1500000);
- assert.ok(text.includes('Бюджет на початок періоду: 15 000 ₴'),text);assert.ok(text.includes('937,5 ₴/день (21.10-06.11)'),text);assert.ok(text.includes('Картки:'),text);
+ assert.ok(text.includes('Бюджет на початок періоду: 15 000 ₴'),text);assert.ok(text.includes('937,5 ₴/день (21.10-06.11)'),text);assert.ok(!text.includes('Картки:'),text);assert.equal(sections.cards[0],'Картки:');
  const tx=sb.calls.filter(c=>c.table==='transactions'&&c.range);assert.equal(tx.length,2);assert.deepEqual(tx.map(c=>c.range[0]),[[0,999],[1000,1999]]);
  for(const q of tx){assert.deepEqual(q.order[0],['id',{ascending:true}]);assert.deepEqual(q.lte[0],['date','2026-10-10']);}
 });

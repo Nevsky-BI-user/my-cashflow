@@ -2,12 +2,12 @@ import { repaymentAdvice, repaymentAdviceText } from '../_shared/repayment.ts';
 import { salaryOptions, salaryKeyboard, recordSalary } from '../_shared/salary-bot.ts';
 import { fixedCandidates, fixedOccurrence, fixedOccurrenceKey } from '../_shared/fixedmatch.ts';
 // Telegram-бот (Фази 4.1, 4.2, 5.1): текстові витрати/доходи, /income з дедупом Monobank і /yes,
-// фото чеків, привʼязка кодом, /balance, /last; звіти Графік, Бюджет, Тиждень, Місяць і кнопка «Оплачено» під нагадуваннями.
+// фото чеків, привʼязка кодом, /balance і розділи статусу (/cards, /installments, /payments, /operations), /last; звіти Графік, Бюджет, Тиждень, Місяць і кнопка «Оплачено» під нагадуваннями.
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { financeProjection, lastPayout, type AccTx } from '../_shared/budget.ts';
-import { formatFinanceMessage } from '../_shared/finance-message.ts';
+import { financeSections, type FinanceSections } from '../_shared/finance-message.ts';
 import { paymentDates, paymentPage, type PaymentKind } from '../_shared/payment-picker.ts';
 import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
 import { loadFinance, loadMonthlyBudgets, type FinanceData } from '../_shared/bot-data.ts';
@@ -105,9 +105,9 @@ const HELP =
   'Скриншот із кількома операціями: до 20 доходів/витрат у гривнях, кожна окремим записом і з вибором рахунку\n' +
   'Банк на скриншоті допоможе вибрати рахунок; якщо є сумнів, бот запропонує кнопки. Підпис фото має пріоритет.\n' +
   '/yes: підтвердити дохід, схожий на Monobank\n' +
-  '/balance: баланс, картки, розстрочки\n' +
-  '/chart: графік балансу, /budget: бюджет періоду, /week: тиждень, /today: витрати за сьогодні\n' +
-  '/last: останні 5 записів\n\n' +
+  '/balance: бюджет і баланс, /cards: картки, /installments: розстрочки\n' +
+  '/payments: найближчі платежі, /operations: останні операції\n' +
+  '/chart: графік балансу, /budget: бюджет періоду, /week: тиждень, /today: витрати за сьогодні\n\n' +
   'Рахунок: слово ощад, приват або готівка на початку чи в кінці опису (для фото: у підписі), ' +
   'наприклад «250 кава приват». Без слова витрата лишається без рахунку, бот спитає кнопками; ' +
   'дохід іде на рахунок зарплати. Операції Monobank приходять самі.';
@@ -1544,16 +1544,29 @@ async function confirmPending(chatId: number, userId: string) {
 // Посилання на застосунок у відповідь на /app (v186: під статусом кнопки немає)
 const APP_KB = { inline_keyboard: [[{ text: '📱 Відкрити застосунок', url: APP_URL }]] };
 
-async function balance(chatId: number) {
+// v215 (власник: «Баланс» лише основне, решта окремими кнопками): кожна кнопка шле свій розділ того самого статусу
+type StatusSection = 'balance' | 'cards' | 'installments' | 'payments' | 'operations';
+const EMPTY_SECTION: Record<StatusSection, string> = {
+  balance: 'Бюджет недоступний.', cards: 'Активних рахунків немає.', installments: 'Розстрочок немає.',
+  payments: 'Найближчих обовʼязкових платежів немає.', operations: 'Записів ще немає.',
+};
+async function balance(chatId: number, section: StatusSection = 'balance', kb: unknown = MAIN_KB) {
   const today = todayKyiv();
-  let free: string;
+  let s: FinanceSections;
   try {
-    free = await freeBlock(today);
+    s = await freeBlock(today);
   } catch (e) {
     console.error('balance: free block failed', (e as Error)?.message);
-    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.');
+    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.', kb);
   }
-  return reply(chatId, free);
+  let lines: string[];
+  if (section === 'operations') {
+    // Попередження про операції без рахунку стоїть під списком операцій (до v215 було в кінці статусу)
+    const recent = await recentSection();
+    if (!recent) return reply(chatId, 'Не вдалося отримати список операцій.', kb);
+    lines = [...recent, ...(recent.length && s.unassigned.length ? [''] : []), ...s.unassigned];
+  } else lines = section === 'cards' ? s.cards : section === 'installments' ? s.installments : section === 'payments' ? s.due : s.top;
+  return reply(chatId, lines.length ? lines.join('\n') : EMPTY_SECTION[section], kb);
 }
 
 // Місяць після «за» (знахідний відмінок збігається з називним)
@@ -1575,7 +1588,7 @@ async function financeTransactions(from: string, today: string, since: number): 
 }
 
 // Погоджений план та прогноз каси: та сама чиста модель, що у застосунку.
-async function freeBlock(today: string): Promise<string> {
+async function freeBlock(today: string): Promise<FinanceSections> {
   const [acc, fix, cred, sal, cats] = await Promise.all([
     sb.from('accounts').select('id,name,kind,balance,debt,credit_limit,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
@@ -1622,11 +1635,11 @@ async function freeBlock(today: string): Promise<string> {
   } catch (e) {
     console.error('status budget failed', (e as Error)?.message);
   }
-  return formatFinanceMessage(projection, {count: lost.length, amountCents: lost.reduce((sum, t) => sum + Math.round(Number(t.amount) * 100), 0)},
-    installments, budget) + await recentText();
+  return financeSections(projection, {count: lost.length, amountCents: lost.reduce((sum, t) => sum + Math.round(Number(t.amount) * 100), 0)},
+    installments, budget);
 }
 
-// Сума з копійками для відповідей бота; оголошено тут, бо блок статусу (financeTransactions..recentText) тест виконує окремо
+// Сума з копійками для відповідей бота; оголошено тут, бо блок статусу (financeTransactions..recentSection) тест виконує окремо
 const fmtMoney = (n: number) =>
   new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + ' ₴';
 
@@ -1650,24 +1663,26 @@ async function recentLines(): Promise<string[] | null> {
   });
 }
 
-async function recentText(): Promise<string> {
+// Розділ «Операції»: заголовок і рядки; null, якщо список не прочитався, порожній масив, якщо записів немає
+async function recentSection(): Promise<string[] | null> {
   const lines = await recentLines();
-  return lines && lines.length ? '\n\nОстанні операції:\n' + lines.join('\n') : '';
+  return lines && lines.length ? ['Останні операції:', ...lines] : lines;
 }
 
-async function last(chatId: number) {
+async function last(chatId: number, kb: unknown = MAIN_KB) {
   const lines = await recentLines();
-  if (!lines) return reply(chatId, 'Не вдалося отримати список.');
-  if (!lines.length) return reply(chatId, 'Записів ще немає.');
-  return reply(chatId, '📋 Останні:\n' + lines.join('\n'));
+  if (!lines) return reply(chatId, 'Не вдалося отримати список.', kb);
+  if (!lines.length) return reply(chatId, 'Записів ще немає.', kb);
+  return reply(chatId, '📋 Останні:\n' + lines.join('\n'), kb);
 }
 
 // ---------- Звіти кнопок: Графік, Бюджет, Тиждень, Місяць ----------
 // Картинка multipart-запитом sendPhoto; підпис фото до 1024 символів
-async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name: string): Promise<boolean> {
+async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name: string, kb: unknown = undefined): Promise<boolean> {
   try {
     const fd = new FormData();
     fd.append('chat_id', String(chatId));
+    if (kb) fd.append('reply_markup', JSON.stringify(kb));
     fd.append('caption', caption.slice(0, 1024));
     fd.append('photo', new Blob([png as BlobPart], { type: 'image/png' }), name);
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: 'POST', body: fd });
@@ -1680,24 +1695,24 @@ async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name:
 }
 
 // Дані з тієї самої проєкції, що статус і застосунок; помилка завантаження або звіту дає коротку відповідь
-async function withFinance(chatId: number, fn: (chatId: number, d: FinanceData) => Promise<unknown>) {
+async function withFinance(chatId: number, fn: (chatId: number, d: FinanceData) => Promise<unknown>, kb: unknown = MAIN_KB) {
   let d: FinanceData;
   try {
     d = await loadFinance(sb, todayKyiv());
   } catch (e) {
     console.error('report: finance load failed', (e as Error)?.message);
-    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.');
+    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.', kb);
   }
   try {
     await fn(chatId, d);
   } catch (e) {
     console.error('report failed', (e as Error)?.message);
-    await reply(chatId, 'Не вдалося побудувати звіт. Спробуйте ще раз.');
+    await reply(chatId, 'Не вдалося побудувати звіт. Спробуйте ще раз.', kb);
   }
 }
 
 // 📈 Графік балансу від мінус місяця до плюс місяця; якщо картинка не вийшла, підпис надсилається текстом
-async function chartReport(chatId: number, d: FinanceData) {
+async function chartReport(chatId: number, d: FinanceData, kb: unknown = MAIN_KB) {
   const s = balanceSeries(d.projection, d.txs, d.accounts, d.today, { firstOwnDate: d.firstOwnDate, salary: d.salary });
   const caption = chartCaption(s);
   let png: Uint8Array | null = null;
@@ -1706,13 +1721,13 @@ async function chartReport(chatId: number, d: FinanceData) {
   } catch (e) {
     console.error('chart render failed', (e as Error)?.message);
   }
-  if (!png || !(await sendPhoto(chatId, png, caption, 'balance.png'))) await reply(chatId, '📈 ' + caption);
+  if (!png || !(await sendPhoto(chatId, png, caption, 'balance.png', kb))) await reply(chatId, '📈 ' + caption, kb);
 }
 
 // 📊 Бюджет: текст окремим повідомленням (підпис фото обмежений 1024 символами), потім кільце категорій
-async function budgetReport(chatId: number, d: FinanceData) {
+async function budgetReport(chatId: number, d: FinanceData, kb: unknown = MAIN_KB) {
   const m = budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts);
-  await reply(chatId, formatBudget(m));
+  await reply(chatId, formatBudget(m), kb);
   if (!m || !m.rows.some((r) => r.fact > 0)) return;
   try {
     await sendPhoto(chatId, await svgToPng(donutSvg(m)), 'Витрати періоду за категоріями', 'budget.png');
@@ -1861,8 +1876,8 @@ Deno.serve(async (req) => {
     else await reply(chatId, 'Скасовано. Оберіть наступну дію.', pending ? MAIN_KB : undefined);
     return done();
   }
-  const navigation = /^\/(?:menu|start|help|app|balance|chart|budget|week|month|today|last)$/i.test(text) || /^меню$/i.test(text) ||
-    [BTN.menu,BTN.help,BTN.app,BTN.balance,BTN.chart,BTN.budget,BTN.week,BTN.month,BTN.today,BTN.last].includes(text);
+  const navigation = /^\/(?:menu|start|help|app|balance|chart|budget|week|month|today|last|cards|installments|payments|operations)$/i.test(text) || /^меню$/i.test(text) ||
+    [BTN.menu,BTN.help,BTN.app,BTN.balance,BTN.chart,BTN.budget,BTN.week,BTN.month,BTN.today,BTN.last,BTN.cards,BTN.installments,BTN.payments,BTN.operations].includes(text);
   if (navigation && pending?.kind === 'entry' && !await replacePending(prof.id, pending, null)) {
     await reply(chatId, 'Не вдалося завершити введення. Спробуйте ще раз.', liveEntry(pending) ? entryKeyboard(pending) : MAIN_KB);
     return done();
@@ -1919,16 +1934,22 @@ Deno.serve(async (req) => {
     await addReceipt(chatId, prof.id, updateId, photos, msg.media_group_id, msg.caption, msg.date); return done();
   }
   let m: RegExpMatchArray | null;
-  if (/^\/balance$/i.test(text) || text === BTN.balance) await balance(chatId);
-  else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, chartReport);
-  else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, budgetReport);
-  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), undefined, true));
+  // Відповіді меню несуть клавіатуру, щоб панель поверталась і там, де зникла (Telegram Desktop);
+  // під час незавершеного підтвердження лишається «Так / Ні», інакше натискання меню стерло б вибір
+  const menuKb = pending && pending.kind !== 'entry' ? CONFIRM_KB : MAIN_KB;
+  if (/^\/balance$/i.test(text) || text === BTN.balance) await balance(chatId, 'balance', menuKb);
+  else if (/^\/cards$/i.test(text) || text === BTN.cards) await balance(chatId, 'cards', menuKb);
+  else if (/^\/installments$/i.test(text) || text === BTN.installments) await balance(chatId, 'installments', menuKb);
+  else if (/^\/payments$/i.test(text) || text === BTN.payments) await balance(chatId, 'payments', menuKb);
+  else if (/^\/operations$/i.test(text) || text === BTN.operations) await balance(chatId, 'operations', menuKb);
+  else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, (c, d) => chartReport(c, d, menuKb), menuKb);
+  else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, (c, d) => budgetReport(c, d, menuKb), menuKb);
+  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), menuKb, true), menuKb);
   else if (/^\/today$/i.test(text) || text === BTN.today) await withFinance(chatId, async (c, d) => {
-    const keyboard = pending && pending.kind !== 'entry' ? CONFIRM_KB : MAIN_KB;
-    await sendTodayExpenses(c, formatTodayExpenses(todayExpensesModel(d.txs, d.cats, d.accounts, d.today)), keyboard);
-  });
-  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), undefined, true));
-  else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId);
+    await sendTodayExpenses(c, formatTodayExpenses(todayExpensesModel(d.txs, d.cats, d.accounts, d.today)), menuKb);
+  }, menuKb);
+  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), menuKb, true), menuKb);
+  else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId, menuKb);
   else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP, MAIN_KB);
   else if (/^\/app$/i.test(text) || text === BTN.app) await reply(chatId, 'Відкрити застосунок:', APP_KB);
   else if (/^\/(?:menu|start)$/i.test(text) || /^меню$/i.test(text) || text === BTN.menu) await reply(chatId, 'Вітаю! Оберіть дію кнопками нижче.', MAIN_KB);

@@ -9,25 +9,27 @@ const labels={
  balance:'💰 Баланс',chart:'📈 Графік',budget:'📊 Бюджет',week:'📅 Тиждень',month:'🔍 Місяць',today:'🧾 Витрати за сьогодні',
  income:'➕ Дохід',expense:'➖ Витрата',last:'📋 Останні',help:'❓ Допомога',app:'📱 Застосунок',
  menu:'⬅️ Головне меню',text:'✍️ Текстом',image:'📷 Зображенням',cancel:'✖ Скасувати',yes:'✅ Так, додати',
+ cards:'💳 Картки',installments:'📆 Розстрочки',payments:'⏰ Платежі',operations:'🗂 Операції',
 };
 const rows=(keys)=>keys.map(row=>row.map(key=>({text:labels[key]})));
 
-test('спільний контракт зберігає точні назви 16 поточних і сумісних кнопок',async()=>{
+test('спільний контракт зберігає точні назви 20 поточних і сумісних кнопок',async()=>{
  const {KB_BTN}=await keyboard;
  assert.deepEqual(KB_BTN,labels);
- assert.equal(new Set(Object.values(KB_BTN)).size,16);
+ assert.equal(new Set(Object.values(KB_BTN)).size,20);
 });
 
-test('головне меню містить шість кнопок у трьох рядках і не згортається',async()=>{
+test('головне меню: сім кнопок по дві в ряд, розділи статусу окремо, не згортається',async()=>{
  const {MAIN_KB}=await keyboard;
  assert.deepEqual(MAIN_KB,{
-  keyboard:rows([['balance','chart'],['budget','week'],['today','last']]),
+  keyboard:rows([['balance','chart'],['budget','payments'],['cards','installments'],['operations']]),
   resize_keyboard:true,is_persistent:true,one_time_keyboard:false,input_field_placeholder:'Сума й опис або фото операції',
  });
  const buttons=MAIN_KB.keyboard.flat().map(button=>button.text);
- assert.equal(new Set(buttons).size,6);
- for(const key of ['balance','chart','budget','week','today','last'])assert.ok(buttons.includes(labels[key]),key);
- for(const key of ['month','income','expense','menu','cancel','yes','help','app'])assert.ok(!buttons.includes(labels[key]),key);
+ assert.equal(new Set(buttons).size,7);
+ for(const key of ['balance','chart','budget','cards','installments','payments','operations'])assert.ok(buttons.includes(labels[key]),key);
+ // v215 (власник): «Тиждень», «Витрати за сьогодні», «Останні» прибрано з клавіатури, команди лишаються
+ for(const key of ['week','today','last','month','income','expense','menu','cancel','yes','help','app'])assert.ok(!buttons.includes(labels[key]),key);
  assert.equal(MAIN_KB.is_persistent,true);
 });
 
@@ -48,12 +50,18 @@ test('вибір способу введення згортається, гол�
  }
 });
 
-test('меню команд не реєструється: telegram-setup видаляє каталог',async()=>{
- const kb=await keyboard;
- assert.equal(kb.BOT_COMMANDS,undefined);
- const source=fs.readFileSync(path.join(root,'supabase/functions/telegram-setup/index.ts'),'utf8');
- assert.match(source,/call\('deleteMyCommands'/);
- assert.ok(!/setMyCommands/.test(source));
+test('меню команд «/» реєструється в telegram-setup, кожну команду розуміє вебхук',async()=>{
+ const {BOT_COMMANDS}=await keyboard;
+ assert.deepEqual(BOT_COMMANDS.map(c=>c.command),['balance','cards','installments','payments','operations','budget','chart','menu','help']);
+ for(const c of BOT_COMMANDS){
+  assert.match(c.command,/^[a-z0-9_]{1,32}$/);
+  assert.ok(c.description.length>=1&&c.description.length<=256,c.command);
+ }
+ const setup=fs.readFileSync(path.join(root,'supabase/functions/telegram-setup/index.ts'),'utf8');
+ assert.ok(setup.includes("import { BOT_COMMANDS } from '../_shared/bot-kb.ts';"));
+ assert.ok(setup.includes("call('setMyCommands', { commands: BOT_COMMANDS })"));
+ assert.ok(setup.includes("menu_button: { type: 'commands' }"));
+ assert.ok(!setup.includes('deleteMyCommands'));
 });
 
 test('нагадування зберігають кнопку оплати, без посилання на застосунок',async()=>{

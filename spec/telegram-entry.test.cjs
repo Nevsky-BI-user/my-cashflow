@@ -6,7 +6,7 @@ const {stripTypeScriptTypes}=require('node:module');
 const root=path.join(__dirname,'../supabase/functions');
 const source=fs.readFileSync(path.join(root,'telegram-webhook/index.ts'),'utf8');
 const kbCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/bot-kb.ts'),'utf8').replace(/^export /gm,''));
-const kb=new Function(kbCode+';return {KB_BTN,MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB,APP_URL};')();
+const kb=new Function(kbCode+';return {KB_BTN,MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB,APP_URL,BOT_COMMANDS};')();
 const fixedCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/fixedmatch.ts'),'utf8').replace(/^export /gm,''));
 const fixedApi=new Function(fixedCode+';return {fixedCandidates,fixedOccurrence,fixedOccurrenceKey};')();
 let todayReports;
@@ -91,9 +91,11 @@ function harness(options={}){
     todayExpensesModel:todayReports.todayExpensesModel,formatTodayExpenses:m=>options.todayPages??todayReports.formatTodayExpenses(m),
     setTimeout:(fn,ms)=>{state.delays.push(ms);state.reportEvents.push('pause:'+ms);fn();return 0},
     __finance:()=>({projection:{},today:options.reportToday??'2026-10-21',txs:state.rows,cats:options.categories??[],accounts:options.accounts??[]}),
-    formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({})};
+    formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({}),
+    __sections:async()=>{if(options.sectionsError)throw new Error('synthetic');return options.sections??{top:['Баланс: 1 ₴'],cards:['Картки:','Картка: 1 ₴'],installments:[],due:['Найближчі платежі:','25.11 · Інтернет: 300 ₴'],unassigned:[]}},
+    __recent:async()=>options.recent===undefined?['Останні операції:','21.10 · кава: -150,00 ₴']:options.recent};
   // Підставляємо лише фінансовий вміст: реальні reply/sendPhoto формують Telegram payload.
-  new Function(...Object.keys(bindings),code+`;balance=async(chat)=>reply(chat,'Баланс');last=async(chat)=>reply(chat,'Останні');chartReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Графік','chart.png');budgetReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Бюджет','budget.png');withFinance=async(chat,fn)=>{__track('finance');await fn(chat,__finance())};`)(...Object.values(bindings));
+  new Function(...Object.keys(bindings),code+`;freeBlock=async()=>__sections();recentSection=async()=>__recent();last=async(chat,kb)=>reply(chat,'Останні',kb);chartReport=async(chat,d,kb)=>sendPhoto(chat,new Uint8Array([1]),'Графік','chart.png',kb);budgetReport=async(chat,d,kb)=>{await reply(chat,'Бюджет',kb);await sendPhoto(chat,new Uint8Array([1]),'Бюджет','budget.png')};withFinance=async(chat,fn)=>{__track('finance');await fn(chat,__finance())};`)(...Object.values(bindings));
   let next=1;
   const send=async(text,extra={})=>{
     const update={update_id:extra.update_id??next++,message:{chat:{id:1,type:'private'},from:{id:1},date:NOW/1000,...(text?{text}:{}),...extra}};
@@ -460,17 +462,24 @@ test('partial receipt preserves confident account through confirmation',async()=
   await h.send(kb.KB_BTN.yes);assert.equal(h.state.rows[0]?.account_id,7);assert.equal(accountChoices(h).length,0);
 });
 
-test('automatic messages and reports never reopen the native report keyboard',async()=>{
-  for(const text of ['150 кава','150 кава приват','+150 зарплата','/week','/month',kb.KB_BTN.balance,kb.KB_BTN.last,kb.KB_BTN.app]){
+test('automatic messages keep the keyboard as is, menu replies refresh the persistent keyboard',async()=>{
+  for(const text of ['150 кава','150 кава приват','+150 зарплата',kb.KB_BTN.app]){
     const h=harness({accounts});await h.send(text);
     assert.ok(h.state.messages.length,text);
     assert.ok(h.state.messages.every(m=>!m.reply_markup?.keyboard),text);
   }
   const h=harness({accounts});await h.photo();assert.ok(h.state.messages.every(m=>!m.reply_markup?.keyboard));
-  for(const key of ['chart','budget']){
-    const report=harness();await report.send(kb.KB_BTN[key]);assert.equal(report.state.photos.length,1);
-    assert.equal(report.state.photos[0].has('reply_markup'),false);
+  // v215 (власник: з ПК меню не видно): кожна відповідь меню несе постійну клавіатуру, щоб вона поверталась
+  for(const text of ['/week','/month','/balance','/last','/cards','/installments','/payments','/operations',
+    kb.KB_BTN.balance,kb.KB_BTN.last,kb.KB_BTN.week,kb.KB_BTN.cards,kb.KB_BTN.installments,kb.KB_BTN.payments,kb.KB_BTN.operations]){
+    const menu=harness({accounts});await menu.send(text);
+    assert.ok(menu.state.messages.length,text);
+    assert.deepEqual(menu.state.messages.at(-1).reply_markup,kb.MAIN_KB,text);
   }
+  const chart=harness();await chart.send(kb.KB_BTN.chart);assert.equal(chart.state.photos.length,1);
+  assert.deepEqual(JSON.parse(chart.state.photos[0].get('reply_markup')),kb.MAIN_KB);
+  const budget=harness();await budget.send(kb.KB_BTN.budget);assert.equal(budget.state.photos.length,1);
+  assert.deepEqual(budget.state.messages.at(-1).reply_markup,kb.MAIN_KB);
   for(const text of ['/menu','/start',kb.KB_BTN.help]){
     const menu=harness();await menu.send(text);assert.deepEqual(menu.state.messages.at(-1).reply_markup,kb.MAIN_KB);
   }
@@ -490,4 +499,49 @@ test('confirmation completion restores report keyboard even for a known account'
   assert.ok(ordinary.state.messages.every(m=>!m.reply_markup?.keyboard));
   assert.equal(accountChoices(ordinary).length,0);
   assert.ok(ordinary.state.messages.flatMap(m=>m.reply_markup?.inline_keyboard?.flat()||[]).every(b=>/^(flpick|trf):/.test(b.callback_data||'')));
+});
+
+test('v215: Баланс шле лише основне, кожна кнопка розділу шле свій розділ статусу',async()=>{
+ const sections={top:['Бюджет на початок періоду: 15 000 ₴','Власні кошти: 100 ₴','Баланс: 50 ₴'],cards:['Картки:','Картка: 100 ₴'],
+  installments:['Розстрочки: 200 ₴','Ecoflow: 2 × 100 ₴ = 200 ₴'],due:['Найближчі платежі:','25.11 · Інтернет: 300 ₴'],unassigned:['⚠️ Без рахунку: 1 операція на 5 ₴.']};
+ const expect={
+  balance:sections.top.join('\n'),cards:sections.cards.join('\n'),installments:sections.installments.join('\n'),payments:sections.due.join('\n'),
+  operations:['Останні операції:','21.10 · кава: -150,00 ₴','',...sections.unassigned].join('\n'),
+ };
+ for(const [key,text] of Object.entries(expect)){
+  for(const input of [kb.KB_BTN[key],'/'+key]){
+   const h=harness({sections});await h.send(input);
+   const m=h.state.messages.at(-1);assert.equal(m.text,text,input);assert.deepEqual(m.reply_markup,kb.MAIN_KB,input);
+   assert.equal(h.state.messages.length,1,input);
+  }
+ }
+ const balance=harness({sections});await balance.send(kb.KB_BTN.balance);
+ for(const part of ['Картки:','Розстрочки:','Найближчі платежі:','Останні операції:','Без рахунку'])assert.ok(!balance.state.messages[0].text.includes(part),part);
+});
+
+test('v215: порожні розділи і збої відповідають коротко й лишають клавіатуру',async()=>{
+ const empty={top:['Баланс: 0 ₴'],cards:[],installments:[],due:[],unassigned:[]};
+ const replies={cards:'Активних рахунків немає.',installments:'Розстрочок немає.',payments:'Найближчих обовʼязкових платежів немає.'};
+ for(const [key,text] of Object.entries(replies)){
+  const h=harness({sections:empty});await h.send(kb.KB_BTN[key]);assert.equal(h.state.messages.at(-1).text,text);assert.deepEqual(h.state.messages.at(-1).reply_markup,kb.MAIN_KB);
+ }
+ const none=harness({sections:empty,recent:[]});await none.send(kb.KB_BTN.operations);assert.equal(none.state.messages.at(-1).text,'Записів ще немає.');
+ const onlyLost=harness({sections:{...empty,unassigned:['⚠️ Без рахунку: 1 операція на 5 ₴.']},recent:[]});await onlyLost.send('/operations');
+ assert.equal(onlyLost.state.messages.at(-1).text,'⚠️ Без рахунку: 1 операція на 5 ₴.');
+ const broken=harness({recent:null});await broken.send(kb.KB_BTN.operations);assert.equal(broken.state.messages.at(-1).text,'Не вдалося отримати список операцій.');
+ for(const key of ['balance','cards','installments','payments','operations']){
+  const h=harness({sectionsError:true});await h.send(kb.KB_BTN[key]);
+  assert.equal(h.state.messages.at(-1).text,'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.');assert.deepEqual(h.state.messages.at(-1).reply_markup,kb.MAIN_KB);
+ }
+});
+
+test('v215: розділ під час незавершеного підтвердження не стирає «Так / Ні» і нічого не пише',async()=>{
+ const pending={amount:150,type:'income',description:'Дохід',date:'2026-10-21',source_id:'tg:99',expires:new Date(NOW+600000).toISOString()};
+ for(const key of ['balance','cards','installments','payments','operations','week','last']){
+  const h=harness({pending});await h.send(kb.KB_BTN[key]);
+  assert.deepEqual(h.state.pending,pending,key);assert.equal(h.state.rows.length,0,key);
+  assert.deepEqual(h.state.messages.at(-1).reply_markup.keyboard,[[{text:kb.KB_BTN.yes},{text:'Ні, не додавати'}]],key);
+ }
+ const entryState=harness({pending:entry()});await entryState.send(kb.KB_BTN.cards);
+ assert.equal(entryState.state.pending,null);assert.equal(entryState.state.messages.at(-1).text,'Картки:\nКартка: 1 ₴');
 });
