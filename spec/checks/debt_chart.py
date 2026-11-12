@@ -44,7 +44,7 @@ def setup(page):
     page.wait_for_function('window.__liveMock&&__liveMock.data.debt_snapshots.some(r=>r.day==="%s")' % TODAY)
     go_tab(page, 1)
     wait_money(page, '[data-debt-total=total]', 11000)
-    page.wait_for_selector('.debt-chart .debt-now-total')
+    page.wait_for_selector('.debt-chart .debt-now-inst')
 
 
 def numbers(page, tag):
@@ -54,13 +54,40 @@ def numbers(page, tag):
     cents = lambda sel: int(page.locator(sel).first.get_attribute('data-cents'))
     panel = lambda k: page.locator(f'[data-debt-total={k}]').first.inner_text()
     check(cents('.debt-now-inst') == 5000 and '50' in panel('installment'), f'{tag}: точка розстрочок {cents(".debt-now-inst")} / панель {panel("installment")}')
-    check(cents('.debt-now-total') == 11000 and '110' in panel('total'), f'{tag}: точка разом {cents(".debt-now-total")} / панель {panel("total")}')
+    tot = int(page.locator('.debt-now-inst').first.get_attribute('data-total'))
+    check(tot == 11000 and '110' in panel('total'), f'{tag}: разом у точці сьогодні {tot} / панель {panel("total")}')
     pts = page.evaluate("debtHistory(window.__financeInput,'%s',__liveMock.data.debt_snapshots,6000)" % TODAY)
     exp = expected_series()
     got = {x['date']: x['inst'] for x in pts}
     check(got == exp, f'{tag}: ряд розстрочок {got} замість {exp}')
     totals = {x['date']: x['total'] for x in pts if x['total'] is not None}
     check(totals == {'2026-10-05': 5000 + 8000, TODAY: 11000}, f'{tag}: ряд разом {totals}')
+    # v222: підписи лише максимуму й мінімуму кожного року, значення = незалежний ряд
+    ext = page.evaluate("[...document.querySelectorAll('.debt-chart .debt-ext')].map(t=>[t.dataset.date,+t.dataset.cents,t.dataset.kind])")
+    allowed, maxes = set(), {}
+    for y in sorted({d[:4] for d in exp}):
+        vals = {d: v for d, v in exp.items() if d[:4] == y}
+        mx, mn = max(vals.values()), min(vals.values())
+        maxes[y] = mx
+        allowed |= {(d, v) for d, v in vals.items() if v in (mx, mn)}
+    check(all((d, c) in allowed for d, c, _ in ext), f'{tag}: підпис не максимум і не мінімум року {ext}')
+    check(all(any(d[:4] == y and c == mx for d, c, _ in ext) for y, mx in maxes.items()), f'{tag}: немає максимуму року {ext} / {maxes}')
+    check(page.locator('.debt-chart .debt-line').count() == 1 and page.locator('.debt-chart polyline').count() == 0, f'{tag}: має бути одна лінія')
+    # підказка на будь-якій точці: дата й сума з ряду
+    page.locator('.debt-chart').scroll_into_view_if_needed()
+    box = page.locator('.debt-chart svg').bounding_box()
+    for fx in (0.05, 0.5, 0.95):
+        page.mouse.move(box['x'] + box['width'] * fx, box['y'] + box['height'] / 2)
+        page.wait_for_selector('.debt-tip .fc-tip-h')
+        tip = page.evaluate("(()=>{const e=document.querySelector('.debt-tip');return e?[+e.dataset.cents,e.querySelector('.fc-tip-h').textContent]:null})()")
+        check(tip is not None, f'{tag}: підказка зникла')
+        c, hd = tip[0], tip[1][:10]
+        iso = hd[6:10] + '-' + hd[3:5] + '-' + hd[0:2]
+        check(exp.get(iso) == c, f'{tag}: підказка {hd} {c} != ряд {exp.get(iso)}')
+        tb = page.locator('.debt-tip').bounding_box()
+        card = page.locator('.bud-debt').bounding_box()
+        check(tb['x'] >= card['x'] - 0.5 and tb['x'] + tb['width'] <= card['x'] + card['width'] + 0.5, f'{tag}: підказка за карткою {tb}')
+    page.mouse.move(0, 0)
 
 
 def layout(page, tag):
