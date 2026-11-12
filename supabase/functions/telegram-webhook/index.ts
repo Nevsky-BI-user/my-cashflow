@@ -1935,8 +1935,11 @@ Deno.serve(async (req) => {
   }
   let m: RegExpMatchArray | null;
   // Відповіді меню несуть клавіатуру, щоб панель поверталась і там, де зникла (Telegram Desktop);
-  // під час незавершеного підтвердження лишається «Так / Ні», інакше натискання меню стерло б вибір
-  const menuKb = pending && pending.kind !== 'entry' ? CONFIRM_KB : MAIN_KB;
+  // під час живого підтвердження, яке показувало «Так / Ні» (схожий дохід або частина чека із сумою позицій), лишається
+  // «Так / Ні», інакше натискання меню стерло б вибір; прострочений стан і вибір дати чека отримують головне меню
+  const confirmShown = !!pending?.expires && Date.parse(pending.expires) >= Date.now() &&
+    (pending.kind == null || (pending.kind === 'receipt' && Number(pending.items_sum) > 0));
+  const menuKb = confirmShown ? CONFIRM_KB : MAIN_KB;
   if (/^\/balance$/i.test(text) || text === BTN.balance) await balance(chatId, 'balance', menuKb);
   else if (/^\/cards$/i.test(text) || text === BTN.cards) await balance(chatId, 'cards', menuKb);
   else if (/^\/installments$/i.test(text) || text === BTN.installments) await balance(chatId, 'installments', menuKb);

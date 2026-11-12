@@ -545,3 +545,22 @@ test('v215: розділ під час незавершеного підтвер
  const entryState=harness({pending:entry()});await entryState.send(kb.KB_BTN.cards);
  assert.equal(entryState.state.pending,null);assert.equal(entryState.state.messages.at(-1).text,'Картки:\nКартка: 1 ₴');
 });
+
+test('v215: «Так / Ні» лишається лише для живого підтвердження, інакше меню повертає головну клавіатуру',async()=>{
+ const live=new Date(NOW+600000).toISOString(),dead=new Date(NOW-60000).toISOString();
+ const confirm=[[{text:kb.KB_BTN.yes},{text:'Ні, не додавати'}]];
+ const income={amount:150,type:'income',description:'Дохід',date:'2026-10-21',source_id:'tg:99'};
+ const part={kind:'receipt',parts:[{path:'p',update_id:1}],description:'Чек',date:'2026-10-21',items_sum:120};
+ const cases=[
+  ['прострочений схожий дохід',{...income,expires:dead},kb.KB_BTN.balance,kb.MAIN_KB.keyboard],
+  ['вибір дати чека',{kind:'receipt_date',result:{},context:{},expires:live},kb.KB_BTN.cards,kb.MAIN_KB.keyboard],
+  ['частина чека без суми позицій',{...part,items_sum:null,expires:live},kb.KB_BTN.payments,kb.MAIN_KB.keyboard],
+  ['частина чека із сумою позицій',{...part,expires:live},kb.KB_BTN.installments,confirm],
+  ['живий схожий дохід',{...income,expires:live},'/operations',confirm],
+ ];
+ for(const [name,pending,text,keyboard] of cases){
+  const h=harness({pending});await h.send(text);
+  assert.deepEqual(h.state.pending,pending,name);assert.equal(h.state.rows.length,0,name);
+  assert.deepEqual(h.state.messages.at(-1).reply_markup.keyboard,keyboard,name);
+ }
+});
