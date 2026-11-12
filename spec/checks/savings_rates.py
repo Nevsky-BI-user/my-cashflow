@@ -224,11 +224,49 @@ def loader_partial(page):
     check(st['functions'].count('rates-refresh') == 1 and st['reads'] == 2, f'неповні курси: {st}')
 
 
+
+def _photo_patch():
+    """Фікстура фото цілей з goal_photos.py (featured-дошка з фіксованою висотою нижньої частини)."""
+    import importlib.util
+    from pathlib import Path
+    sp = importlib.util.spec_from_file_location('goal_photos_fx', Path(__file__).with_name('goal_photos.py'))
+    mod = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(mod)
+    return mod.PHOTO_PATCH
+
+
+INFO_FIT = r"""()=>[...document.querySelectorAll('.gtile-info')].map(e=>({sh:e.scrollHeight,ch:e.clientHeight,sw:e.scrollWidth,cw:e.clientWidth,b:e.getBoundingClientRect().bottom,pb:e.closest('.gtile').getBoundingClientRect().bottom}))"""
+
+
+def _photos(page, widths, tag):
+    freeze(page, DAY, patch=PATCH + _photo_patch())
+    go_tab(page, 4)
+    for w, hgt in widths:
+        page.set_viewport_size({'width': w, 'height': hgt})
+        page.wait_for_timeout(500)
+        gate_bar(page, f'{tag} {w} фото')
+        for i, f in enumerate(page.evaluate(INFO_FIT)):
+            check(f['sh'] <= f['ch'] + 1 and f['sw'] <= f['cw'] + 1, f'{tag} {w}: нижня частина плитки {i} з фото переповнена {f}')
+            check(f['b'] <= f['pb'] + 1, f'{tag} {w}: нижня частина плитки {i} нижче за плитку')
+        page.locator('.gtile').first.scroll_into_view_if_needed()
+        shot(page, f'savings-rates-photo-{w}.jpg', full=False)
+
+
+def photos_desktop(page):
+    _photos(page, ((1440, 900), (1920, 1080)), 'ПК')
+
+
+def photos_mobile(page):
+    _photos(page, ((375, 812),), 'телефон')
+
+
 CHECKS = [
     ('Накопичення: смуга цілі за валютами, вкладено і курс внеску (ПК 1440, 1920)', 'desktop', desktop),
     ('Накопичення: смуга цілі за валютами, вкладено і курс внеску (телефон 375)', 'mobile', mobile),
     ('Накопичення: курс у формі поповнення, НБУ, вручну, запис з курсом', 'desktop', form),
     ('Накопичення: курс у формі поповнення на телефоні 375', 'mobile', form_mobile),
+    ('Накопичення: смуга за валютами на дошці з фото (ПК 1440, 1920)', 'desktop', photos_desktop),
+    ('Накопичення: смуга за валютами на плитці з фото (телефон 375)', 'mobile', photos_mobile),
     ('Курси: застарілі без джерела, одне оновлення, чипи ПриватБанку й НБУ', 'desktop', loader),
     ('Курси: свіжі за 12 год без оновлення', 'desktop', loader_fresh),
     ('Курси: без НБУ одне оновлення за сесію', 'desktop', loader_partial),
