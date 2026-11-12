@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { selectMonoAccount, monoBalancePatch, exactMonoAccount, registrationTarget, allowedMonoOwner, migratedMonoAccount, statementRows } = require('../supabase/functions/_shared/mono-accounts.ts');
+const { selectMonoAccount, monoBalancePatch, exactMonoAccount, registrationTarget, allowedMonoOwner, migratedMonoAccount, statementRows, isMonoMigrationEntry } = require('../supabase/functions/_shared/mono-accounts.ts');
 const husband = { id: 1, user_id: 'husband', bank: 'mono', mono_account_id: 'h', card_last4: '2674' };
 const wife = { id: 2, user_id: 'wife', bank: 'mono', mono_account_id: 'w', card_last4: '2674' };
 const card = { id: 'w', currencyCode: 980, type: 'black', maskedPan: ['4444******2674'], balance: 120000, creditLimit: 200000 };
@@ -117,4 +117,14 @@ test('migrated Monobank account rebinds only to one unambiguous free card of the
 test('statement rows keep webhook shape and sign', () => {
  assert.deepEqual(statementRows([{id:'s1',amount:-12345,description:'АТБ',mcc:5411,time:1762851600},{amount:1}],'u',6),
   [{user_id:'u',amount:123.45,type:'expense',description:'АТБ',source:'mono',source_id:'s1',mcc:5411,date:'2025-11-11',account_id:6}]);
+});
+
+test('технічна пара міграції рахунку Monobank не імпортується', () => {
+ const out = 'Списання коштів в рамках міграції рахунку\n', inc = 'Зарахування коштів в рамках міграції рахунку ';
+ assert.equal(isMonoMigrationEntry(out), true);
+ assert.equal(isMonoMigrationEntry(inc), true);
+ assert.equal(isMonoMigrationEntry('АТБ'), false);
+ assert.equal(isMonoMigrationEntry(null), false);
+ const rows = statementRows([{id:'m1',amount:-731148,description:out,time:1762851600},{id:'m2',amount:731148,description:inc,time:1762851600},{id:'a',amount:-100,description:'АТБ',time:1762851600}],'u',6);
+ assert.deepEqual(rows.map(r => r.source_id), ['a']);
 });

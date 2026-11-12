@@ -11,6 +11,7 @@ ROWS = [  # (опис, сума)
     ('Synthetic clinic · 10:54', 3900), ('Synthetic clinic · 11:15', 3800), ('synthetic clinic', 600),
     (None, 4700), ('Synthetic shop', 1500), ('Synthetic cafe · 9:05', 900), ('Synthetic taxi', 700),
     ('Synthetic kiosk', 300), ('Synthetic pharmacy', 2000),
+    ('Стоматологічний кабінет · 11:15', 3800), ('Stomatologichnii kabinet', 2000), ('Stomatologichnii kabinet', 1600),
 ]
 
 
@@ -24,6 +25,19 @@ def tx(i, d, a):
             'categories': {'name': 'Продукти', 'icon': '🛒', 'color': '#7066e0'}}
 
 
+TR = dict(zip('абвгґдеєжзиіїйклмнопрстуфхцчшщьюяыэёъ',
+              ['a', 'b', 'v', 'h', 'g', 'd', 'e', 'ie', 'zh', 'z', 'i', 'i', 'i', 'i', 'k', 'l', 'm', 'n', 'o', 'p', 'r', 's', 't', 'u',
+               'f', 'h', 'ts', 'ch', 'sh', 'shch', '', 'iu', 'ia', 'i', 'e', 'e', '']))
+
+
+def skeleton(n):
+    import re
+    s = ''.join(TR.get(c, c) for c in n.lower()).replace('kh', 'h').replace('g', 'h')
+    s = re.sub('[yj]', 'i', s)
+    s = re.sub('[^a-z0-9]+', '', s)
+    return re.sub(r'(.)+', r'', s)
+
+
 def expected():
     import re
     top = {}
@@ -31,8 +45,11 @@ def expected():
         if not d:
             continue
         n = re.sub(r'\s*·\s*\d{1,2}:\d{2}\s*$', '', d).strip()
-        k = n.lower()
-        top.setdefault(k, [n, 0])[1] += a
+        k = skeleton(n)
+        x = top.setdefault(k, [n, 0])
+        if re.search('[а-яіїєґ]', n, re.I) and not re.search('[а-яіїєґ]', x[0], re.I):
+            x[0] = n
+        x[1] += a
     return sorted(((v[0].lower(), v[1] * 100) for v in top.values()), key=lambda x: -x[1])[:5]
 
 

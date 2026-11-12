@@ -1,4 +1,4 @@
-import { allowedMonoOwner, exactMonoAccount } from '../_shared/mono-accounts.ts';
+import { allowedMonoOwner, exactMonoAccount, isMonoMigrationEntry } from '../_shared/mono-accounts.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
 
@@ -49,6 +49,7 @@ Deno.serve(async (req) => {
 
   const si = body.data?.statementItem;
   if (!si?.id) return new Response('no statement', { status: 400 });
+  if (isMonoMigrationEntry(si.description)) return new Response('ignored migration entry');
 
   const monoId = body.data?.account;
   if (typeof monoId !== 'string' || !monoId) return new Response('no account', { status: 400 });

@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { isMonoMigrationEntry } from '../_shared/mono-accounts.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -102,7 +103,7 @@ Deno.serve(async (req) => {
   if (!Array.isArray(items)) return json({ error: 'unexpected_mono_response' }, 502);
 
   const rows = items
-    .filter((si: any) => si?.id)
+    .filter((si: any) => si?.id && !isMonoMigrationEntry(si.description))
     .map((si: any) => ({
       user_id: prof.id,
       amount: Math.abs(si.amount) / 100,

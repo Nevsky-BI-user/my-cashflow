@@ -40,9 +40,12 @@ export function migratedMonoAccount(cards: any[], acc: any, linkedIds: string[])
   const same = uah.filter(a => !linkedIds.includes(a.id) && a.type !== 'fop' && (Number(a.creditLimit) > 0) === credit);
   return same.length === 1 ? same[0] : null;
 }
+// Технічна пара Monobank при міграції рахунку («Списання/Зарахування коштів в рамках міграції рахунку»): це перенос боргу
+// зі старого рахунку на новий, а не витрата чи дохід; витрати, з яких склався борг, уже прийшли окремими операціями (12.11.2026)
+export const isMonoMigrationEntry = (d: unknown) => typeof d === 'string' && /в\s+рамках\s+міграції\s+рахунку/i.test(d);
 // Рядки transactions із виписки Monobank (той самий вигляд, що в mono-webhook і mono-backfill)
 export function statementRows(items: any[], userId: string, accountId: number) {
-  return (Array.isArray(items) ? items : []).filter((si: any) => si?.id).map((si: any) => ({
+  return (Array.isArray(items) ? items : []).filter((si: any) => si?.id && !isMonoMigrationEntry(si.description)).map((si: any) => ({
     user_id: userId, amount: Math.abs(si.amount) / 100, type: si.amount < 0 ? 'expense' : 'income',
     description: si.description || null, source: 'mono', source_id: String(si.id), mcc: si.mcc || null,
     date: new Date(si.time * 1000).toISOString().split('T')[0], account_id: accountId,
