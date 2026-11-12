@@ -99,6 +99,36 @@ def mobile(page):
     shot(page, 'savings-rates-bar-375.jpg', full=False)
 
 
+def edit_rate(page):
+    """v217: курс уже збереженого внеску вписує користувач: «вказати курс» без курсу, «змінити» з курсом."""
+    page.set_viewport_size({'width': 1440, 'height': 900})
+    freeze(page, DAY, patch=PATCH)
+    go_tab(page, 4)
+    log = page.locator('.goals-log')
+    sets = log.locator('.sav-rate-set')
+    check(sets.all_inner_texts() == ['змінити', 'вказати курс'], f'кнопки курсу {sets.all_inner_texts()}')
+    sets.nth(0).click()
+    inp = log.locator('.sav-rate-edit input')
+    check(inp.input_value() == '41,75', f'«змінити» не підставило записаний курс: {inp.input_value()!r}')
+    log.locator('.sav-rate-edit button[aria-label="Скасувати"]').click()
+    log.locator('.sav-rate-set', has_text='вказати курс').click()
+    check(inp.input_value() == '', f'курс підставлено сам {inp.input_value()!r}')
+    log.locator('.sav-rate-edit button', has_text='Зберегти').click()
+    check('Вкажіть курс' in log.inner_text(), 'порожній курс зберігся без помилки')
+    inp.fill('45,10')
+    check(num(log.locator('.sav-rate-edit').inner_text().split('=')[1]) == 9020, 'собівартість 200 € за 45,10')
+    shot(page, 'savings-rate-edit-1440.jpg', full=False)
+    inp.press('Enter')
+    page.wait_for_timeout(200)
+    check(log.locator('.sav-rate-edit').count() == 0, 'поле курсу не закрилось після збереження')
+    rates = log.locator('.sav-rate').all_inner_texts()
+    check(any('за курсом 45,10' in r and num(r.split('·')[1]) == 9020 for r in rates), f'курс 45,10 не записано: {rates}')
+    line = log.locator('.sav-cost').inner_text()
+    check('без курсу' not in line, f'лишився лічильник без курсу: {line!r}')
+    check(abs(num(line.replace(chr(10), ' ').split('₴')[0]) - (INVESTED + 200 * 45.1)) < 0.6, f'вкладено після курсу {line!r}')
+    check(page.evaluate('document.documentElement.scrollWidth<=innerWidth'), 'горизонтальна прокрутка')
+
+
 def row_gate(dlg, tag):
     box = dlg.locator('#sav-rate').bounding_box()
     dbox = dlg.bounding_box()
@@ -259,6 +289,7 @@ CHECKS = [
     ('Накопичення: смуга цілі за валютами, вкладено і курс внеску (ПК 1440, 1920)', 'desktop', desktop),
     ('Накопичення: смуга цілі за валютами, вкладено і курс внеску (телефон 375)', 'mobile', mobile),
     ('Накопичення: курс у формі поповнення, НБУ, вручну, запис з курсом', 'desktop', form),
+    ('Накопичення: курс уже збереженого внеску вписує користувач (ПК 1440)', 'desktop', edit_rate),
     ('Накопичення: курс у формі поповнення на телефоні 375', 'mobile', form_mobile),
     ('Накопичення: смуга за валютами на дошці з фото (ПК 1440, 1920)', 'desktop', photos_desktop),
     ('Накопичення: смуга за валютами на плитці з фото (телефон 375)', 'mobile', photos_mobile),
