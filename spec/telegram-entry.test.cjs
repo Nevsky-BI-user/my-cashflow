@@ -9,8 +9,10 @@ const kbCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/bot-kb
 const kb=new Function(kbCode+';return {KB_BTN,MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB,APP_URL};')();
 const fixedCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/fixedmatch.ts'),'utf8').replace(/^export /gm,''));
 const fixedApi=new Function(fixedCode+';return {fixedCandidates,fixedOccurrence,fixedOccurrenceKey};')();
-let todayReports;
-before(async()=>{todayReports=await import(require('node:url').pathToFileURL(path.join(root,'_shared/bot-reports.ts')).href)});
+let todayReports,salaryBot;
+before(async()=>{todayReports=await import(require('node:url').pathToFileURL(path.join(root,'_shared/bot-reports.ts')).href);
+  const sal=await import(require('node:url').pathToFileURL(path.join(root,'_shared/salary-bot.ts')).href);
+  salaryBot={salaryKeyboard:sal.salaryKeyboard,salaryEditKeyboard:sal.salaryEditKeyboard,parseSalaryAmount:sal.parseSalaryAmount};});
 const code=stripTypeScriptTypes(source.replace(/^import[\s\S]*?from\s+['"][^'"]+['"];\r?\n/gm,''));
 const NOW=Date.parse('2026-10-21T10:00:00Z');
 class Clock extends Date{constructor(...args){super(...(args.length?args:[NOW]))}static now(){return NOW}}
@@ -61,6 +63,7 @@ function harness(options={}){
           }
           return {data:q.one?rows[0]??null:rows,error:null};
         }
+        if(table==='salary_payouts'){const found=(options.salaryPayouts??[]).filter(r=>q.filters.every(([k,v])=>r[k]===v));return {data:q.one?found[0]??null:found,error:null};}
         return {data:q.one?null:[],error:null};
       }).then(resolve,reject);return q;
     }};
@@ -86,14 +89,18 @@ function harness(options={}){
     if(url.includes('/editMessageText'))state.edits.push(JSON.parse(init.body));
     return {ok:true,json:async()=>({ok:true})};
   };
-  const bindings={salaryOptions:async()=>({choices:[]}),...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
+  const bindings={salaryOptions:options.salaryOptions??(async()=>({choices:[]})),...salaryBot,recordSalary:async(...args)=>{state.salary=(state.salary??[]).concat([args.slice(1)]);return options.recordSalary?options.recordSalary(...args):{status:'invalid'}},
+    editSalaryAmount:async(...args)=>{state.salaryEdits=(state.salaryEdits??[]).concat([args.slice(1)]);return options.editSalaryAmount?options.editSalaryAmount(...args):{status:'missing'}},
+    loadFinance:async()=>{if(options.adviceError)throw new Error('synthetic');return {input:{},projection:{}}},repaymentAdvice:()=>({}),repaymentAdviceText:()=>'',...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
     creditPaid:()=>[],matchCredit:()=>null,parsePaidCallback:todayReports.parsePaidCallback,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
     todayExpensesModel:todayReports.todayExpensesModel,formatTodayExpenses:m=>options.todayPages??todayReports.formatTodayExpenses(m),
     setTimeout:(fn,ms)=>{state.delays.push(ms);state.reportEvents.push('pause:'+ms);fn();return 0},
     __finance:()=>({projection:{},today:options.reportToday??'2026-10-21',txs:state.rows,cats:options.categories??[],accounts:options.accounts??[]}),
-    formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({})};
+    formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({}),
+    __sections:async()=>{if(options.sectionsError)throw new Error('synthetic');return options.sections??{top:['Баланс: 1 ₴'],cards:['Картки:','Картка: 1 ₴'],installments:[],due:['Найближчі платежі:','25.11 · Інтернет: 300 ₴'],unassigned:[]}},
+    __recent:async()=>options.recent===undefined?['Останні операції:','21.10 · кава: -150,00 ₴']:options.recent};
   // Підставляємо лише фінансовий вміст: реальні reply/sendPhoto формують Telegram payload.
-  new Function(...Object.keys(bindings),code+`;balance=async(chat)=>reply(chat,'Баланс');last=async(chat)=>reply(chat,'Останні');chartReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Графік','chart.png');budgetReport=async(chat)=>sendPhoto(chat,new Uint8Array([1]),'Бюджет','budget.png');withFinance=async(chat,fn)=>{__track('finance');await fn(chat,__finance())};`)(...Object.values(bindings));
+  new Function(...Object.keys(bindings),code+`;freeBlock=async()=>__sections();recentSection=async()=>__recent();last=async(chat,kb)=>reply(chat,'Останні',kb);chartReport=async(chat,d,kb)=>sendPhoto(chat,new Uint8Array([1]),'Графік','chart.png',kb);budgetReport=async(chat,d,kb)=>{await reply(chat,'Бюджет',kb);await sendPhoto(chat,new Uint8Array([1]),'Бюджет','budget.png')};withFinance=async(chat,fn)=>{__track('finance');await fn(chat,__finance())};`)(...Object.values(bindings));
   let next=1;
   const send=async(text,extra={})=>{
     const update={update_id:extra.update_id??next++,message:{chat:{id:1,type:'private'},from:{id:1},date:NOW/1000,...(text?{text}:{}),...extra}};
@@ -460,17 +467,24 @@ test('partial receipt preserves confident account through confirmation',async()=
   await h.send(kb.KB_BTN.yes);assert.equal(h.state.rows[0]?.account_id,7);assert.equal(accountChoices(h).length,0);
 });
 
-test('automatic messages and reports never reopen the native report keyboard',async()=>{
-  for(const text of ['150 кава','150 кава приват','+150 зарплата','/week','/month',kb.KB_BTN.balance,kb.KB_BTN.last,kb.KB_BTN.app]){
+test('automatic messages keep the keyboard as is, menu replies refresh the persistent keyboard',async()=>{
+  for(const text of ['150 кава','150 кава приват','+150 зарплата',kb.KB_BTN.app]){
     const h=harness({accounts});await h.send(text);
     assert.ok(h.state.messages.length,text);
     assert.ok(h.state.messages.every(m=>!m.reply_markup?.keyboard),text);
   }
   const h=harness({accounts});await h.photo();assert.ok(h.state.messages.every(m=>!m.reply_markup?.keyboard));
-  for(const key of ['chart','budget']){
-    const report=harness();await report.send(kb.KB_BTN[key]);assert.equal(report.state.photos.length,1);
-    assert.equal(report.state.photos[0].has('reply_markup'),false);
+  // v215 (власник: з ПК меню не видно): кожна відповідь меню несе постійну клавіатуру, щоб вона поверталась
+  for(const text of ['/week','/month','/balance','/last','/cards','/installments','/payments','/operations',
+    kb.KB_BTN.balance,kb.KB_BTN.last,kb.KB_BTN.week,kb.KB_BTN.cards,kb.KB_BTN.installments,kb.KB_BTN.payments,kb.KB_BTN.operations]){
+    const menu=harness({accounts});await menu.send(text);
+    assert.ok(menu.state.messages.length,text);
+    assert.deepEqual(menu.state.messages.at(-1).reply_markup,kb.MAIN_KB,text);
   }
+  const chart=harness();await chart.send(kb.KB_BTN.chart);assert.equal(chart.state.photos.length,1);
+  assert.deepEqual(JSON.parse(chart.state.photos[0].get('reply_markup')),kb.MAIN_KB);
+  const budget=harness();await budget.send(kb.KB_BTN.budget);assert.equal(budget.state.photos.length,1);
+  assert.deepEqual(budget.state.messages.at(-1).reply_markup,kb.MAIN_KB);
   for(const text of ['/menu','/start',kb.KB_BTN.help]){
     const menu=harness();await menu.send(text);assert.deepEqual(menu.state.messages.at(-1).reply_markup,kb.MAIN_KB);
   }
@@ -490,4 +504,138 @@ test('confirmation completion restores report keyboard even for a known account'
   assert.ok(ordinary.state.messages.every(m=>!m.reply_markup?.keyboard));
   assert.equal(accountChoices(ordinary).length,0);
   assert.ok(ordinary.state.messages.flatMap(m=>m.reply_markup?.inline_keyboard?.flat()||[]).every(b=>/^(flpick|trf):/.test(b.callback_data||'')));
+});
+
+test('v215: Баланс шле лише основне, кожна кнопка розділу шле свій розділ статусу',async()=>{
+ const sections={top:['Бюджет на початок періоду: 15 000 ₴','Власні кошти: 100 ₴','Баланс: 50 ₴'],cards:['Картки:','Картка: 100 ₴'],
+  installments:['Розстрочки: 200 ₴','Ecoflow: 2 × 100 ₴ = 200 ₴'],due:['Найближчі платежі:','25.11 · Інтернет: 300 ₴'],unassigned:['⚠️ Без рахунку: 1 операція на 5 ₴.']};
+ const expect={
+  balance:sections.top.join('\n'),cards:sections.cards.join('\n'),installments:sections.installments.join('\n'),payments:sections.due.join('\n'),
+  operations:['Останні операції:','21.10 · кава: -150,00 ₴','',...sections.unassigned].join('\n'),
+ };
+ for(const [key,text] of Object.entries(expect)){
+  for(const input of [kb.KB_BTN[key],'/'+key]){
+   const h=harness({sections});await h.send(input);
+   const m=h.state.messages.at(-1);assert.equal(m.text,text,input);assert.deepEqual(m.reply_markup,kb.MAIN_KB,input);
+   assert.equal(h.state.messages.length,1,input);
+  }
+ }
+ const balance=harness({sections});await balance.send(kb.KB_BTN.balance);
+ for(const part of ['Картки:','Розстрочки:','Найближчі платежі:','Останні операції:','Без рахунку'])assert.ok(!balance.state.messages[0].text.includes(part),part);
+});
+
+test('v215: порожні розділи і збої відповідають коротко й лишають клавіатуру',async()=>{
+ const empty={top:['Баланс: 0 ₴'],cards:[],installments:[],due:[],unassigned:[]};
+ const replies={cards:'Активних рахунків немає.',installments:'Розстрочок немає.',payments:'Найближчих обовʼязкових платежів немає.'};
+ for(const [key,text] of Object.entries(replies)){
+  const h=harness({sections:empty});await h.send(kb.KB_BTN[key]);assert.equal(h.state.messages.at(-1).text,text);assert.deepEqual(h.state.messages.at(-1).reply_markup,kb.MAIN_KB);
+ }
+ const none=harness({sections:empty,recent:[]});await none.send(kb.KB_BTN.operations);assert.equal(none.state.messages.at(-1).text,'Записів ще немає.');
+ const onlyLost=harness({sections:{...empty,unassigned:['⚠️ Без рахунку: 1 операція на 5 ₴.']},recent:[]});await onlyLost.send('/operations');
+ assert.equal(onlyLost.state.messages.at(-1).text,'⚠️ Без рахунку: 1 операція на 5 ₴.');
+ const broken=harness({recent:null});await broken.send(kb.KB_BTN.operations);assert.equal(broken.state.messages.at(-1).text,'Не вдалося отримати список операцій.');
+ for(const key of ['balance','cards','installments','payments','operations']){
+  const h=harness({sectionsError:true});await h.send(kb.KB_BTN[key]);
+  assert.equal(h.state.messages.at(-1).text,'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.');assert.deepEqual(h.state.messages.at(-1).reply_markup,kb.MAIN_KB);
+ }
+});
+
+test('v215: розділ під час незавершеного підтвердження не стирає «Так / Ні» і нічого не пише',async()=>{
+ const pending={amount:150,type:'income',description:'Дохід',date:'2026-10-21',source_id:'tg:99',expires:new Date(NOW+600000).toISOString()};
+ for(const key of ['balance','cards','installments','payments','operations','week','last']){
+  const h=harness({pending});await h.send(kb.KB_BTN[key]);
+  assert.deepEqual(h.state.pending,pending,key);assert.equal(h.state.rows.length,0,key);
+  assert.deepEqual(h.state.messages.at(-1).reply_markup.keyboard,[[{text:kb.KB_BTN.yes},{text:'Ні, не додавати'}]],key);
+ }
+ const entryState=harness({pending:entry()});await entryState.send(kb.KB_BTN.cards);
+ assert.equal(entryState.state.pending,null);assert.equal(entryState.state.messages.at(-1).text,'Картки:\nКартка: 1 ₴');
+});
+
+test('v215: «Так / Ні» лишається лише для живого підтвердження, інакше меню повертає головну клавіатуру',async()=>{
+ const live=new Date(NOW+600000).toISOString(),dead=new Date(NOW-60000).toISOString();
+ const confirm=[[{text:kb.KB_BTN.yes},{text:'Ні, не додавати'}]];
+ const income={amount:150,type:'income',description:'Дохід',date:'2026-10-21',source_id:'tg:99'};
+ const part={kind:'receipt',parts:[{path:'p',update_id:1}],description:'Чек',date:'2026-10-21',items_sum:120};
+ const cases=[
+  ['прострочений схожий дохід',{...income,expires:dead},kb.KB_BTN.balance,kb.MAIN_KB.keyboard],
+  ['вибір дати чека',{kind:'receipt_date',result:{},context:{},expires:live},kb.KB_BTN.cards,kb.MAIN_KB.keyboard],
+  ['частина чека без суми позицій',{...part,items_sum:null,expires:live},kb.KB_BTN.payments,kb.MAIN_KB.keyboard],
+  ['частина чека із сумою позицій',{...part,expires:live},kb.KB_BTN.installments,confirm],
+  ['живий схожий дохід',{...income,expires:live},'/operations',confirm],
+ ];
+ for(const [name,pending,text,keyboard] of cases){
+  const h=harness({pending});await h.send(text);
+  assert.deepEqual(h.state.pending,pending,name);assert.equal(h.state.rows.length,0,name);
+  assert.deepEqual(h.state.messages.at(-1).reply_markup.keyboard,keyboard,name);
+ }
+});
+
+test('v215: «Інша сума»: бот чекає суму, наступне повідомлення записує виплату з нею, помилковий формат не пише',async()=>{
+ const choice={kind:'salary',date:'2026-10-21',accountId:7,accountName:'Картка',amount:20000};
+ const recordSalary=async(sb,u,today,kind,date,acc,existing,amount)=>({status:'saved',id:91,payout:{...choice,amount}});
+ const h=harness({salaryOptions:async()=>({choices:[choice]}),recordSalary});
+ await h.callback('salx:s:2026-10-21:7');
+ assert.equal(h.state.pending.kind,'salary_amount');assert.deepEqual([h.state.pending.salary_kind,h.state.pending.date,h.state.pending.account_id],['s','2026-10-21',7]);
+ assert.match(h.state.messages.at(-1).text,/Введіть фактичну суму: зарплата за 21\.10 · Картка/);
+ await h.send('двадцять тисяч');assert.equal(h.state.salary,undefined);assert.equal(h.state.pending.kind,'salary_amount');
+ assert.match(h.state.messages.at(-1).text,/лише суму/);
+ await h.send('/yes');assert.equal(h.state.salary,undefined);assert.equal(h.state.rows.length,0);
+ await h.send('19 876,54');
+ assert.equal(h.state.pending,null);assert.deepEqual(h.state.salary,[['u','2026-10-21','salary','2026-10-21','7',undefined,19876.54]]);
+ const done=h.state.messages.at(-1);assert.match(done.text.replace(/[  ]/g,' '),/^✅ Зарплата: 19 876,54 ₴ · Картка$/);
+ assert.deepEqual(done.reply_markup,{inline_keyboard:[[{text:'✏️ Змінити суму',callback_data:'saled:91'}]]});
+ // недоступна виплата не створює очікування
+ const gone=harness({salaryOptions:async()=>({choices:[]})});await gone.callback('salx:s:2026-10-21:7');assert.equal(gone.state.pending,null);assert.equal(gone.state.messages.length,0);
+ // чуже живе підтвердження не перезаписується
+ const busyPending={amount:150,type:'income',description:'Дохід',date:'2026-10-21',source_id:'tg:99',expires:new Date(NOW+600000).toISOString()};
+ const busy=harness({pending:busyPending,salaryOptions:async()=>({choices:[choice]})});await busy.callback('salx:s:2026-10-21:7');assert.deepEqual(busy.state.pending,busyPending);
+});
+
+test('v215: «Інша сума»: скасування, прострочення, неоднозначний дохід і повідомлення без запису',async()=>{
+ const choice={kind:'advance',date:'2026-10-21',accountId:7,accountName:'Картка',amount:10000};
+ const pending={kind:'salary_amount',salary_kind:'a',date:'2026-10-21',account_id:7,expires:new Date(NOW+600000).toISOString()};
+ const cancel=harness({pending});await cancel.send('/no');assert.equal(cancel.state.pending,null);assert.equal(cancel.state.salary,undefined);
+ const late=harness({pending:{...pending,expires:new Date(NOW-1000).toISOString()}});await late.send('9000');
+ assert.equal(late.state.pending,null);assert.equal(late.state.salary,undefined);assert.match(late.state.messages.at(-1).text,/минув/);
+ const nav=harness({pending});await nav.send(kb.KB_BTN.balance);assert.deepEqual(nav.state.pending,pending);assert.equal(nav.state.salary,undefined);
+ const rows=[{id:5,date:'2026-10-20',amount:9000},{id:6,date:'2026-10-21',amount:9000}];
+ const choose=harness({pending,recordSalary:async()=>({status:'choose',payout:choice,rows})});await choose.send('9000');
+ assert.deepEqual(choose.state.messages.at(-1).reply_markup.inline_keyboard.map(r=>r[0].callback_data),['salv:a:2026-10-21:7:900000:5','salv:a:2026-10-21:7:900000:6']);
+ const pick=harness({salaryOptions:async()=>({choices:[choice]}),recordSalary:async(sb,u,t,k,d,a,existing,amount)=>({status:'saved',id:existing,payout:{...choice,amount}})});
+ await pick.callback('salv:a:2026-10-21:7:900000:6');assert.deepEqual(pick.state.salary,[['u','2026-10-21','advance','2026-10-21','7',6,9000]]);
+ const waiting=harness({pending,recordSalary:async()=>({status:'awaiting'})});await waiting.send('9000');
+ assert.equal(waiting.state.pending,null);assert.match(waiting.state.messages.at(-1).text,/Чекаємо надходження цієї суми з Monobank\. Нічого не записано\./);
+});
+
+test('v215: «Змінити суму» записаної виплати: лише свій дохід не з Monobank, нова сума через editSalaryAmount',async()=>{
+ const rows=[{id:91,type:'income',amount:20000,source:'telegram',salary_payouts:[{transaction_id:91}]},{id:92,type:'income',amount:20000,source:'mono',salary_payouts:[{transaction_id:92}]},{id:93,type:'income',amount:5,source:'manual',salary_payouts:[]}];
+ const h=harness({rows,editSalaryAmount:async(sb,u,tx,amount)=>({status:'saved',amount,old:20000})});
+ await h.callback('saled:91');assert.deepEqual(h.state.pending&&[h.state.pending.kind,h.state.pending.tx_id],['salary_edit',91]);
+ assert.match(h.state.messages.at(-1).text.replace(/[  ]/g,' '),/Зараз записано 20 000,00 ₴/);
+ await h.send('21 500');assert.equal(h.state.pending,null);assert.deepEqual(h.state.salaryEdits,[['u',91,21500]]);
+ const done=h.state.messages.at(-1);assert.match(done.text.replace(/[  ]/g,' '),/Суму виплати змінено: 20 000,00 ₴ → 21 500,00 ₴/);
+ assert.deepEqual(done.reply_markup.inline_keyboard[0][0].callback_data,'saled:91');
+ for(const id of [92,93,404]){const x=harness({rows});await x.callback('saled:'+id);assert.equal(x.state.pending,null,String(id));assert.equal(x.state.messages.length,0);}
+ const failed=harness({pending:{kind:'salary_edit',tx_id:91,expires:new Date(NOW+600000).toISOString()},editSalaryAmount:async()=>{throw new Error('rpc')}});
+ await failed.send('21500');assert.equal(failed.state.pending,null);assert.equal(failed.state.messages.at(-1).text,'Не вдалося записати суму. Спробуйте ще раз.');
+});
+
+test('v215: уже записана виплата веде до «Змінити суму», а збій поради не ламає збереження',async()=>{
+ const choice={kind:'salary',date:'2026-10-21',accountId:7,accountName:'Картка',amount:20000};
+ const already=async()=>({status:'already',id:91});
+ const press=harness({salaryOptions:async()=>({choices:[choice]}),recordSalary:already});await press.callback('sal:s:2026-10-21:7');
+ assert.deepEqual(press.state.messages.at(-1).reply_markup,{inline_keyboard:[[{text:'✏️ Змінити суму',callback_data:'saled:91'}]]});
+ const typed=harness({pending:{kind:'salary_amount',salary_kind:'s',date:'2026-10-21',account_id:7,expires:new Date(NOW+600000).toISOString()},recordSalary:already});
+ await typed.send('19000');assert.equal(typed.state.pending,null);assert.equal(typed.state.messages.length,1);
+ assert.equal(typed.state.messages[0].reply_markup.inline_keyboard[0][0].callback_data,'saled:91');
+ // «Інша сума» на вже записаній виплаті одразу просить виправлення записаного доходу
+ const rows=[{id:91,type:'income',amount:20000,source:'telegram',salary_payouts:[{transaction_id:91}]}];
+ const salaryPayouts=[{account_id:7,kind:'salary',due_date:'2026-10-21',transaction_id:91}];
+ const other=harness({rows,salaryPayouts,salaryOptions:async()=>({choices:[choice]})});await other.callback('salx:s:2026-10-21:7');
+ assert.deepEqual([other.state.pending?.kind,other.state.pending?.tx_id],['salary_edit',91]);assert.match(other.state.messages.at(-1).text,/Введіть правильну суму/);
+ const fresh=harness({rows,salaryOptions:async()=>({choices:[choice]})});await fresh.callback('salx:s:2026-10-21:7');assert.equal(fresh.state.pending?.kind,'salary_amount');
+ // збій поради після збереження: лише повідомлення про збережену виплату
+ const saved=async(sb,u,t,k,d,a,e,amount)=>({status:'saved',id:91,payout:{...choice,amount}});
+ const advice=harness({adviceError:true,recordSalary:saved,pending:{kind:'salary_amount',salary_kind:'s',date:'2026-10-21',account_id:7,expires:new Date(NOW+600000).toISOString()}});
+ await advice.send('19000');assert.equal(advice.state.messages.length,1);assert.match(advice.state.messages[0].text,/^✅ Зарплата/);
 });

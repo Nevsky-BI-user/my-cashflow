@@ -1,13 +1,13 @@
 import { repaymentAdvice, repaymentAdviceText } from '../_shared/repayment.ts';
-import { salaryOptions, salaryKeyboard, recordSalary } from '../_shared/salary-bot.ts';
+import { salaryOptions, salaryKeyboard, recordSalary, salaryEditKeyboard, parseSalaryAmount, editSalaryAmount } from '../_shared/salary-bot.ts';
 import { fixedCandidates, fixedOccurrence, fixedOccurrenceKey } from '../_shared/fixedmatch.ts';
 // Telegram-бот (Фази 4.1, 4.2, 5.1): текстові витрати/доходи, /income з дедупом Monobank і /yes,
-// фото чеків, привʼязка кодом, /balance, /last; звіти Графік, Бюджет, Тиждень, Місяць і кнопка «Оплачено» під нагадуваннями.
+// фото чеків, привʼязка кодом, /balance і розділи статусу (/cards, /installments, /payments, /operations), /last; звіти Графік, Бюджет, Тиждень, Місяць і кнопка «Оплачено» під нагадуваннями.
 // Викликається Telegram без JWT (config.toml: verify_jwt = false), захист:
 // заголовок X-Telegram-Bot-Api-Secret-Token + whitelist chat_id у profiles.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { financeProjection, lastPayout, type AccTx } from '../_shared/budget.ts';
-import { formatFinanceMessage } from '../_shared/finance-message.ts';
+import { financeSections, type FinanceSections } from '../_shared/finance-message.ts';
 import { paymentDates, paymentPage, type PaymentKind } from '../_shared/payment-picker.ts';
 import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
 import { loadFinance, loadMonthlyBudgets, type FinanceData } from '../_shared/bot-data.ts';
@@ -105,9 +105,9 @@ const HELP =
   'Скриншот із кількома операціями: до 20 доходів/витрат у гривнях, кожна окремим записом і з вибором рахунку\n' +
   'Банк на скриншоті допоможе вибрати рахунок; якщо є сумнів, бот запропонує кнопки. Підпис фото має пріоритет.\n' +
   '/yes: підтвердити дохід, схожий на Monobank\n' +
-  '/balance: баланс, картки, розстрочки\n' +
-  '/chart: графік балансу, /budget: бюджет періоду, /week: тиждень, /today: витрати за сьогодні\n' +
-  '/last: останні 5 записів\n\n' +
+  '/balance: бюджет і баланс, /cards: картки, /installments: розстрочки\n' +
+  '/payments: найближчі платежі, /operations: останні операції\n' +
+  '/chart: графік балансу, /budget: бюджет періоду, /week: тиждень, /today: витрати за сьогодні\n\n' +
   'Рахунок: слово ощад, приват або готівка на початку чи в кінці опису (для фото: у підписі), ' +
   'наприклад «250 кава приват». Без слова витрата лишається без рахунку, бот спитає кнопками; ' +
   'дохід іде на рахунок зарплати. Операції Monobank приходять самі.';
@@ -412,19 +412,98 @@ async function offerSalary(chatId:number,explicit=false){
  if(!data.choices.length){if(explicit)await reply(chatId,'Налаштуйте зарплатний рахунок, суми й дати виплат у застосунку.');return;}
  await reply(chatId,'Підтвердіть отриману виплату:',salaryKeyboard(data.choices));
 }
-async function onSalary(chatId:number,userId:string,parts:RegExpMatchArray,answer:(s:string)=>Promise<unknown>){
- const result=await recordSalary(sb,userId,todayKyiv(),parts[1]==='s'?'salary':'advance',parts[2],parts[3],parts[4]?Number(parts[4]):undefined);
+// parts: [_, 's'|'a', дата, рахунок, id наявного доходу?]; cents: фактична сума в копійках («Інша сума»), інакше сума з налаштувань
+async function onSalary(chatId:number,userId:string,parts:string[],answer:(s:string)=>Promise<unknown>,cents?:number){
+ const amount=cents!=null?cents/100:undefined;
+ const result=await recordSalary(sb,userId,todayKyiv(),parts[1]==='s'?'salary':'advance',parts[2],parts[3],parts[4]?Number(parts[4]):undefined,amount);
  if(result.status==='invalid')return answer('Виплата недоступна або дата ще не настала');
- if(result.status==='already')return answer('Цю виплату вже враховано');
- if(result.status==='awaiting')return answer('Чекаємо надходження з Monobank');
+ if(result.status==='already'){
+  // Уже записану виплату (зокрема розрахованою сумою) можна виправити кнопкою під цим повідомленням
+  await answer('Цю виплату вже враховано');
+  return reply(chatId,'Цю виплату вже записано. Якщо сума інша, натисніть «✏️ Змінити суму».',salaryEditKeyboard(result.id));
+ }
+ if(result.status==='awaiting')return answer(amount!=null?'Чекаємо надходження цієї суми з Monobank':'Чекаємо надходження з Monobank');
  if(result.status==='choose'){
   await answer('Оберіть наявний дохід');
-  return reply(chatId,'Є кілька однакових доходів. Оберіть виплату:',{inline_keyboard:result.rows.map((t:any)=>[{text:t.date+' · '+fmtMoney(t.amount),callback_data:'sal:'+parts[1]+':'+parts[2]+':'+parts[3]+':'+t.id}])});
+  const code=parts[1]+':'+parts[2]+':'+parts[3];
+  return reply(chatId,'Є кілька однакових доходів. Оберіть виплату:',{inline_keyboard:result.rows.map((t:any)=>[{text:t.date+' · '+fmtMoney(t.amount),
+   callback_data:cents!=null?'salv:'+code+':'+cents+':'+t.id:'sal:'+code+':'+t.id}])});
  }
  await answer('Виплату враховано');
- await reply(chatId,'✅ '+(result.payout.kind==='salary'?'Зарплата':'Аванс')+': '+fmtMoney(result.payout.amount)+' · '+result.payout.accountName);
- const finance=await loadFinance(sb,todayKyiv()),advice=repaymentAdviceText(repaymentAdvice(finance.input,finance.projection,result.payout.accountId,todayKyiv()));
- if(advice)await reply(chatId,advice);
+ // v215: під записаною виплатою кнопка виправлення суми (для доходу з Monobank бот відповість, що суму задає банк)
+ await reply(chatId,'✅ '+(result.payout.kind==='salary'?'Зарплата':'Аванс')+': '+fmtMoney(result.payout.amount)+' · '+result.payout.accountName,salaryEditKeyboard(result.id));
+ // Порада щодо погашення окремо: її збій не має виглядати як збій уже збереженої виплати
+ try{
+  const finance=await loadFinance(sb,todayKyiv()),advice=repaymentAdviceText(repaymentAdvice(finance.input,finance.projection,result.payout.accountId,todayKyiv()));
+  if(advice)await reply(chatId,advice);
+ }catch(e){console.error('salary advice failed',(e as Error)?.message);}
+}
+
+// v215: очікування фактичної суми виплати. salary_amount: нова виплата («Інша сума»), salary_edit: виправлення записаної.
+// Стан у profiles.telegram_pending, як очікування дати чека; живе 10 хв, /no скасовує.
+type SalaryAmountPending = { kind: 'salary_amount'; salary_kind: 's' | 'a'; date: string; account_id: number; expires: string };
+type SalaryEditPending = { kind: 'salary_edit'; tx_id: number; expires: string };
+const isSalaryPending = (p: any): p is SalaryAmountPending | SalaryEditPending => p?.kind === 'salary_amount' || p?.kind === 'salary_edit';
+const livePending = (p: any) => !!p && !!p.expires && Date.parse(p.expires) >= Date.now();
+async function askSalaryAmount(chatId: number, userId: string, next: SalaryAmountPending | SalaryEditPending, prompt: string, answer: (s: string) => Promise<unknown>) {
+  const { data, error } = await sb.from('profiles').select('telegram_pending').eq('id', userId).maybeSingle();
+  if (error) { console.error('salary pending lookup error:', error); return answer('Помилка, спробуйте ще раз'); }
+  const current = data?.telegram_pending ?? null;
+  // Живе очікування іншої дії (підтвердження, чек) не перезаписуємо; введення кнопкою, прострочене чи інше очікування суми замінюємо
+  if (livePending(current) && current.kind !== 'entry' && !isSalaryPending(current)) return answer('Спочатку завершіть або скасуйте попередню дію');
+  if (!await replacePending(userId, current, next)) return answer('Не вдалося, спробуйте ще раз');
+  await answer('Введіть суму');
+  return reply(chatId, prompt);
+}
+async function onSalaryOther(chatId: number, userId: string, parts: string[], answer: (s: string) => Promise<unknown>) {
+  const kind = parts[1] === 's' ? 'salary' : 'advance';
+  const data = await salaryOptions(sb, todayKyiv());
+  const choice = data.choices.find((c: any) => c.kind === kind && c.date === parts[2] && String(c.accountId) === parts[3]);
+  if (!choice) return answer('Виплата недоступна або дата ще не настала');
+  // Виплату вже записано: одразу виправлення суми записаного доходу
+  const done = await sb.from('salary_payouts').select('transaction_id').eq('account_id', choice.accountId).eq('kind', kind).eq('due_date', parts[2]).maybeSingle();
+  if (done.error) { console.error('salary payout lookup error:', done.error); return answer('Помилка, спробуйте ще раз'); }
+  if (done.data) return onSalaryEdit(chatId, userId, Number(done.data.transaction_id), answer);
+  const next: SalaryAmountPending = { kind: 'salary_amount', salary_kind: parts[1] as 's' | 'a', date: parts[2], account_id: Number(parts[3]),
+    expires: new Date(Date.now() + PENDING_TTL_MS).toISOString() };
+  return askSalaryAmount(chatId, userId, next, `Введіть фактичну суму: ${kind === 'salary' ? 'зарплата' : 'аванс'} за ${ddmm(parts[2])} · ${choice.accountName}. ` +
+    `Розрахована сума ${fmtMoney(choice.amount)}. Наприклад: 51234,56. Скасувати: /no. Чекаю 10 хв.`, answer);
+}
+async function onSalaryEdit(chatId: number, userId: string, txId: number, answer: (s: string) => Promise<unknown>) {
+  const { data: tx, error } = await sb.from('transactions').select('id,amount,source,salary_payouts(transaction_id)').eq('id', txId).maybeSingle();
+  if (error) { console.error('salary edit lookup error:', error); return answer('Помилка, спробуйте ще раз'); }
+  const linked = tx && (Array.isArray(tx.salary_payouts) ? tx.salary_payouts.length > 0 : !!tx.salary_payouts);
+  if (!linked) return answer('Виплату не знайдено');
+  if (tx.source === 'mono') return answer('Суму з Monobank задає банк');
+  const next: SalaryEditPending = { kind: 'salary_edit', tx_id: txId, expires: new Date(Date.now() + PENDING_TTL_MS).toISOString() };
+  return askSalaryAmount(chatId, userId, next, `Введіть правильну суму виплати. Зараз записано ${fmtMoney(Number(tx.amount))}. Наприклад: 51234,56. Скасувати: /no. Чекаю 10 хв.`, answer);
+}
+// Повідомлення з сумою на очікування виплати. Неправильний формат лишає очікування; запис іде після зняття стану.
+async function answerSalaryAmount(chatId: number, userId: string, text: string, pending: SalaryAmountPending | SalaryEditPending) {
+  if (!livePending(pending)) {
+    const cleared = await replacePending(userId, pending, null);
+    return reply(chatId, cleared ? 'Час введення суми минув. Нічого не записано. Натисніть кнопку виплати знову.' : 'Не вдалося очистити стан. Спробуйте ще раз.', cleared ? MAIN_KB : undefined);
+  }
+  const amount = parseSalaryAmount(text);
+  if (amount == null) return reply(chatId, 'Надішліть лише суму, наприклад 51234,56 або 51 234. Скасувати: /no.');
+  if (!await replacePending(userId, pending, null)) return reply(chatId, 'Стан змінився. Нічого не записано. Спробуйте ще раз.');
+  try {
+    if (pending.kind === 'salary_amount') {
+      let note = '';
+      await onSalary(chatId, userId, ['', pending.salary_kind, pending.date, String(pending.account_id)], async (s) => { note = s; }, Math.round(amount * 100));
+      // Відповіді без повідомлення (недоступно, вже враховано, чекаємо Monobank) повторюємо текстом
+      if (note && !['Виплату враховано', 'Оберіть наявний дохід', 'Цю виплату вже враховано'].includes(note)) await reply(chatId, note + '. Нічого не записано.', MAIN_KB);
+      return;
+    }
+    const result = await editSalaryAmount(sb, userId, pending.tx_id, amount);
+    if (result.status === 'missing') return reply(chatId, 'Виплату не знайдено. Нічого не змінено.', MAIN_KB);
+    if (result.status === 'bank') return reply(chatId, 'Суму з Monobank задає банк. Нічого не змінено.', MAIN_KB);
+    if (result.status === 'invalid') return reply(chatId, 'Сума некоректна. Нічого не змінено.', MAIN_KB);
+    return reply(chatId, `✅ Суму виплати змінено: ${fmtMoney(result.old)} → ${fmtMoney(result.amount)}`, salaryEditKeyboard(pending.tx_id));
+  } catch (e) {
+    console.error('salary amount failed', (e as Error)?.message);
+    return reply(chatId, 'Не вдалося записати суму. Спробуйте ще раз.', MAIN_KB);
+  }
 }
 
 async function onCallback(cq: any) {
@@ -442,7 +521,13 @@ async function onCallback(cq: any) {
     }
     if (!prof) return answer('Доступ закритий');
     const salary=String(cq?.data||'').match(/^sal:([sa]):(\d{4}-\d{2}-\d{2}):(\d+)(?::(\d+))?$/);
-    if(salary)return onSalary(chatId,prof.id,salary,answer);
+    if(salary)return onSalary(chatId,prof.id,[...salary],answer);
+    const salaryOther=String(cq?.data||'').match(/^salx:([sa]):(\d{4}-\d{2}-\d{2}):(\d+)$/);
+    if(salaryOther)return onSalaryOther(chatId,prof.id,[...salaryOther],answer);
+    const salaryValue=String(cq?.data||'').match(/^salv:([sa]):(\d{4}-\d{2}-\d{2}):(\d+):(\d{1,10}):(\d+)$/);
+    if(salaryValue)return onSalary(chatId,prof.id,[salaryValue[0],salaryValue[1],salaryValue[2],salaryValue[3],salaryValue[5]],answer,Number(salaryValue[4]));
+    const salaryEdit=String(cq?.data||'').match(/^saled:(\d+)$/);
+    if(salaryEdit)return onSalaryEdit(chatId,prof.id,Number(salaryEdit[1]),answer);
     const pick=String(cq?.data||'').match(/^flpick:(\d+)$/);
     if(pick){await answer('Оберіть зобовʼязання');return offerFixedLink(chatId,prof.id,Number(pick[1]));}
     const payment=String(cq?.data||'').match(/^(pl|po|pc):(\d+):([fca]):(\d+)(?::(\d+|\d{4}-\d{2}-\d{2}))?$/);
@@ -1544,16 +1629,29 @@ async function confirmPending(chatId: number, userId: string) {
 // Посилання на застосунок у відповідь на /app (v186: під статусом кнопки немає)
 const APP_KB = { inline_keyboard: [[{ text: '📱 Відкрити застосунок', url: APP_URL }]] };
 
-async function balance(chatId: number) {
+// v215 (власник: «Баланс» лише основне, решта окремими кнопками): кожна кнопка шле свій розділ того самого статусу
+type StatusSection = 'balance' | 'cards' | 'installments' | 'payments' | 'operations';
+const EMPTY_SECTION: Record<StatusSection, string> = {
+  balance: 'Бюджет недоступний.', cards: 'Активних рахунків немає.', installments: 'Розстрочок немає.',
+  payments: 'Найближчих обовʼязкових платежів немає.', operations: 'Записів ще немає.',
+};
+async function balance(chatId: number, section: StatusSection = 'balance', kb: unknown = MAIN_KB) {
   const today = todayKyiv();
-  let free: string;
+  let s: FinanceSections;
   try {
-    free = await freeBlock(today);
+    s = await freeBlock(today);
   } catch (e) {
     console.error('balance: free block failed', (e as Error)?.message);
-    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.');
+    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.', kb);
   }
-  return reply(chatId, free);
+  let lines: string[];
+  if (section === 'operations') {
+    // Попередження про операції без рахунку стоїть під списком операцій (до v215 було в кінці статусу)
+    const recent = await recentSection();
+    if (!recent) return reply(chatId, 'Не вдалося отримати список операцій.', kb);
+    lines = [...recent, ...(recent.length && s.unassigned.length ? [''] : []), ...s.unassigned];
+  } else lines = section === 'cards' ? s.cards : section === 'installments' ? s.installments : section === 'payments' ? s.due : s.top;
+  return reply(chatId, lines.length ? lines.join('\n') : EMPTY_SECTION[section], kb);
 }
 
 // Місяць після «за» (знахідний відмінок збігається з називним)
@@ -1575,7 +1673,7 @@ async function financeTransactions(from: string, today: string, since: number): 
 }
 
 // Погоджений план та прогноз каси: та сама чиста модель, що у застосунку.
-async function freeBlock(today: string): Promise<string> {
+async function freeBlock(today: string): Promise<FinanceSections> {
   const [acc, fix, cred, sal, cats] = await Promise.all([
     sb.from('accounts').select('id,name,kind,balance,debt,credit_limit,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
@@ -1622,11 +1720,11 @@ async function freeBlock(today: string): Promise<string> {
   } catch (e) {
     console.error('status budget failed', (e as Error)?.message);
   }
-  return formatFinanceMessage(projection, {count: lost.length, amountCents: lost.reduce((sum, t) => sum + Math.round(Number(t.amount) * 100), 0)},
-    installments, budget) + await recentText();
+  return financeSections(projection, {count: lost.length, amountCents: lost.reduce((sum, t) => sum + Math.round(Number(t.amount) * 100), 0)},
+    installments, budget);
 }
 
-// Сума з копійками для відповідей бота; оголошено тут, бо блок статусу (financeTransactions..recentText) тест виконує окремо
+// Сума з копійками для відповідей бота; оголошено тут, бо блок статусу (financeTransactions..recentSection) тест виконує окремо
 const fmtMoney = (n: number) =>
   new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + ' ₴';
 
@@ -1650,24 +1748,26 @@ async function recentLines(): Promise<string[] | null> {
   });
 }
 
-async function recentText(): Promise<string> {
+// Розділ «Операції»: заголовок і рядки; null, якщо список не прочитався, порожній масив, якщо записів немає
+async function recentSection(): Promise<string[] | null> {
   const lines = await recentLines();
-  return lines && lines.length ? '\n\nОстанні операції:\n' + lines.join('\n') : '';
+  return lines && lines.length ? ['Останні операції:', ...lines] : lines;
 }
 
-async function last(chatId: number) {
+async function last(chatId: number, kb: unknown = MAIN_KB) {
   const lines = await recentLines();
-  if (!lines) return reply(chatId, 'Не вдалося отримати список.');
-  if (!lines.length) return reply(chatId, 'Записів ще немає.');
-  return reply(chatId, '📋 Останні:\n' + lines.join('\n'));
+  if (!lines) return reply(chatId, 'Не вдалося отримати список.', kb);
+  if (!lines.length) return reply(chatId, 'Записів ще немає.', kb);
+  return reply(chatId, '📋 Останні:\n' + lines.join('\n'), kb);
 }
 
 // ---------- Звіти кнопок: Графік, Бюджет, Тиждень, Місяць ----------
 // Картинка multipart-запитом sendPhoto; підпис фото до 1024 символів
-async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name: string): Promise<boolean> {
+async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name: string, kb: unknown = undefined): Promise<boolean> {
   try {
     const fd = new FormData();
     fd.append('chat_id', String(chatId));
+    if (kb) fd.append('reply_markup', JSON.stringify(kb));
     fd.append('caption', caption.slice(0, 1024));
     fd.append('photo', new Blob([png as BlobPart], { type: 'image/png' }), name);
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: 'POST', body: fd });
@@ -1680,24 +1780,24 @@ async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name:
 }
 
 // Дані з тієї самої проєкції, що статус і застосунок; помилка завантаження або звіту дає коротку відповідь
-async function withFinance(chatId: number, fn: (chatId: number, d: FinanceData) => Promise<unknown>) {
+async function withFinance(chatId: number, fn: (chatId: number, d: FinanceData) => Promise<unknown>, kb: unknown = MAIN_KB) {
   let d: FinanceData;
   try {
     d = await loadFinance(sb, todayKyiv());
   } catch (e) {
     console.error('report: finance load failed', (e as Error)?.message);
-    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.');
+    return reply(chatId, 'Не вдалося завантажити фінансовий стан. Спробуйте ще раз.', kb);
   }
   try {
     await fn(chatId, d);
   } catch (e) {
     console.error('report failed', (e as Error)?.message);
-    await reply(chatId, 'Не вдалося побудувати звіт. Спробуйте ще раз.');
+    await reply(chatId, 'Не вдалося побудувати звіт. Спробуйте ще раз.', kb);
   }
 }
 
 // 📈 Графік балансу від мінус місяця до плюс місяця; якщо картинка не вийшла, підпис надсилається текстом
-async function chartReport(chatId: number, d: FinanceData) {
+async function chartReport(chatId: number, d: FinanceData, kb: unknown = MAIN_KB) {
   const s = balanceSeries(d.projection, d.txs, d.accounts, d.today, { firstOwnDate: d.firstOwnDate, salary: d.salary });
   const caption = chartCaption(s);
   let png: Uint8Array | null = null;
@@ -1706,13 +1806,13 @@ async function chartReport(chatId: number, d: FinanceData) {
   } catch (e) {
     console.error('chart render failed', (e as Error)?.message);
   }
-  if (!png || !(await sendPhoto(chatId, png, caption, 'balance.png'))) await reply(chatId, '📈 ' + caption);
+  if (!png || !(await sendPhoto(chatId, png, caption, 'balance.png', kb))) await reply(chatId, '📈 ' + caption, kb);
 }
 
 // 📊 Бюджет: текст окремим повідомленням (підпис фото обмежений 1024 символами), потім кільце категорій
-async function budgetReport(chatId: number, d: FinanceData) {
+async function budgetReport(chatId: number, d: FinanceData, kb: unknown = MAIN_KB) {
   const m = budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts);
-  await reply(chatId, formatBudget(m));
+  await reply(chatId, formatBudget(m), kb);
   if (!m || !m.rows.some((r) => r.fact > 0)) return;
   try {
     await sendPhoto(chatId, await svgToPng(donutSvg(m)), 'Витрати періоду за категоріями', 'budget.png');
@@ -1861,8 +1961,8 @@ Deno.serve(async (req) => {
     else await reply(chatId, 'Скасовано. Оберіть наступну дію.', pending ? MAIN_KB : undefined);
     return done();
   }
-  const navigation = /^\/(?:menu|start|help|app|balance|chart|budget|week|month|today|last)$/i.test(text) || /^меню$/i.test(text) ||
-    [BTN.menu,BTN.help,BTN.app,BTN.balance,BTN.chart,BTN.budget,BTN.week,BTN.month,BTN.today,BTN.last].includes(text);
+  const navigation = /^\/(?:menu|start|help|app|balance|chart|budget|week|month|today|last|cards|installments|payments|operations)$/i.test(text) || /^меню$/i.test(text) ||
+    [BTN.menu,BTN.help,BTN.app,BTN.balance,BTN.chart,BTN.budget,BTN.week,BTN.month,BTN.today,BTN.last,BTN.cards,BTN.installments,BTN.payments,BTN.operations].includes(text);
   if (navigation && pending?.kind === 'entry' && !await replacePending(prof.id, pending, null)) {
     await reply(chatId, 'Не вдалося завершити введення. Спробуйте ще раз.', liveEntry(pending) ? entryKeyboard(pending) : MAIN_KB);
     return done();
@@ -1875,6 +1975,9 @@ Deno.serve(async (req) => {
   }
   if (!navigation && pending?.kind === 'receipt_date') {
     await answerReceiptDate(chatId, prof.id, text, pending); return done();
+  }
+  if (!navigation && isSalaryPending(pending)) {
+    await answerSalaryAmount(chatId, prof.id, text, pending); return done();
   }
   if (/^\/yes$/i.test(text) || text === BTN.yes) { await confirmPending(chatId, prof.id); return done(); }
   const entryType = text === BTN.income || /^\/(?:income|дохід)$/i.test(text) ? 'income'
@@ -1919,16 +2022,25 @@ Deno.serve(async (req) => {
     await addReceipt(chatId, prof.id, updateId, photos, msg.media_group_id, msg.caption, msg.date); return done();
   }
   let m: RegExpMatchArray | null;
-  if (/^\/balance$/i.test(text) || text === BTN.balance) await balance(chatId);
-  else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, chartReport);
-  else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, budgetReport);
-  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), undefined, true));
+  // Відповіді меню несуть клавіатуру, щоб панель поверталась і там, де зникла (Telegram Desktop);
+  // під час живого підтвердження, яке показувало «Так / Ні» (схожий дохід або частина чека із сумою позицій), лишається
+  // «Так / Ні», інакше натискання меню стерло б вибір; прострочений стан і вибір дати чека отримують головне меню
+  const confirmShown = !!pending?.expires && Date.parse(pending.expires) >= Date.now() &&
+    (pending.kind == null || (pending.kind === 'receipt' && Number(pending.items_sum) > 0));
+  const menuKb = confirmShown ? CONFIRM_KB : MAIN_KB;
+  if (/^\/balance$/i.test(text) || text === BTN.balance) await balance(chatId, 'balance', menuKb);
+  else if (/^\/cards$/i.test(text) || text === BTN.cards) await balance(chatId, 'cards', menuKb);
+  else if (/^\/installments$/i.test(text) || text === BTN.installments) await balance(chatId, 'installments', menuKb);
+  else if (/^\/payments$/i.test(text) || text === BTN.payments) await balance(chatId, 'payments', menuKb);
+  else if (/^\/operations$/i.test(text) || text === BTN.operations) await balance(chatId, 'operations', menuKb);
+  else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, (c, d) => chartReport(c, d, menuKb), menuKb);
+  else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, (c, d) => budgetReport(c, d, menuKb), menuKb);
+  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), menuKb, true), menuKb);
   else if (/^\/today$/i.test(text) || text === BTN.today) await withFinance(chatId, async (c, d) => {
-    const keyboard = pending && pending.kind !== 'entry' ? CONFIRM_KB : MAIN_KB;
-    await sendTodayExpenses(c, formatTodayExpenses(todayExpensesModel(d.txs, d.cats, d.accounts, d.today)), keyboard);
-  });
-  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), undefined, true));
-  else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId);
+    await sendTodayExpenses(c, formatTodayExpenses(todayExpensesModel(d.txs, d.cats, d.accounts, d.today)), menuKb);
+  }, menuKb);
+  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), menuKb, true), menuKb);
+  else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId, menuKb);
   else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP, MAIN_KB);
   else if (/^\/app$/i.test(text) || text === BTN.app) await reply(chatId, 'Відкрити застосунок:', APP_KB);
   else if (/^\/(?:menu|start)$/i.test(text) || /^меню$/i.test(text) || text === BTN.menu) await reply(chatId, 'Вітаю! Оберіть дію кнопками нижче.', MAIN_KB);

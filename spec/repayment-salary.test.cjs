@@ -76,3 +76,37 @@ test('neighbor payout date windows cannot reuse a previously claimed income',asy
  const {recordSalary}=await load('salary-bot'),r={id:61,account_id:1,type:'income',amount:20000,date:'2026-10-21',source:'mono',transfer_id:null};const sb=sbMock({mono:true,cfg:{...salary,advance_amount:20000,advance_day:22},rows:[r,{...r,id:62,date:'2026-10-22'}]});
  assert.equal((await recordSalary(sb,'u','2026-10-21','salary','2026-10-21',1)).id,61);assert.equal((await recordSalary(sb,'u2','2026-10-22','advance','2026-10-22',1)).id,62);assert.equal(sb.state.writes,2);
 });
+
+test('v215: «Інша сума» під кожною виплатою, сума з повідомлення, той самий запис через RPC',async()=>{
+ const {salaryKeyboard,parseSalaryAmount,recordSalary}=await load('salary-bot');
+ const one=salaryKeyboard([{kind:'salary',date:'2026-10-21',accountId:1,accountName:'Source',amount:20000}]);
+ assert.deepEqual(one.inline_keyboard.map(r=>r.map(b=>b.callback_data)),[['sal:s:2026-10-21:1'],['salx:s:2026-10-21:1']]);
+ assert.equal(one.inline_keyboard[1][0].text,'✏️ Інша сума');
+ const two=salaryKeyboard([{kind:'salary',date:'2026-10-21',accountId:1,accountName:'A',amount:1},{kind:'advance',date:'2026-10-21',accountId:2,accountName:'B',amount:1}]);
+ assert.deepEqual(two.inline_keyboard.map(r=>r[0].text.startsWith('✏️')?r[0].text:null).filter(Boolean),['✏️ Інша сума: Зарплата · A','✏️ Інша сума: Аванс · B']);
+ assert.ok(two.inline_keyboard.flat().every(b=>Buffer.byteLength(b.callback_data)<=64));
+ for(const [text,value] of [['51234',51234],['51 234,56',51234.56],['51 234.5',51234.5],['0,29',0.29],['20000 грн',20000],['20000₴',20000]])assert.equal(parseSalaryAmount(text),value,text);
+ for(const text of ['','0','-5','51 23','1,234','abc','20000 кава','10000000,01','1.234.5'])assert.equal(parseSalaryAmount(text),null,text);
+ const sb=sbMock();const saved=await recordSalary(sb,'u','2026-10-21','salary','2026-10-21',1,undefined,19876.54);
+ assert.equal(saved.status,'saved');assert.equal(saved.payout.amount,19876.54);assert.equal(sb.calls[0][1].p_amount,19876.54);assert.equal(sb.calls[0][1].p_existing_tx_id,null);
+ assert.equal((await recordSalary(sb,'u','2026-10-21','salary','2026-10-21',1,undefined,20000)).status,'already');assert.equal(sb.state.writes,1);
+ // наявний дохід шукається за фактичною сумою, а не розрахованою
+ const r={id:7,account_id:1,type:'income',amount:19000,date:'2026-10-21',source:'manual',transfer_id:null};
+ const match=sbMock({rows:[r]});assert.equal((await recordSalary(match,'u','2026-10-21','salary','2026-10-21',1,undefined,19000)).id,7);assert.equal(match.calls[0][1].p_existing_tx_id,7);
+ const mono=sbMock({mono:true,rows:[{...r,source:'mono'}]});assert.equal((await recordSalary(mono,'u','2026-10-21','salary','2026-10-21',1,undefined,18000)).status,'awaiting');assert.equal(mono.calls.length,0);
+ for(const bad of [0,-1,NaN,10000000.01,1.234]){const m=sbMock();assert.equal((await recordSalary(m,'u','2026-10-21','salary','2026-10-21',1,undefined,bad)).status,'invalid',String(bad));assert.equal(m.calls.length,0);}
+ const stale=sbMock();assert.equal((await recordSalary(stale,'u','2026-11-07','salary','2026-10-21',1,undefined,20000)).status,'invalid');assert.equal(stale.calls.length,0);
+});
+
+test('v215: «Змінити суму» лише для записаної виплати не з Monobank, через RPC update_salary_payout_amount',async()=>{
+ const {editSalaryAmount,salaryEditKeyboard}=await load('salary-bot');
+ assert.deepEqual(salaryEditKeyboard(88),{inline_keyboard:[[{text:'✏️ Змінити суму',callback_data:'saled:88'}]]});
+ const mock=(row)=>{const calls=[];return {calls,from(){const q={};q.select=q.eq=()=>q;q.maybeSingle=()=>Promise.resolve({data:row,error:null});return q},async rpc(name,args){calls.push([name,args]);return {data:args.p_amount,error:null}}}};
+ const base={id:88,amount:20000,type:'income',source:'telegram',transfer_id:null,salary_payouts:[{transaction_id:88}]};
+ const ok=mock(base);assert.deepEqual(await editSalaryAmount(ok,'u',88,19500.5),{status:'saved',amount:19500.5,old:20000});
+ assert.deepEqual(ok.calls,[['update_salary_payout_amount',{p_tx_id:88,p_amount:19500.5,p_actor_id:'u'}]]);
+ for(const [row,status] of [[null,'missing'],[{...base,salary_payouts:[]},'missing'],[{...base,type:'expense'},'missing'],[{...base,source:'mono'},'bank']]){
+  const m=mock(row);assert.equal((await editSalaryAmount(m,'u',88,100)).status,status);assert.equal(m.calls.length,0);
+ }
+ const bad=mock(base);assert.equal((await editSalaryAmount(bad,'u',88,0)).status,'invalid');assert.equal(bad.calls.length,0);
+});

@@ -4,13 +4,17 @@ export const KB_BTN = {
   balance: '💰 Баланс', chart: '📈 Графік', budget: '📊 Бюджет', week: '📅 Тиждень', month: '🔍 Місяць', today: '🧾 Витрати за сьогодні',
   income: '➕ Дохід', expense: '➖ Витрата', last: '📋 Останні', help: '❓ Допомога', app: '📱 Застосунок',
   menu: '⬅️ Головне меню', text: '✍️ Текстом', image: '📷 Зображенням', cancel: '✖ Скасувати', yes: '✅ Так, додати',
+  // v215: розділи колишнього статусу «Баланс» окремими кнопками
+  cards: '💳 Картки', installments: '📆 Розстрочки', payments: '⏰ Платежі', operations: '🗂 Операції',
 };
 export const MAIN_KB = {
   keyboard: [
     [{ text: KB_BTN.balance }, { text: KB_BTN.chart }],
-    [{ text: KB_BTN.budget }, { text: KB_BTN.week }],
-    [{ text: KB_BTN.today }, { text: KB_BTN.last }],
+    [{ text: KB_BTN.budget }, { text: KB_BTN.payments }],
+    [{ text: KB_BTN.cards }, { text: KB_BTN.installments }],
+    [{ text: KB_BTN.operations }],
     // v186 (власник): без кнопок «Допомога» і «Застосунок»; /help і /app працюють командами
+    // v215 (власник): без «Тиждень», «Витрати за сьогодні», «Останні»; їхні тексти й /week, /today, /last працюють
   ],
   resize_keyboard: true,
   // v186 (власник: «меню з кнопками чомусь зникає, а має відображатись постійно»): клавіатура не згортається після натискання
