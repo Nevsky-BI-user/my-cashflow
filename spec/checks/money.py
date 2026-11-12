@@ -176,15 +176,15 @@ def min_spend(page):
     t = _sp(card.inner_text())
     want = f"{round(js['ms'][0]['spent']):,} / 15 000 ₴".replace(',', ' ')
     check(want in t, f'текст прогресу {t!r}, очікували {want!r}')
-    check(card.locator('.ms-compact-warning').is_visible(), 'поріг і комісія мають бути видимі')
+    # v225: рядки «Ще … · дата» і «Комісія …» з картки прибрано за вказівкою власника 12.11.2026; поріг і комісія в підказці смужки
+    check(card.locator('.ms-compact-warning').count() == 0, 'на картці лишився рядок «Ще … / Комісія …»')
+    check('комісія 400 ₴' in _sp(card.get_attribute('title') or ''), f'у підказці смужки немає комісії: {card.get_attribute("title")!r}')
     bank = card.locator('xpath=ancestor::*[contains(@class,"bcard")][1]')
     check('Ощадбанк' in bank.inner_text(), 'порада не належить Ощадбанку')
     bank.locator('.bank-advice-info').focus()
     advice = page.locator('.bank-advice-popover')
     check(advice.is_visible() and ('Якщо оплатити' in advice.inner_text() or 'Запланованих платежів' in advice.inner_text()), 'порада недоступна у поясненні')
     page.keyboard.press('Escape')
-    left = _sp(page.evaluate('v=>fmtI(v)', js['ms'][0]['left']))
-    check('Ще ' + left + ' ₴ · 31.10' in _sp(card.locator('.ms-compact-warning').inner_text()), 'підпис картки не показує обчислений залишок до порогу')
     page.mouse.move(2, 2)
     shot(page, 'ms-ov-1920.jpg', full=False)
     # Після клавіатурної підказки переходимо через видиму навігацію.
@@ -215,10 +215,10 @@ def min_spend_late(page):
     ref=finance_ref(page)
     fee=[e for e in ref['events'] if e['id']=='fee:l1:2026-10']
     check(len(fee)==1 and fee[0]['date']=='2026-11-01', 'немає комісії01.11')
-    w = page.locator('.p-overview .ms-wrap[data-acc="l1"] .ms-compact-warning')
-    check(w.count() == 1, 'немає бурштинової плашки')
-    t = _sp(w.inner_text())
-    check(t.startswith('Ще ') and '31.10' in t and 'Комісія 400 ₴' in t and str(round(ref['minSpend'][0]['left'])).replace(' ','') in t.replace(' ',''), f'плашка: {t!r}')
+    # v225: плашки на картці немає (власник 12.11.2026), комісія лишається подією і в підказці смужки
+    wrap = page.locator('.p-overview .ms-wrap[data-acc="l1"]')
+    check(wrap.locator('.ms-compact-warning').count() == 0, 'на картці лишилась плашка «Ще … / Комісія …»')
+    check('комісія 400 ₴' in _sp(wrap.get_attribute('title') or ''), f'у підказці смужки немає комісії: {wrap.get_attribute("title")!r}')
 
 
 def min_spend_phone(page):
