@@ -50,18 +50,12 @@ test('вибір способу введення згортається, гол�
  }
 });
 
-test('меню команд «/» реєструється в telegram-setup, кожну команду розуміє вебхук',async()=>{
- const {BOT_COMMANDS}=await keyboard;
- assert.deepEqual(BOT_COMMANDS.map(c=>c.command),['balance','cards','installments','payments','operations','budget','chart','menu','help']);
- for(const c of BOT_COMMANDS){
-  assert.match(c.command,/^[a-z0-9_]{1,32}$/);
-  assert.ok(c.description.length>=1&&c.description.length<=256,c.command);
- }
- const setup=fs.readFileSync(path.join(root,'supabase/functions/telegram-setup/index.ts'),'utf8');
- assert.ok(setup.includes("import { BOT_COMMANDS } from '../_shared/bot-kb.ts';"));
- assert.ok(setup.includes("call('setMyCommands', { commands: BOT_COMMANDS })"));
- assert.ok(setup.includes("menu_button: { type: 'commands' }"));
- assert.ok(!setup.includes('deleteMyCommands'));
+test('меню команд не реєструється: telegram-setup видаляє каталог',async()=>{
+ const kb=await keyboard;
+ assert.equal(kb.BOT_COMMANDS,undefined);
+ const source=fs.readFileSync(path.join(root,'supabase/functions/telegram-setup/index.ts'),'utf8');
+ assert.match(source,/call\('deleteMyCommands'/);
+ assert.ok(!/setMyCommands/.test(source));
 });
 
 test('нагадування зберігають кнопку оплати, без посилання на застосунок',async()=>{

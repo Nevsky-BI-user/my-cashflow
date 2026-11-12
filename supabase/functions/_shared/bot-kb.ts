@@ -33,19 +33,7 @@ export const ENTRY_KB = {
   input_field_placeholder: 'Сума й опис або фото операції',
 };
 export const ENTRY_INPUT_KB = MAIN_KB;
-// v215 (власник: «з ПК кнопок не бачу і викликати їх не можу, крім як через команди»): меню команд «/» знову реєструється
-// в telegram-setup (до v215 видалялось за рішенням v186), щоб розділи можна було викликати і без клавіатури
-export const BOT_COMMANDS = [
-  { command: 'balance', description: 'Бюджет і баланс' },
-  { command: 'cards', description: 'Картки' },
-  { command: 'installments', description: 'Розстрочки' },
-  { command: 'payments', description: 'Найближчі платежі' },
-  { command: 'operations', description: 'Останні операції' },
-  { command: 'budget', description: 'Бюджет періоду' },
-  { command: 'chart', description: 'Графік балансу' },
-  { command: 'menu', description: 'Показати кнопки' },
-  { command: 'help', description: 'Допомога' },
-];
+// v186 (власник): меню команд Telegram не реєструється, telegram-setup його видаляє; команди працюють, якщо їх набрати
 export const APP_URL = 'https://nevsky-bi-user.github.io/my-cashflow/';
 // Кнопка «Оплачено» під нагадуванням; для погашення кредитки і списань Monobank без кнопки (v186: власник прибрав «Відкрити застосунок»)
 export const paidKb = (callback: string | null) => callback

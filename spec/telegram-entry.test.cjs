@@ -6,7 +6,7 @@ const {stripTypeScriptTypes}=require('node:module');
 const root=path.join(__dirname,'../supabase/functions');
 const source=fs.readFileSync(path.join(root,'telegram-webhook/index.ts'),'utf8');
 const kbCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/bot-kb.ts'),'utf8').replace(/^export /gm,''));
-const kb=new Function(kbCode+';return {KB_BTN,MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB,APP_URL,BOT_COMMANDS};')();
+const kb=new Function(kbCode+';return {KB_BTN,MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB,APP_URL};')();
 const fixedCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/fixedmatch.ts'),'utf8').replace(/^export /gm,''));
 const fixedApi=new Function(fixedCode+';return {fixedCandidates,fixedOccurrence,fixedOccurrenceKey};')();
 let todayReports;
