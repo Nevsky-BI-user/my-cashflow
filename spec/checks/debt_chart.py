@@ -87,6 +87,12 @@ def desktop(page):
         layout(page, f'ПК {w}')
         g = page.evaluate("()=>{const a=document.querySelector('.bud-debt-now').getBoundingClientRect(),b=document.querySelector('.debt-chart').getBoundingClientRect();return{a:a.right,b:b.left,at:a.top,bt:b.top}}")
         check(g['b'] > g['a'], f'ПК {w}: графік не праворуч від чисел {g}')
+        # v220: графік на всю висоту картки поруч із рядком розрахунку, без порожнечі зверху і знизу
+        v = page.evaluate("""()=>{const r=s=>document.querySelector(s).getBoundingClientRect();const c=r('.bud-debt'),now=r('.bud-debt-now'),f=r('.debt-chart'),rec=r('.budget-reconciliation'),cs=getComputedStyle(document.querySelector('.bud-debt'));
+          return{ct:c.top+parseFloat(cs.paddingTop),cb:c.bottom-parseFloat(cs.paddingBottom),nt:now.top,nb:now.bottom,ft:f.top,fb:f.bottom,rt:rec.top}}""")
+        check(abs(v['ft'] - v['rt']) <= 1 and abs(v['nt'] - v['ct']) <= 1, f'ПК {w}: верх графіка не на рівні рядка розрахунку {v}')
+        check(abs(v['fb'] - v['nb']) <= 1, f'ПК {w}: низ графіка {v["fb"]:.1f} != низ лівої колонки {v["nb"]:.1f}')
+        check(v['cb'] - max(v['fb'], v['nb']) <= 1, f'ПК {w}: порожнеча внизу картки {v}')
         page.locator('.bud-debt').scroll_into_view_if_needed()
         shot(page, f'debt-chart-{w}.jpg', full=False)
 
