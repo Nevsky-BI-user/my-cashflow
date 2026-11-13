@@ -24,6 +24,8 @@ export type AgentResult =
 
 export const OFF_TOPIC = 'Я відповідаю лише про гроші родини: баланс, картки, витрати, доходи, бюджет і платежі.';
 export const CHANGE_REQUEST = 'Змінювати чи видаляти записи я не вмію: це можна зробити в застосунку.';
+// Прохання записати, яке не розібралось як сума й опис («запиши каву», «додай витрату»): підказка формату, а не відмова
+export const ADD_HINT = 'Щоб записати, надішліть суму й опис: «200 таксі», дохід з плюсом: «+5000 зарплата». Голосом так само: «200 гривень таксі».';
 export const UNSUPPORTED = 'Цього я поки не вмію порахувати. Спробуйте кнопки меню.';
 const CLARIFY_FALLBACK = 'Уточніть, будь ласка: за який період або яку категорію?';
 
@@ -43,7 +45,7 @@ export function agentSystem(today: string): string {
     'Періоди для spending (дати YYYY-MM-DD): без періоду в питанні: з першого числа поточного місяця до сьогодні; «цей місяць» чи назва поточного місяця: так само; минулий чи названий місяць: увесь той місяць; «цього тижня»: з понеділка до сьогодні; «минулого тижня»: понеділок-неділя минулого тижня; «сьогодні», «вчора»: один день; «цього року»: з 1 січня до сьогодні. Майбутнього не буває.',
     'Кілька питань в одному: кілька викликів (до чотирьох).',
     '- питання про гроші родини, але незрозуміло, про що саме: clarify з коротким питанням без цифр;',
-    '- просять додати, змінити чи видалити запис: not_supported(kind=change_request);',
+    '- просять додати чи записати операцію: not_supported(kind=add_request); змінити чи видалити запис: not_supported(kind=change_request);',
     '- не про гроші родини (погода, новини, загальні знання, жарти): not_supported(kind=off_topic);',
     '- не питання і не прохання (привітання, «дякую», окреме слово): not_supported(kind=not_a_question);',
     '- про гроші, але жоден інструмент не підходить: not_supported(kind=finance_unsupported).',
@@ -82,7 +84,7 @@ export function agentTools(categoryNames: string[]): any[] {
     },
     {
       name: 'not_supported', description: 'Питання поза можливостями.',
-      input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['off_topic', 'not_a_question', 'change_request', 'finance_unsupported'] } }, required: ['kind'] },
+      input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['off_topic', 'not_a_question', 'add_request', 'change_request', 'finance_unsupported'] } }, required: ['kind'] },
     },
   ];
 }
@@ -168,7 +170,7 @@ export async function runCalls(calls: { name: string; input: any }[], deps: Pick
       clarify = t && !/\d/.test(t) ? t : CLARIFY_FALLBACK;
     } else if (c.name === 'not_supported') {
       refusal = a.kind === 'not_a_question' ? { kind: 'not_question' }
-        : { kind: 'off_topic', text: a.kind === 'change_request' ? CHANGE_REQUEST : a.kind === 'finance_unsupported' ? UNSUPPORTED : OFF_TOPIC };
+        : { kind: 'off_topic', text: a.kind === 'add_request' ? ADD_HINT : a.kind === 'change_request' ? CHANGE_REQUEST : a.kind === 'finance_unsupported' ? UNSUPPORTED : OFF_TOPIC };
     }
   }
   if (lines.length) return { kind: 'answer', text: lines.filter(Boolean).join('\n'), tools: used };

@@ -29,7 +29,13 @@ Write-Host 'Ставлю пакети (уперше кілька хвилин, �
 if ($LASTEXITCODE -ne 0) { throw 'pip install завершився з помилкою' }
 if (-not (Test-Path -LiteralPath (Join-Path $venv 'Scripts\pythonw.exe'))) { throw 'У venv немає pythonw.exe' }
 
-# 3. Конфіг із секретом
+# 3. Код сервісу в .local: запуск не залежить від того, яка гілка зараз відкрита в робочій теці
+foreach ($f in @('worker.py', '_common.ps1', 'start.ps1', 'stop.ps1', 'status.ps1', 'autostart.ps1')) {
+    Copy-Item -LiteralPath (Join-Path $ScriptDir $f) -Destination (Join-Path $VoiceHome $f) -Force
+}
+Write-Host "Код сервісу скопійовано в $VoiceHome"
+
+# 4. Конфіг із секретом
 $cfgPath = Join-Path $VoiceHome 'config.json'
 $voiceNpy = Join-Path $Root '.local\voice\voice.npy'
 if (-not (Test-Path -LiteralPath $cfgPath)) {
@@ -56,7 +62,7 @@ if (-not (Test-Path -LiteralPath $cfgPath)) {
     $voiceNpy = (Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json).voice_npy
 }
 
-# 4. Вектор голосу
+# 5. Вектор голосу
 if (Test-Path -LiteralPath $voiceNpy) { Write-Host "Вектор голосу на місці: $voiceNpy" }
 else { Write-Warning "Немає вектора голосу ${voiceNpy}: озвучення не запуститься. Шлях задається в config.json (voice_npy)." }
-Write-Host 'Готово. Запуск: start.ps1, стан: status.ps1, зупинка: stop.ps1'
+Write-Host "Готово. Запуск, стан і зупинка: start.ps1, status.ps1, stop.ps1 у теці $VoiceHome"

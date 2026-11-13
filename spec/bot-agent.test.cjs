@@ -61,13 +61,14 @@ test('період і категорія перевіряються кодом: 
 });
 
 test('уточнення без цифр, відмови: не про гроші, не питання, зміна запису; збій моделі',async()=>{
- const {runCalls,askAgent,OFF_TOPIC,CHANGE_REQUEST}=await mod('bot-agent.ts');
+ const {runCalls,askAgent,OFF_TOPIC,CHANGE_REQUEST,ADD_HINT}=await mod('bot-agent.ts');
  const ctx={today:TODAY,categories:CATS},tools=fakeTools([]);
  assert.deepEqual(await runCalls([{name:'clarify',input:{question:'За який місяць?'}}],ctx,tools),{kind:'clarify',text:'За який місяць?'});
  assert.equal((await runCalls([{name:'clarify',input:{question:'Ви витратили 500?'}}],ctx,tools)).text,'Уточніть, будь ласка: за який період або яку категорію?');
  assert.deepEqual(await runCalls([{name:'not_supported',input:{kind:'off_topic'}}],ctx,tools),{kind:'off_topic',text:OFF_TOPIC});
  assert.deepEqual(await runCalls([{name:'not_supported',input:{kind:'not_a_question'}}],ctx,tools),{kind:'not_question'});
  assert.deepEqual(await runCalls([{name:'not_supported',input:{kind:'change_request'}}],ctx,tools),{kind:'off_topic',text:CHANGE_REQUEST});
+ assert.deepEqual(await runCalls([{name:'not_supported',input:{kind:'add_request'}}],ctx,tools),{kind:'off_topic',text:ADD_HINT},'прохання записати: підказка формату, не «змінювати не вмію»');
  assert.deepEqual(await askAgent('баланс?',{apiKey:'k',...ctx,fetchImpl:claude([],529)},tools),{kind:'error'});
  assert.deepEqual(await askAgent('баланс?',{apiKey:'k',...ctx,fetchImpl:claude([{type:'text',text:'Баланс 100'}])},tools),{kind:'error'},'без інструмента відповіді немає');
  assert.deepEqual(await askAgent('баланс?',{apiKey:'',...ctx},tools),{kind:'error'});

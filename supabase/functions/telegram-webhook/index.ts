@@ -20,7 +20,7 @@ import { APP_URL, KB_BTN, MAIN_KB, ENTRY_KB, ENTRY_INPUT_KB } from '../_shared/b
 import { askAgent, budgetAnswer, type AgentResult, type AgentTools } from '../_shared/bot-agent.ts';
 import { formatSpending, loadSpendingTxs, spendingModel } from '../_shared/spending.ts';
 import { voiceOnline, voiceRun } from '../_shared/voice-queue.ts';
-import { parseVoiceEntry } from '../_shared/voice-entry.ts';
+import { notEntry, parseVoiceEntry } from '../_shared/voice-entry.ts';
 import { toSpeech } from '../_shared/uk-speech.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
@@ -1943,7 +1943,9 @@ async function answerQuestion(chatId: number, text: string, kb: unknown) {
   await tgCall('sendChatAction', { chat_id: chatId, action: 'typing' });
   const r = await agentAnswer(text);
   if (r.kind === 'answer' || r.kind === 'clarify' || r.kind === 'off_topic') return reply(chatId, r.text, kb);
-  return reply(chatId, 'Не зрозумів. ' + HELP);
+  // «дякую», «ок», «привіт»: один рядок-підказка замість усієї довідки
+  if (r.kind === 'not_question') return reply(chatId, 'Напишіть питання про гроші родини, наприклад «скільки витратили на продукти в жовтні», або суму й опис: «250 кава».', kb);
+  return reply(chatId, 'Не вдалося відповісти. Спробуйте ще раз або скористайтесь кнопками.', kb);
 }
 
 const VOICE_OFFLINE = 'Голосові зараз не розпізнаю: мовний сервіс на ноутбуці вимкнений. Напишіть текстом, на питання відповім і так.';
@@ -2089,8 +2091,9 @@ Deno.serve(async (req) => {
   // Голосове обробляється у фоні: розпізнавання й озвучення на ноутбуці тривають секунди, Telegram не чекає
   if (msg?.voice && typeof msg.voice.file_id === 'string' && msg.voice.file_id) {
     const job = handleVoice(chatId, prof.id, updateId, msg.voice, pending).catch((e) => console.error('voice failed', (e as Error)?.message));
-    const wait = (globalThis as any).EdgeRuntime?.waitUntil;
-    if (wait) wait(job); else await job;
+    // Виклик методом (не відокремленою функцією): так, як у документації Supabase
+    const rt = (globalThis as any).EdgeRuntime;
+    if (typeof rt?.waitUntil === 'function') rt.waitUntil(job); else await job;
     return done();
   }
   if (imageDocument && !documentSizeValid) {
@@ -2194,7 +2197,8 @@ Deno.serve(async (req) => {
     await addTx(chatId, prof.id, updateId, 'expense', m[1], m[2]);
   } else {
     m = text.match(/^([+-]?)\s*(\d+(?:[.,]\d{1,2})?)\s+(.+)$/s);
-    if (m) await addTx(chatId, prof.id, updateId, m[1] === '+' ? 'income' : 'expense', m[2], m[3]);
+    // Число на початку питання («10 листопада скільки витратили») не сума: такий текст іде до відповіді, а не в облік
+    if (m && !notEntry(text)) await addTx(chatId, prof.id, updateId, m[1] === '+' ? 'income' : 'expense', m[2], m[3]);
     else if (text) await answerQuestion(chatId, text, menuKb);
     else await reply(chatId, 'Не зрозумів. ' + HELP);
   }

@@ -18,6 +18,7 @@
 | Що | Де |
 | --- | --- |
 | Код (у git, публічний) | `voice-service\` у репозиторії |
+| Робоча копія коду, звідки запускається воркер | `.local\voice-service\` (копіює `install.ps1`) |
 | Середовище Python | `.local\voice-service\venv` |
 | Налаштування і **секрет** | `.local\voice-service\config.json` |
 | Журнал | `.local\voice-service\logs\worker.log` |
@@ -47,7 +48,7 @@
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-Скрипт створить середовище, поставить пакети (уперше кілька хвилин, близько 3 ГБ) і створить `config.json` з новим секретом. Секрет він покаже **один раз**: його треба покласти в секрети Supabase, інакше сервер відповідатиме 401:
+Скрипт створить середовище, поставить пакети (уперше кілька хвилин, близько 3 ГБ), скопіює код сервісу в `.local\voice-service` і створить `config.json` з новим секретом. Секрет він покаже **один раз**: його треба покласти в секрети Supabase, інакше сервер відповідатиме 401:
 
 ```powershell
 supabase secrets set VOICE_SECRET=<секрет із виводу>
@@ -56,6 +57,8 @@ supabase secrets set VOICE_SECRET=<секрет із виводу>
 Загубили секрет: він лежить у `config.json`. Новий: видаліть `config.json`, запустіть `install.ps1` ще раз і оновіть `VOICE_SECRET` у Supabase.
 
 ## Запуск, стан, зупинка
+
+Ці скрипти запускаються з `.local\voice-service` у корені репозиторію: туди їх копіює `install.ps1`, тож воркер не зникає, коли в робочій теці відкрита інша гілка. Після оновлення коду в git запустіть `install.ps1` ще раз, а потім `stop.ps1` і `start.ps1`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\start.ps1

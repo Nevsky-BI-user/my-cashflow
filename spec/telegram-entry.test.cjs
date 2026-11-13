@@ -9,10 +9,11 @@ const kbCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/bot-kb
 const kb=new Function(kbCode+';return {KB_BTN,MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB,APP_URL};')();
 const fixedCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/fixedmatch.ts'),'utf8').replace(/^export /gm,''));
 const fixedApi=new Function(fixedCode+';return {fixedCandidates,fixedOccurrence,fixedOccurrenceKey};')();
-let todayReports,salaryBot;
+let todayReports,salaryBot,voiceEntry;
 before(async()=>{todayReports=await import(require('node:url').pathToFileURL(path.join(root,'_shared/bot-reports.ts')).href);
   const sal=await import(require('node:url').pathToFileURL(path.join(root,'_shared/salary-bot.ts')).href);
-  salaryBot={salaryKeyboard:sal.salaryKeyboard,salaryEditKeyboard:sal.salaryEditKeyboard,parseSalaryAmount:sal.parseSalaryAmount};});
+  salaryBot={salaryKeyboard:sal.salaryKeyboard,salaryEditKeyboard:sal.salaryEditKeyboard,parseSalaryAmount:sal.parseSalaryAmount};
+  voiceEntry=await import(require('node:url').pathToFileURL(path.join(root,'_shared/voice-entry.ts')).href);});
 const code=stripTypeScriptTypes(source.replace(/^import[\s\S]*?from\s+['"][^'"]+['"];\r?\n/gm,''));
 const NOW=Date.parse('2026-10-21T10:00:00Z');
 class Clock extends Date{constructor(...args){super(...(args.length?args:[NOW]))}static now(){return NOW}}
@@ -92,7 +93,7 @@ function harness(options={}){
   const bindings={salaryOptions:options.salaryOptions??(async()=>({choices:[]})),...salaryBot,recordSalary:async(...args)=>{state.salary=(state.salary??[]).concat([args.slice(1)]);return options.recordSalary?options.recordSalary(...args):{status:'invalid'}},
     editSalaryAmount:async(...args)=>{state.salaryEdits=(state.salaryEdits??[]).concat([args.slice(1)]);return options.editSalaryAmount?options.editSalaryAmount(...args):{status:'missing'}},
     loadFinance:async()=>{if(options.adviceError)throw new Error('synthetic');return {input:{},projection:{}}},repaymentAdvice:()=>({}),repaymentAdviceText:()=>'',...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
-    creditPaid:()=>[],matchCredit:()=>null,parsePaidCallback:todayReports.parsePaidCallback,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
+    notEntry:t=>voiceEntry.notEntry(t),creditPaid:()=>[],matchCredit:()=>null,parsePaidCallback:todayReports.parsePaidCallback,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
     todayExpensesModel:todayReports.todayExpensesModel,formatTodayExpenses:m=>options.todayPages??todayReports.formatTodayExpenses(m),
     setTimeout:(fn,ms)=>{state.delays.push(ms);state.reportEvents.push('pause:'+ms);fn();return 0},
     __finance:()=>({projection:{},today:options.reportToday??'2026-10-21',txs:state.rows,cats:options.categories??[],accounts:options.accounts??[]}),
@@ -720,11 +721,31 @@ test('текстове питання: відповідь моделі-вибо�
   await h.send('скільки лишилось на кафе?');
   assert.equal(h.state.messages.at(-1).text,'Бюджет періоду: 1 ₴');assert.deepEqual(h.state.agent,['скільки лишилось на кафе?']);
   const n=await voiceHarness({agent:()=>({kind:'not_question'})});await n.send('дякую');
-  assert.ok(n.state.messages.at(-1).text.startsWith('Не зрозумів. '));
+  assert.match(n.state.messages.at(-1).text,/^Напишіть питання про гроші родини/);
+  const f=await voiceHarness({agent:()=>({kind:'error'})});await f.send('скільки на кафе');
+  assert.equal(f.state.messages.at(-1).text,'Не вдалося відповісти. Спробуйте ще раз або скористайтесь кнопками.');
   const c=await voiceHarness({agent:()=>({kind:'answer',text:'x'})});await c.send('/невідома');
   assert.equal(c.state.agent.length,0);
   const p=await voiceHarness({pending:entry(),agent:()=>({kind:'answer',text:'x'})});await p.send('скільки на кафе');
   assert.equal(p.state.agent.length,0,'крок введення не віддає текст моделі');
   const e=await voiceHarness();await e.send('150 кава');
   assert.equal(e.state.rows.length,1);assert.equal(e.state.agent.length,0,'запис текстом як і раніше без моделі');
+  for(const q of ['10 листопада скільки витратили','2 тижні тому скільки на їжу','5 жовтня витрати','300 на кафе?']){
+    const t=await voiceHarness({agent:()=>({kind:'answer',text:'Витрати: 1 ₴',tools:['spending']})});await t.send(q);
+    assert.equal(t.state.rows.length,0,q+': число на початку питання не записується');assert.deepEqual(t.state.agent,[q]);
+  }
+  const d=await voiceHarness();await d.send('500 день народження Марії');
+  assert.equal(d.state.rows.length,1,'«день народження» лишається записом');
+});
+
+test('голосове у фоні: EdgeRuntime.waitUntil викликається методом, відповідь приходить після завершення фонової задачі',async()=>{
+  const rt={jobs:[],waitUntil(p){this.jobs.push(p)}};
+  globalThis.EdgeRuntime=rt;
+  try{
+    const h=await voiceHarness({voiceRun:stt('що з картками'),agent:()=>({kind:'answer',text:'Картки: 1 ₴',tools:['balance:cards']})});
+    await h.send(null,voiceMsg);
+    assert.equal(rt.jobs.length,1,'голосове віддане у waitUntil');
+    await Promise.all(rt.jobs);
+    assert.equal(h.state.messages.at(-1).text,'🎙 «що з картками»\n\nКартки: 1 ₴');
+  }finally{delete globalThis.EdgeRuntime}
 });

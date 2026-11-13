@@ -1,0 +1,80 @@
+{"n": 1, "q": "баланс", "lang": "uk", "channel": "text"}
+{"n": 2, "q": "скільки на каві цього тижня", "lang": "uk", "channel": "text"}
+{"n": 3, "q": "а картки?", "lang": "uk", "channel": "voice"}
+{"n": 4, "q": "скільки ми витратили вчора", "lang": "uk", "channel": "text"}
+{"n": 5, "q": "скільки витратили на продукти в жовтні", "lang": "uk", "channel": "text"}
+{"n": 6, "q": "покажи платежі на цей тиждень", "lang": "uk", "channel": "voice"}
+{"n": 7, "q": "чи вистачить нам до зарплати", "lang": "uk", "channel": "text"}
+{"n": 8, "q": "скільки ще можна витратити до аванса", "lang": "uk", "channel": "text"}
+{"n": 9, "q": "які в нас розстрочки", "lang": "uk", "channel": "text"}
+{"n": 10, "q": "скільки ми заробили в жовтні", "lang": "uk", "channel": "text"}
+{"n": 11, "q": "коли в нас аванс", "lang": "uk", "channel": "text"}
+{"n": 12, "q": "запиши 200 таксі", "lang": "uk", "channel": "voice"}
+{"n": 13, "q": "додай каву", "lang": "uk", "channel": "text"}
+{"n": 14, "q": "внеси витрату 1500 на аптеку", "lang": "uk", "channel": "voice"}
+{"n": 15, "q": "скільки пішло в АТБ цього місяця", "lang": "uk", "channel": "voice"}
+{"n": 16, "q": "скільки лишилось на продукти", "lang": "uk", "channel": "text"}
+{"n": 17, "q": "що там по кредитці", "lang": "uk", "channel": "text"}
+{"n": 18, "q": "борги", "lang": "uk", "channel": "voice"}
+{"n": 19, "q": "скільки витратили на малого цього року", "lang": "uk", "channel": "text"}
+{"n": 20, "q": "витрати з 1 по 10 листопада", "lang": "uk", "channel": "voice"}
+{"n": 21, "q": "бензин за вересень", "lang": "uk", "channel": "text"}
+{"n": 22, "q": "скільки ми віддали на розстрочки цього місяця", "lang": "uk", "channel": "text"}
+{"n": 23, "q": "видали останню операцію", "lang": "uk", "channel": "text"}
+{"n": 24, "q": "зміни суму останньої операції на 350", "lang": "uk", "channel": "voice"}
+{"n": 25, "q": "привіт", "lang": "uk", "channel": "text"}
+{"n": 26, "q": "дякую", "lang": "uk", "channel": "text"}
+{"n": 27, "q": "яка завтра погода у Львові", "lang": "uk", "channel": "voice"}
+{"n": 28, "q": "назви число від 1 до 10", "lang": "uk", "channel": "voice"}
+{"n": 29, "q": "а за минулий?", "lang": "uk", "channel": "text"}
+{"n": 30, "q": "не те", "lang": "uk", "channel": "voice"}
+{"n": 31, "q": "скільки на продукти і скільки на кафе в жовтні", "lang": "uk", "channel": "text"}
+{"n": 32, "q": "скільки витратили в Сільпо і в Новусі цього місяця", "lang": "uk", "channel": "text"}
+{"n": 33, "q": "який у нас сумарний борг по кредитках і скільки ще платити по розстрочках", "lang": "uk", "channel": "text"}
+{"n": 34, "q": "скільки витратили сьогодні", "lang": "uk", "channel": "text"}
+{"n": 35, "q": "який сьогодні день", "lang": "uk", "channel": "text"}
+{"n": 36, "q": "на що найбільше йдуть гроші", "lang": "uk", "channel": "voice"}
+{"n": 37, "q": "скільки в Rozetka цього року", "lang": "uk", "channel": "text"}
+{"n": 38, "q": "покажи графік", "lang": "uk", "channel": "text"}
+{"n": 39, "q": "поміняй категорію останньої на Дім", "lang": "uk", "channel": "voice"}
+{"n": 40, "q": "скільки зараз на Моно", "lang": "uk", "channel": "text"}
+{"n": 41, "q": "розкажи анекдот", "lang": "uk", "channel": "text"}
+{"n": 42, "q": "скільки заправка коштувала минулого тижня", "lang": "uk", "channel": "voice"}
+{"n": 43, "q": "сколько потратили на еду в октябре", "lang": "ru", "channel": "text"}
+{"n": 44, "q": "баланс", "lang": "ru", "channel": "text"}
+{"n": 45, "q": "что по картам", "lang": "ru", "channel": "text"}
+{"n": 46, "q": "сколько осталось до зарплаты", "lang": "ru", "channel": "text"}
+{"n": 47, "q": "когда следующий платёж", "lang": "ru", "channel": "text"}
+{"n": 48, "q": "запиши 350 такси", "lang": "ru", "channel": "voice"}
+{"n": 49, "q": "удали последнюю запись", "lang": "ru", "channel": "text"}
+{"n": 50, "q": "сколько ушло на аптеку за неделю", "lang": "ru", "channel": "text"}
+{"n": 51, "q": "сколько мы заработали в сентябре", "lang": "ru", "channel": "voice"}
+{"n": 52, "q": "а в прошлом месяце?", "lang": "ru", "channel": "text"}
+{"n": 53, "q": "сколько на кафе и сколько на доставку в этом месяце", "lang": "ru", "channel": "text"}
+{"n": 54, "q": "какой курс биткоина", "lang": "ru", "channel": "voice"}
+{"n": 55, "q": "сколько я потратил на WOG за месяц", "lang": "ru", "channel": "text"}
+{"n": 56, "q": "сколько ещё платить по рассрочкам", "lang": "ru", "channel": "text"}
+{"n": 57, "q": "привет, как дела", "lang": "ru", "channel": "text"}
+{"n": 58, "q": "сколько потратили на ребёнка в этом году", "lang": "ru", "channel": "text"}
+{"n": 59, "q": "внеси расход 800 на одежду", "lang": "ru", "channel": "voice"}
+{"n": 60, "q": "какая завтра погода", "lang": "ru", "channel": "voice"}
+{"n": 61, "q": "сколько можно ещё потратить на продукты", "lang": "ru", "channel": "text"}
+{"n": 62, "q": "скіки ми потратили на хавчик цього тижня", "lang": "surzhyk", "channel": "text"}
+{"n": 63, "q": "шо там по бабках", "lang": "surzhyk", "channel": "voice"}
+{"n": 64, "q": "скіки лишилось до зарплати", "lang": "surzhyk", "channel": "text"}
+{"n": 65, "q": "скіки в нас на карті", "lang": "surzhyk", "channel": "text"}
+{"n": 66, "q": "шо по кредитці", "lang": "surzhyk", "channel": "voice"}
+{"n": 67, "q": "скіки пішло на бензин в жовтні", "lang": "surzhyk", "channel": "text"}
+{"n": 68, "q": "запиши 120 на хавчик", "lang": "surzhyk", "channel": "voice"}
+{"n": 69, "q": "а в неї?", "lang": "surzhyk", "channel": "text"}
+{"n": 70, "q": "скіки ми зарабили в жовтні", "lang": "surzhyk", "channel": "text"}
+{"n": 71, "q": "шо по платежах", "lang": "surzhyk", "channel": "text"}
+{"n": 72, "q": "скіки на Glovo і скіки на кафе за місяць", "lang": "surzhyk", "channel": "voice"}
+{"n": 73, "q": "потратили на малого в вересні скіки", "lang": "surzhyk", "channel": "text"}
+{"n": 74, "q": "шо в нас по розстрочках", "lang": "surzhyk", "channel": "text"}
+{"n": 75, "q": "дякую", "lang": "surzhyk", "channel": "voice"}
+{"n": 76, "q": "ок", "lang": "surzhyk", "channel": "text"}
+{"n": 77, "q": "а скіки ми потратили вчора", "lang": "surzhyk", "channel": "text"}
+{"n": 78, "q": "skilky na produkty u zhovtni", "lang": "translit", "channel": "voice"}
+{"n": 79, "q": "balans", "lang": "translit", "channel": "text"}
+{"n": 80, "q": "zapyshy 90 kava", "lang": "translit", "channel": "voice"}
