@@ -218,11 +218,13 @@ if (screen.orientation && screen.orientation.lock) {
 ├── 02-family-whitelist.sql                  : email whitelist через is_family_member()
 ├── 03..06-*.sql                             : міграції (копії в supabase/migrations для db push)
 ├── spec/                                    : перевірки в браузері (python spec/run.py, Playwright)
+├── voice-service/                           : мовний сервіс ноутбука (розпізнавання й голос власника), README там
 └── supabase/
     ├── config.toml                          : verify_jwt для кожної функції
     ├── migrations/                          : ті самі міграції у форматі CLI
     └── functions/<назва>/index.ts           : mono-webhook, mono-register, mono-backfill,
-                                               telegram-webhook, telegram-setup, categorize, categorize-batch
+                                               telegram-webhook, telegram-setup, categorize, categorize-batch,
+                                               voice-jobs (черга задач для мовного сервісу)
 ```
 
 ## Технічний стек
@@ -419,4 +421,4 @@ git push origin master
 
 ### Вартість
 
-Все безкоштовне, крім Claude API: близько $0,40/міс, $4,8/рік (оцінка 08.10.2026 при 60 чеках на місяць: Haiku 4.5, підозрілі чеки перечитує Sonnet, плюс категоризація операцій).
+Все безкоштовне, крім Claude API: близько $0,40/міс, $4,8/рік (оцінка 08.10.2026 при 60 чеках на місяць: Haiku 4.5, підозрілі чеки перечитує Sonnet, плюс категоризація операцій). Питання до бота своїми словами: близько $0,003 за питання (оцінка 14.11.2026 скриптом, Haiku 4.5).
