@@ -2,7 +2,7 @@
 // Модель Claude лише обирає інструмент і параметри (період, категорію, слово пошуку) одним викликом;
 // речення з числами складає код із тих самих моделей, що й звіти бота. Власний текст моделі з цифрами не показується.
 // Інструменти лише читають: записати операцію голосом можна тільки через підтвердження «✅ Так, додати» (вебхук).
-import { clampPeriod, type SpendQuery } from './spending.ts';
+import { clampPeriod, monthPeriod, NAMED_PERIODS, namedPeriod, nameKey, yearPeriod, type SpendQuery } from './spending.ts';
 import { day, leftOrOver, money } from './finance-message.ts';
 import type { BudgetModel } from './bot-reports.ts';
 
@@ -38,13 +38,14 @@ export function agentSystem(today: string): string {
     `Сьогодні ${today}, ${wd}, часовий пояс Київ. Валюта гривня.`,
     'Відповідай ЛИШЕ викликами інструментів. Числа ти не знаєш і не називаєш: їх підставить код.',
     'Правила вибору:',
-    '- гроші зараз, баланс, власні кошти, скільки можна витрачати на день, чи вистачить до зарплати: balance(section=balance);',
-    '- залишки й борги на картках чи рахунках: balance(section=cards); розстрочки: balance(section=installments); найближчі обовʼязкові платежі, коли й скільки платити: balance(section=payments);',
-    '- скільки лишилось чи перевитрачено в бюджеті поточного періоду, загалом чи на категорію: budget;',
+    '- гроші зараз, баланс, власні кошти, скільки можна витрачати на день, чи вистачить до зарплати, загальне питання про гроші без уточнення («що з грошима», «як у нас з фінансами»): balance(section=balance);',
+    '- залишки й борги на картках чи рахунках: balance(section=cards); розстрочки (скільки лишилось сплатити, скільки платимо чи віддали за розстрочки, навіть із періодом): balance(section=installments), не spending; найближчі обовʼязкові платежі, коли й скільки платити: balance(section=payments);',
+    '- скільки лишилось чи перевитрачено в бюджеті поточного періоду, загалом чи на категорію, скільки ще можна витратити до виплати: budget;',
+    '- зарплата й аванс це виплати родини: їхні дати й суми знає застосунок, не перепитуй про них;',
     '- скільки витратили чи заробили за період, загалом, на категорію або на магазин чи річ: spending. Категорію бери лише з переліку (зіставляй за змістом: «їжа» це категорія продуктів, якщо така є). Магазин, місце чи річ, яких немає серед категорій (АТБ, Сільпо, бензин, кава), передавай у search одним словом основи без закінчення.',
-    'Періоди для spending (дати YYYY-MM-DD): без періоду в питанні: з першого числа поточного місяця до сьогодні; «цей місяць» чи назва поточного місяця: так само; минулий чи названий місяць: увесь той місяць; «цього тижня»: з понеділка до сьогодні; «минулого тижня»: понеділок-неділя минулого тижня; «сьогодні», «вчора»: один день; «цього року»: з 1 січня до сьогодні. Майбутнього не буває.',
+    'Період для spending дат не рахуй: відносний період передавай у period: «сьогодні» today, «вчора» yesterday, «цього тижня» this_week, «минулого тижня» last_week, «за тиждень» чи «за останні 7 днів» last_7_days, «цього місяця» this_month, «минулого місяця» last_month, «цього року» this_year, «минулого року» last_year. Назва місяця: month (номер 1-12), year лише якщо рік названо. Інший проміжок із датами: from і to (YYYY-MM-DD). Без періоду в питанні: period=this_month. Майбутнього не буває.',
     'Кілька питань в одному: кілька викликів (до чотирьох).',
-    '- питання про гроші родини, але незрозуміло, про що саме: clarify з коротким питанням без цифр;',
+    '- питання про гроші родини, але незрозуміло, що саме рахувати: clarify з коротким питанням без цифр. Не названий період не привід перепитувати: бери period=this_month;',
     '- просять додати чи записати операцію: not_supported(kind=add_request); змінити чи видалити запис: not_supported(kind=change_request);',
     '- не про гроші родини (погода, новини, загальні знання, жарти): not_supported(kind=off_topic);',
     '- не питання і не прохання (привітання, «дякую», окреме слово): not_supported(kind=not_a_question);',
@@ -61,17 +62,20 @@ export function agentTools(categoryNames: string[]): any[] {
       input_schema: { type: 'object', properties: { section: { type: 'string', enum: ['balance', 'cards', 'installments', 'payments'] } }, required: ['section'] },
     },
     {
-      name: 'spending', description: 'Сума витрат або доходів за період: загалом, на одну категорію або за словом в описі операції (магазин, річ).',
+      name: 'spending', description: 'Сума витрат або доходів за період: загалом із найбільшими категоріями (на що йдуть гроші), на одну категорію або за словом в описі операції (магазин, річ). Не для розстрочок: для них balance(section=installments).',
       input_schema: {
         type: 'object',
         properties: {
           type: { type: 'string', enum: ['expense', 'income'] },
+          period: { type: 'string', enum: [...NAMED_PERIODS], description: 'Відносний період; дати рахує код' },
+          month: { type: 'integer', minimum: 1, maximum: 12, description: 'Названий місяць' },
+          year: { type: 'integer', description: 'Рік, лише якщо названо' },
           from: { type: 'string', description: 'Перший день періоду, YYYY-MM-DD' },
           to: { type: 'string', description: 'Останній день періоду, YYYY-MM-DD' },
           category,
           search: { type: 'string', description: 'Слово з опису операції: магазин, місце, річ', maxLength: 40 },
         },
-        required: ['type', 'from', 'to'],
+        required: ['type'],
       },
     },
     {
@@ -90,7 +94,8 @@ export function agentTools(categoryNames: string[]): any[] {
 }
 
 // Відповідь про бюджет періоду з тієї самої моделі, що звіт «📊 Бюджет»
-const normName = (s: unknown) => String(s ?? '').normalize('NFKC').toLocaleLowerCase('uk-UA').trim();
+// Апостроф будь-якого виду однаковий: модель пише «Здоров'я», у переліку «Здоровʼя» (замір 14.11.2026)
+const normName = nameKey;
 export function budgetAnswer(m: BudgetModel | null, category: string | null): string {
   if (!m) return 'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.';
   const period = `${day(m.start)}-${day(m.end)}`;
@@ -155,7 +160,10 @@ export async function runCalls(calls: { name: string; input: any }[], deps: Pick
       lines.push(await tools.balance(section));
       used.push('balance:' + section);
     } else if (c.name === 'spending') {
-      const p = clampPeriod(a.from, a.to, deps.today);
+      // Період рахує код: відносний за назвою, місяць за номером, лише рік, інакше дати моделі; нічого не названо: цей місяць
+      const p = namedPeriod(a.period, deps.today) ?? (a.month != null ? monthPeriod(a.month, a.year, deps.today)
+        : a.year != null && a.from == null && a.to == null ? yearPeriod(a.year, deps.today)
+        : a.from == null && a.to == null ? namedPeriod('this_month', deps.today) : clampPeriod(a.from, a.to, deps.today));
       if (!p) { lines.push('Не зрозумів період. Назвіть місяць, тиждень або дати.'); continue; }
       const search = typeof a.search === 'string' ? a.search.replace(/[«»"<>]/g, '').trim().slice(0, 40) : '';
       const category = a.category != null ? catOk(a.category) : null;
