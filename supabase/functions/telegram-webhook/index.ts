@@ -22,6 +22,7 @@ import { formatSpending, loadSpendingTxs, spendingModel } from '../_shared/spend
 import { voiceOnline, voiceRun } from '../_shared/voice-queue.ts';
 import { notEntry, parseVoiceEntry } from '../_shared/voice-entry.ts';
 import { toSpeech } from '../_shared/uk-speech.ts';
+import { sayBalance, sayBudget, saySpending } from '../_shared/voice-say.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -1899,8 +1900,10 @@ async function onPaid(cq: any, chatId: number, msgId: number, userId: string, p:
 
 // ---------- Питання своїми словами і голосові ----------
 // Claude обирає, що порахувати (bot-agent.ts); числа й речення з тих самих моделей, що кнопки «Баланс», «Бюджет», «Місяць».
-async function agentAnswer(question: string): Promise<AgentResult> {
+// speech: коротка фраза для голосу з тих самих моделей (voice-say.ts), по одній на кожен порахований інструмент
+async function agentAnswer(question: string): Promise<AgentResult & { speech?: string }> {
   const today = todayKyiv();
+  const says: string[] = [];
   const { data: catRows, error } = await sb.from('categories').select('id,name,is_income,budget_role').order('id');
   if (error) {
     console.error('agent: categories lookup failed', error.message);
@@ -1922,19 +1925,25 @@ async function agentAnswer(question: string): Promise<AgentResult> {
     balance: (section) => safe('balance', async () => {
       const s = await (sections ??= freeBlock(today));
       const lines = section === 'cards' ? s.cards : section === 'installments' ? s.installments : section === 'payments' ? s.due : s.top;
+      says.push(lines.length ? sayBalance(s.totals, section) : toSpeech(EMPTY_SECTION[section]));
       return lines.length ? lines.join('\n') : EMPTY_SECTION[section];
     }),
     spending: (q) => safe('spending', async () => {
       const [txs, accs] = await Promise.all([loadSpendingTxs(sb, q.from, q.to), sb.from('accounts').select('id,kind')]);
       if (accs.error) throw new Error('accounts lookup failed');
-      return formatSpending(spendingModel(txs, cats, accs.data || [], q), today);
+      const m = spendingModel(txs, cats, accs.data || [], q);
+      says.push(saySpending(m, today));
+      return formatSpending(m, today);
     }),
     budget: (category) => safe('budget', async () => {
       const d = await (finance ??= loadFinance(sb, today));
-      return budgetAnswer(budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts), category);
+      const m = budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts);
+      says.push(sayBudget(m, category));
+      return budgetAnswer(m, category);
     }),
   };
-  return askAgent(question, { apiKey: CLAUDE_API_KEY, model: Deno.env.get('AGENT_MODEL') || undefined, today, categories: cats.map((c) => c.name) }, tools);
+  const r = await askAgent(question, { apiKey: CLAUDE_API_KEY, model: Deno.env.get('AGENT_MODEL') || undefined, today, categories: cats.map((c) => c.name) }, tools);
+  return r.kind === 'answer' && says.length ? { ...r, speech: says.join(' ') } : r;
 }
 
 // Текст, який не команда і не запис: відповідь на питання або довідка
@@ -2007,7 +2016,8 @@ async function handleVoice(chatId: number, userId: string, updateId: number, voi
   }
   const caption = `${heard}\n\n${r.text}`;
   await tgCall('sendChatAction', { chat_id: chatId, action: 'record_voice' });
-  const tts = await voiceRun(sb, 'tts', { text: toSpeech(r.text).slice(0, 2000) }, 45_000);
+  // Голосом коротко: одна фраза з числом (voice-say.ts); повний текст лише в підписі
+  const tts = await voiceRun(sb, 'tts', { text: (r.speech || toSpeech(r.text)).slice(0, 2000) }, 45_000);
   if (typeof tts?.audio_b64 === 'string' && tts.audio_b64) {
     const long = caption.length > 1024;
     if (await sendVoice(chatId, fromBase64(tts.audio_b64), long ? heard : caption, kb)) {

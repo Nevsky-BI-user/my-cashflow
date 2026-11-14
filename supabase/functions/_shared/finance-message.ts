@@ -22,13 +22,16 @@ export type Installment = {name: string; n: number; amountCents: number; lastDat
 // top: бюджет на початок періоду, залишок бюджету на день, нестача до виплати, власні, баланс;
 // cards, installments, due: картки, розстрочки, найближчі платежі з заголовком; unassigned: попередження про операції без рахунку.
 // Порожній розділ дає порожній масив.
-export type FinanceSections = {top: string[]; cards: string[]; installments: string[]; due: string[]; unassigned: string[]};
+// totals: ті самі числа для короткої голосової відповіді (voice-say.ts), рахуються тут один раз разом із текстом
+export type FinanceTotals = {balanceCents: number; cardDebtCents: number; installmentsCents: number; next: {date: string; name: string; cents: number} | null};
+export type FinanceSections = {top: string[]; cards: string[]; installments: string[]; due: string[]; unassigned: string[]; totals: FinanceTotals};
 export function financeSections(p: FinanceMessage, unassigned: {count: number; amountCents: number} = {count: 0, amountCents: 0},
   installments: Installment[] = [], budget: BudgetLeft | null = null): FinanceSections {
   const accounts = p.snapshot.accounts || [];
   const instCents = installments.reduce((sum, i) => sum + i.n * i.amountCents, 0);
   const own = p.snapshot.positiveOwnCents;
   const cardDebt = accounts.reduce((sum, a) => sum + (a.debtCents || 0), 0);
+  const balanceCents = own - cardDebt;
   const top: string[] = [];
   const plan = p.nextPlan;
   // Порядок: бюджет на початок періоду, залишок бюджету на день, нестача до виплати, власні, баланс (власні мінус борг карток)
@@ -38,7 +41,7 @@ export function financeSections(p: FinanceMessage, unassigned: {count: number; a
   if (budget) top.push(budgetLeftLine(budget));
   const u = p.untilPayout, short = u && u.days > 0 ? untilPayoutLine(u) : null;
   if (short) top.push(short);
-  top.push(`Власні кошти: ${money(own)}`, `Баланс: ${money(own - cardDebt)}`);
+  top.push(`Власні кошти: ${money(own)}`, `Баланс: ${money(balanceCents)}`);
   const cards: string[] = [];
   if (accounts.length) {
     cards.push('Картки:');
@@ -63,7 +66,8 @@ export function financeSections(p: FinanceMessage, unassigned: {count: number; a
   const events = p.events.filter(e => ['mandatory', 'fee'].includes(e.kind)).slice(0, 3);
   const due = events.length ? ['Найближчі платежі:', ...events.map(e => `${day(e.date)} · ${e.name}: ${money(-e.cashDeltaCents)}${e.certainty === 'conditional' ? ' (умовно)' : ''}`)] : [];
   const lost = unassigned.count > 0 ? [`⚠️ Без рахунку: ${unassigned.count} ${plural(unassigned.count)} на ${money(unassigned.amountCents)}. Виберіть рахунок під повідомленнями або в застосунку.`] : [];
-  return {top, cards, installments: inst, due, unassigned: lost};
+  const next = events[0] ? {date: events[0].date, name: events[0].name, cents: -events[0].cashDeltaCents} : null;
+  return {top, cards, installments: inst, due, unassigned: lost, totals: {balanceCents, cardDebtCents: cardDebt, installmentsCents: instCents, next}};
 }
 
 // Повний статус одним текстом (як до v215): розділи через порожній рядок. Бот шле розділи окремо, функція лишається для звірки.
