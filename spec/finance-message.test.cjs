@@ -65,11 +65,15 @@ test('v215: розділи статусу окремо, разом дають т
  p.events=[{id:'repay:2:2026-09',date:'2026-10-21',kind:'repay',cashDeltaCents:-1000000,certainty:'planned',name:'Приват'},{date:'2026-10-22',kind:'mandatory',cashDeltaCents:-964000,certainty:'planned',name:'Садочок'}];
  const inst=[{name:'Ecoflow',n:2,amountCents:464300,lastDate:'2027-09-12'}],lost={count:2,amountCents:10000},budget={end:'2026-10-21',leftCents:280000,dailyCents:31111,leftDays:9};
  const s=financeSections(p,lost,inst,budget);
- assert.deepEqual(Object.keys(s),['top','cards','installments','due','unassigned']);
+ assert.deepEqual(Object.keys(s),['top','cards','installments','due','unassigned','totals']);
+ // totals для голосу (voice-say.ts): ті самі числа, що в тексті розділів
+ const cents=line=>Math.round(Number(normalize(line).split(': ').at(-1).replace(' ₴','').replace(/ /g,'').replace(',','.'))*100);
+ assert.equal(s.totals.balanceCents,cents(s.top.at(-1)));assert.equal(s.totals.installmentsCents,cents(s.installments[0]));
+ assert.equal(s.totals.cardDebtCents,1000000);assert.deepEqual(s.totals.next,{date:'2026-10-22',name:'Садочок',cents:964000});
  assert.equal(s.top.length,4);assert.ok(/^Бюджет на початок періоду/.test(s.top[0]));assert.ok(/^Баланс: /.test(s.top.at(-1)));
  assert.equal(s.cards[0],'Картки:');assert.equal(s.cards.length,3);
  assert.ok(/^Розстрочки: /.test(s.installments[0]));assert.equal(s.due[0],'Найближчі платежі:');assert.ok(/^⚠️ Без рахунку: 2 операції/.test(s.unassigned[0]));
- for(const part of Object.values(s))assert.ok(part.every(line=>line!==''));
+ for(const part of [s.top,s.cards,s.installments,s.due,s.unassigned])assert.ok(part.every(line=>line!==''));
  assert.equal(formatFinanceMessage(p,lost,inst,budget),[s.top,s.cards,s.installments,s.due,s.unassigned].map(x=>x.join('\n')).join('\n\n'));
  const bare=sample();bare.events=[];const e=financeSections(bare);
  assert.deepEqual([e.cards,e.installments,e.due,e.unassigned],[[],[],[],[]]);assert.equal(formatFinanceMessage(bare),e.top.join('\n'));
