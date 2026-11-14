@@ -21,7 +21,7 @@ test('баланс: одна фраза з одним числом, без ко�
  assert.equal(sayBalance(totals({balanceCents:-720000}),'balance'),'Баланс мінус сім тисяч двісті гривень.');
  assert.equal(sayBalance(totals({cardDebtCents:1000049}),'cards'),'Борг на картках десять тисяч гривень.');
  assert.equal(sayBalance(totals(),'cards'),'Боргу на картках немає.');
- assert.equal(sayBalance(totals({installmentsCents:928600}),'installments'),'Розстрочки девʼять тисяч триста гривень.');
+ assert.equal(sayBalance(totals({installmentsCents:928600}),'installments'),'За розстрочками лишилось сплатити девʼять тисяч триста гривень.');
  assert.equal(sayBalance(totals({next:{date:'2026-11-20',name:'Садочок',cents:964000}}),'payments'),'Найближчий платіж двадцятого листопада, Садочок: девʼять тисяч шістсот гривень.');
  assert.equal(sayBalance(totals(),'payments'),'Найближчих обовʼязкових платежів немає.');
  for(const s of ['balance','cards','installments','payments'])assert.ok(!/\d|копій/.test(sayBalance(totals({cardDebtCents:5,next:{date:'2026-11-20',name:'Інтернет',cents:35050}}),s)),s);
@@ -48,5 +48,6 @@ test('бюджет: залишок або перевитрата одним чи
  assert.equal(sayBudget(b,'Кафе'),'Кафе: перевитрата тисяча сто гривень.');
  assert.equal(sayBudget(b,'Подарунки'),'Подарунки: витрачено тисяча пʼятсот гривень.');
  assert.equal(sayBudget(b,'Авто'),'Авто: ні плану, ні витрат немає.');
+ assert.equal(sayBudget({...b,rows:[...b.rows,{id:'4',name:'Здоровʼя',fact:50000,plan:100000}]},"здоров'я"),'Здоровʼя: лишилось пʼятсот гривень.','апостроф будь-якого виду');
  assert.equal(sayBudget(null,null),'Бюджет недоступний.');
 });

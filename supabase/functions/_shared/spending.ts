@@ -18,7 +18,9 @@ const DAY = 86400000;
 const cents = (v: unknown) => Math.round((Number(v) || 0) * 100);
 const txDate = (t: P) => String(t.date || t.created_at || '').slice(0, 10);
 export const shiftDay = (d: string, n: number) => new Date(Date.parse(d + 'T00:00:00Z') + n * DAY).toISOString().slice(0, 10);
-const norm = (s: unknown) => String(s ?? '').normalize('NFKC').replace(/[ʼ’'`]/g, 'ʼ').toLocaleLowerCase('uk-UA').replace(/\s+/g, ' ').trim();
+// Ключ для зіставлення назв: апостроф будь-якого виду однаковий («Здоров'я» = «Здоровʼя»), регістр і пробіли не важать
+export const nameKey = (s: unknown) => String(s ?? '').normalize('NFKC').replace(/[ʼ’'`]/g, 'ʼ').toLocaleLowerCase('uk-UA').replace(/\s+/g, ' ').trim();
+const norm = nameKey;
 export const UNCATEGORIZED = 'Без категорії';
 
 function uniq(txs: P[]): P[] {
@@ -118,6 +120,46 @@ export function clampPeriod(from: unknown, to: unknown, today: string): { from: 
   if (f > t || f < '2020-01-01') return null;
   if ((Date.parse(t) - Date.parse(f)) / DAY > 400) return null;
   return { from: f, to: t };
+}
+
+// Відносний період рахує код, а не модель (сліпий замір 14.11.2026: «минулого тижня» модель дала як поточний тиждень).
+// Тиждень з понеділка; «за тиждень» = останні 7 днів разом із сьогодні; поточні періоди до сьогодні.
+export const NAMED_PERIODS = ['today', 'yesterday', 'this_week', 'last_week', 'last_7_days', 'this_month', 'last_month', 'this_year', 'last_year'] as const;
+export type NamedPeriod = typeof NAMED_PERIODS[number];
+export function namedPeriod(name: unknown, today: string): { from: string; to: string } | null {
+  const y = Number(today.slice(0, 4)), m = Number(today.slice(5, 7));
+  const ym = (yy: number, mm: number) => `${yy}-${String(mm).padStart(2, '0')}`;
+  const monday = shiftDay(today, -((new Date(today + 'T00:00:00Z').getUTCDay() + 6) % 7));
+  const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
+  switch (name) {
+    case 'today': return { from: today, to: today };
+    case 'yesterday': { const d = shiftDay(today, -1); return { from: d, to: d }; }
+    case 'this_week': return { from: monday, to: today };
+    case 'last_week': return { from: shiftDay(monday, -7), to: shiftDay(monday, -1) };
+    case 'last_7_days': return { from: shiftDay(today, -6), to: today };
+    case 'this_month': return { from: ym(y, m) + '-01', to: today };
+    case 'last_month': return { from: ym(py, pm) + '-01', to: `${ym(py, pm)}-${String(lastDay(py, pm)).padStart(2, '0')}` };
+    case 'this_year': return { from: `${y}-01-01`, to: today };
+    case 'last_year': return { from: `${y - 1}-01-01`, to: `${y - 1}-12-31` };
+    default: return null;
+  }
+}
+// Названий місяць без року: останній такий місяць, що вже почався (у листопаді «грудень» це грудень минулого року).
+// Поточний місяць до сьогодні, минулі повністю.
+export function monthPeriod(month: unknown, year: unknown, today: string): { from: string; to: string } | null {
+  const mm = Number(month), y0 = Number(today.slice(0, 4)), m0 = Number(today.slice(5, 7));
+  if (!Number.isInteger(mm) || mm < 1 || mm > 12) return null;
+  const yy = year == null || year === '' ? (mm <= m0 ? y0 : y0 - 1) : Number(year);
+  if (!Number.isInteger(yy) || yy < 2020 || yy > y0 || (yy === y0 && mm > m0)) return null;
+  const p = `${yy}-${String(mm).padStart(2, '0')}`;
+  return { from: p + '-01', to: yy === y0 && mm === m0 ? today : `${p}-${String(lastDay(yy, mm)).padStart(2, '0')}` };
+}
+
+// Названий лише рік: увесь рік, поточний до сьогодні (замір 14.11.2026: «цього року» модель передала як year без періоду)
+export function yearPeriod(year: unknown, today: string): { from: string; to: string } | null {
+  const yy = Number(year), y0 = Number(today.slice(0, 4));
+  if (!Number.isInteger(yy) || yy < 2020 || yy > y0) return null;
+  return { from: `${yy}-01-01`, to: yy === y0 ? today : `${yy}-12-31` };
 }
 
 // Завантаження операцій періоду (на день ширше), сторінками по 1000 без тихого обрізання

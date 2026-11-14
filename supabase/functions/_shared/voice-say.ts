@@ -3,7 +3,7 @@
 // який і так є в повідомленні». Текст під голосовим лишається повним і точним; голосом одна фраза з одним числом
 // з тієї самої моделі, що й текст. Чисті функції, без мережі.
 import { moneyWords, toSpeech } from './uk-speech.ts';
-import { periodLabel, type SpendModel } from './spending.ts';
+import { nameKey, periodLabel, type SpendModel } from './spending.ts';
 import { day, type FinanceTotals } from './finance-message.ts';
 import type { BudgetModel } from './bot-reports.ts';
 
@@ -20,7 +20,7 @@ export const sayMoney = (cents: number) => moneyWords(spokenCents(cents));
 
 export function sayBalance(t: FinanceTotals, section: SaySection): string {
   if (section === 'cards') return t.cardDebtCents > 0 ? `Борг на картках ${sayMoney(t.cardDebtCents)}.` : 'Боргу на картках немає.';
-  if (section === 'installments') return t.installmentsCents > 0 ? `Розстрочки ${sayMoney(t.installmentsCents)}.` : 'Розстрочок немає.';
+  if (section === 'installments') return t.installmentsCents > 0 ? `За розстрочками лишилось сплатити ${sayMoney(t.installmentsCents)}.` : 'Розстрочок немає.';
   if (section === 'payments') {
     const n = t.next;
     return n ? `${toSpeech(`Найближчий платіж ${day(n.date)} · ${n.name}`)}: ${sayMoney(n.cents)}.` : 'Найближчих обовʼязкових платежів немає.';
@@ -37,7 +37,7 @@ export function saySpending(m: SpendModel, today: string): string {
   return `${toSpeech(`${own || (m.type === 'income' ? 'Доходи' : 'Витрати')} ${period}`)}: ${sayMoney(m.totalCents)}.`;
 }
 
-const normName = (s: unknown) => String(s ?? '').normalize('NFKC').toLocaleLowerCase('uk-UA').trim();
+const normName = nameKey;
 export function sayBudget(m: BudgetModel | null, category: string | null): string {
   if (!m) return 'Бюджет недоступний.';
   if (!category) return m.leftCents < 0 ? `Перевитрата бюджету ${sayMoney(-m.leftCents)}.` : `У бюджеті лишилось ${sayMoney(m.leftCents)}.`;
