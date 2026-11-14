@@ -17,6 +17,11 @@ import {
 import { balanceChartSvg, donutSvg } from '../_shared/bot-charts.ts';
 import { svgToPng } from '../_shared/render-png.ts';
 import { APP_URL, KB_BTN, MAIN_KB, ENTRY_KB, ENTRY_INPUT_KB } from '../_shared/bot-kb.ts';
+import { askAgent, budgetAnswer, type AgentResult, type AgentTools } from '../_shared/bot-agent.ts';
+import { formatSpending, loadSpendingTxs, spendingModel } from '../_shared/spending.ts';
+import { voiceOnline, voiceRun } from '../_shared/voice-queue.ts';
+import { notEntry, parseVoiceEntry } from '../_shared/voice-entry.ts';
+import { toSpeech } from '../_shared/uk-speech.ts';
 
 // Модель для чеків. Якщо дрібний друк читається погано: 'claude-sonnet-5-5' (дорожче)
 const RECEIPT_MODEL = 'claude-haiku-4-5-20251001';
@@ -108,6 +113,8 @@ const HELP =
   '/balance: бюджет і баланс, /cards: картки, /installments: розстрочки\n' +
   '/payments: найближчі платежі, /operations: останні операції\n' +
   '/chart: графік балансу, /budget: бюджет періоду, /week: тиждень, /today: витрати за сьогодні\n\n' +
+  'Питання своїми словами, текстом чи голосом: «скільки витратили на продукти в жовтні», «що з картками». '+
+  'Голосом можна й записати: «500 гривень продукти», бот перепитає перед записом.\n\n' +
   'Рахунок: слово ощад, приват або готівка на початку чи в кінці опису (для фото: у підписі), ' +
   'наприклад «250 кава приват». Без слова витрата лишається без рахунку, бот спитає кнопками; ' +
   'дохід іде на рахунок зарплати. Операції Monobank приходять самі.';
@@ -1528,7 +1535,8 @@ async function insertTx(chatId: number, userId: string, p: Pending, restoreKb = 
   return true;
 }
 
-async function addTx(chatId: number, userId: string, updateId: number, type: 'income' | 'expense', rawAmount: string, desc: string, expected: any = null) {
+// heard: розпізнаний голос; тоді операція не записується одразу, а чекає «✅ Так, додати» (помилка розпізнавання не йде в облік мовчки)
+async function addTx(chatId: number, userId: string, updateId: number, type: 'income' | 'expense', rawAmount: string, desc: string, expected: any = null, heard: string | null = null) {
   const amount = Number(rawAmount.replace(/\s/g, '').replace(',', '.'));
   if (!Number.isFinite(amount) || amount <= 0) return reply(chatId, 'Сума має бути більшою за нуль.');
   const sourceId = tgSourceId(updateId);
@@ -1543,6 +1551,16 @@ async function addTx(chatId: number, userId: string, updateId: number, type: 'in
     account_resolved: r.matched && r.acc != null,
   };
 
+  if (heard !== null) {
+    const mono = type === 'income' ? await findMonoIncome(amount, p.date) : null;
+    if (!await replacePending(userId, expected, { ...p, expires: new Date(Date.now() + PENDING_TTL_MS).toISOString() })) {
+      return reply(chatId, 'Не вдалося зберегти. Спробуйте ще раз.');
+    }
+    await reply(chatId, `${heard}\nДодати ${type === 'income' ? 'дохід' : 'витрату'} ${fmtMoney(amount)}: ${p.description}` +
+      (p.account_name ? ` · ${p.account_name}` : '') + '?' +
+      (mono ? `\n⚠️ Схожий дохід уже є від Monobank (${fmtMoney(mono.amount)}, ${ddmm(mono.date)}).` : ''), CONFIRM_KB);
+    return 'pending';
+  }
   // Дохід міг уже прийти з Monobank: не вставляємо, просимо підтвердження /yes
   if (type === 'income') {
     const mono = await findMonoIncome(amount, p.date);
@@ -1879,6 +1897,127 @@ async function onPaid(cq: any, chatId: number, msgId: number, userId: string, p:
   if (!acc) await replyTx(chatId, ins.id, { amount: row.amount, type: 'expense', description: row.description }, null, { accs });
 }
 
+// ---------- Питання своїми словами і голосові ----------
+// Claude обирає, що порахувати (bot-agent.ts); числа й речення з тих самих моделей, що кнопки «Баланс», «Бюджет», «Місяць».
+async function agentAnswer(question: string): Promise<AgentResult> {
+  const today = todayKyiv();
+  const { data: catRows, error } = await sb.from('categories').select('id,name,is_income,budget_role').order('id');
+  if (error) {
+    console.error('agent: categories lookup failed', error.message);
+    return { kind: 'error' };
+  }
+  // Службові категорії (budget_role) поза переліком, як у звіті «Місяць» (loadFinance): ті самі назви й «Без категорії»
+  const cats = (catRows || []).filter((c) => !c.budget_role).map((c) => ({ ...c, type: c.is_income ? 'income' : 'expense' }));
+  let sections: Promise<FinanceSections> | null = null;
+  let finance: Promise<FinanceData> | null = null;
+  const safe = async (what: string, fn: () => Promise<string>) => {
+    try {
+      return await fn();
+    } catch (e) {
+      console.error('agent tool failed', what, (e as Error)?.message);
+      return 'Не вдалося порахувати. Спробуйте ще раз.';
+    }
+  };
+  const tools: AgentTools = {
+    balance: (section) => safe('balance', async () => {
+      const s = await (sections ??= freeBlock(today));
+      const lines = section === 'cards' ? s.cards : section === 'installments' ? s.installments : section === 'payments' ? s.due : s.top;
+      return lines.length ? lines.join('\n') : EMPTY_SECTION[section];
+    }),
+    spending: (q) => safe('spending', async () => {
+      const [txs, accs] = await Promise.all([loadSpendingTxs(sb, q.from, q.to), sb.from('accounts').select('id,kind')]);
+      if (accs.error) throw new Error('accounts lookup failed');
+      return formatSpending(spendingModel(txs, cats, accs.data || [], q), today);
+    }),
+    budget: (category) => safe('budget', async () => {
+      const d = await (finance ??= loadFinance(sb, today));
+      return budgetAnswer(budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts), category);
+    }),
+  };
+  return askAgent(question, { apiKey: CLAUDE_API_KEY, model: Deno.env.get('AGENT_MODEL') || undefined, today, categories: cats.map((c) => c.name) }, tools);
+}
+
+// Текст, який не команда і не запис: відповідь на питання або довідка
+async function answerQuestion(chatId: number, text: string, kb: unknown) {
+  if (!CLAUDE_API_KEY || text.startsWith('/') || text.length > 500) return reply(chatId, 'Не зрозумів. ' + HELP);
+  await tgCall('sendChatAction', { chat_id: chatId, action: 'typing' });
+  const r = await agentAnswer(text);
+  if (r.kind === 'answer' || r.kind === 'clarify' || r.kind === 'off_topic') return reply(chatId, r.text, kb);
+  // «дякую», «ок», «привіт»: один рядок-підказка замість усієї довідки
+  if (r.kind === 'not_question') return reply(chatId, 'Напишіть питання про гроші родини, наприклад «скільки витратили на продукти в жовтні», або суму й опис: «250 кава».', kb);
+  return reply(chatId, 'Не вдалося відповісти. Спробуйте ще раз або скористайтесь кнопками.', kb);
+}
+
+const VOICE_OFFLINE = 'Голосові зараз не розпізнаю: мовний сервіс на ноутбуці вимкнений. Напишіть текстом, на питання відповім і так.';
+const VOICE_MAX_S = 120;
+
+function fromBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function sendVoice(chatId: number, ogg: Uint8Array, caption: string, kb: unknown): Promise<boolean> {
+  try {
+    const fd = new FormData();
+    fd.append('chat_id', String(chatId));
+    if (kb) fd.append('reply_markup', JSON.stringify(kb));
+    fd.append('caption', caption.slice(0, 1024));
+    fd.append('voice', new Blob([ogg as BlobPart], { type: 'audio/ogg' }), 'answer.ogg');
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendVoice`, { method: 'POST', body: fd });
+    if (!r.ok) console.error('sendVoice failed:', r.status, (await r.text()).slice(0, 200));
+    return r.ok;
+  } catch (e) {
+    console.error('sendVoice failed:', e);
+    return false;
+  }
+}
+
+// Голосове: розпізнати на ноутбуці → запис операції через підтвердження або відповідь на питання голосом і текстом.
+// Працює у фоні після швидкої відповіді Telegram; усі межі очікування разом менші за ліміт функції (150 с).
+async function handleVoice(chatId: number, userId: string, updateId: number, voice: any, pending: any) {
+  // Клавіатура як у текстовому роутері: крок введення, підтвердження або головне меню
+  const kb = liveEntry(pending) ? entryKeyboard(pending) : pending ? CONFIRM_KB : MAIN_KB;
+  if (Number(voice.duration) > VOICE_MAX_S || Number(voice.file_size) > 3_000_000) return reply(chatId, 'Голосове задовге: до двох хвилин.', kb);
+  if (!await voiceOnline(sb)) return reply(chatId, VOICE_OFFLINE, kb);
+  await tgCall('sendChatAction', { chat_id: chatId, action: 'typing' });
+  const bytes = await downloadTgFile(voice.file_id);
+  if (!bytes) return reply(chatId, 'Не вдалося завантажити голосове. Спробуйте ще раз.', kb);
+  const stt = await voiceRun(sb, 'stt', { audio_b64: toBase64(bytes), mime: 'audio/ogg' }, 30_000);
+  const text = String(stt?.text || '').replace(/\s+/g, ' ').trim();
+  if (!stt) return reply(chatId, 'Не вдалося розпізнати голосове. Напишіть текстом.', kb);
+  if (!text) return reply(chatId, 'Не розчув. Спробуйте ще раз або напишіть текстом.', kb);
+  const heard = `🎙 «${text}»`;
+
+  const entry = parseVoiceEntry(text);
+  if (entry) {
+    // Запис лише без іншої незавершеної дії; обраний кнопкою тип («Витрата», «Дохід») має перевагу
+    if (pending && !liveEntry(pending)) return reply(chatId, `${heard}\nСпочатку підтвердьте або скасуйте попередню дію.`, CONFIRM_KB);
+    const type = liveEntry(pending) ? pending.type : entry.type;
+    const outcome = await addTx(chatId, userId, updateId, type, entry.amount, entry.description, pending, heard);
+    if (outcome === 'duplicate') await reply(chatId, 'Це голосове вже оброблено.', MAIN_KB);
+    return;
+  }
+
+  const r = await agentAnswer(text);
+  if (r.kind === 'not_question' || r.kind === 'error') {
+    return reply(chatId, `${heard}\n` + (r.kind === 'error' ? 'Не вдалося відповісти. Спробуйте ще раз або скористайтесь кнопками.'
+      : 'Не зрозумів. Скажіть суму й опис, щоб записати операцію, або спитайте про баланс чи витрати.'), kb);
+  }
+  const caption = `${heard}\n\n${r.text}`;
+  await tgCall('sendChatAction', { chat_id: chatId, action: 'record_voice' });
+  const tts = await voiceRun(sb, 'tts', { text: toSpeech(r.text).slice(0, 2000) }, 45_000);
+  if (typeof tts?.audio_b64 === 'string' && tts.audio_b64) {
+    const long = caption.length > 1024;
+    if (await sendVoice(chatId, fromBase64(tts.audio_b64), long ? heard : caption, kb)) {
+      if (long) await reply(chatId, r.text, kb);
+      return;
+    }
+  }
+  await reply(chatId, caption, kb);
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method not allowed', { status: 405 });
 
@@ -1949,6 +2088,14 @@ Deno.serve(async (req) => {
   const pending = prof.telegram_pending ?? null;
   const done = () => new Response('ok');
   if (msg?.document && !imageDocument) return done();
+  // Голосове обробляється у фоні: розпізнавання й озвучення на ноутбуці тривають секунди, Telegram не чекає
+  if (msg?.voice && typeof msg.voice.file_id === 'string' && msg.voice.file_id) {
+    const job = handleVoice(chatId, prof.id, updateId, msg.voice, pending).catch((e) => console.error('voice failed', (e as Error)?.message));
+    // Виклик методом (не відокремленою функцією): так, як у документації Supabase
+    const rt = (globalThis as any).EdgeRuntime;
+    if (typeof rt?.waitUntil === 'function') rt.waitUntil(job); else await job;
+    return done();
+  }
   if (imageDocument && !documentSizeValid) {
     await reply(chatId, 'Надішліть PNG або JPEG розміром до 20 МБ. Не вдалося підтвердити допустимий розмір файлу. Нічого не записано.', liveEntry(pending) ? entryKeyboard(pending) : undefined);
     return done();
@@ -2050,7 +2197,9 @@ Deno.serve(async (req) => {
     await addTx(chatId, prof.id, updateId, 'expense', m[1], m[2]);
   } else {
     m = text.match(/^([+-]?)\s*(\d+(?:[.,]\d{1,2})?)\s+(.+)$/s);
-    if (m) await addTx(chatId, prof.id, updateId, m[1] === '+' ? 'income' : 'expense', m[2], m[3]);
+    // Число на початку питання («10 листопада скільки витратили») не сума: такий текст іде до відповіді, а не в облік
+    if (m && !notEntry(text)) await addTx(chatId, prof.id, updateId, m[1] === '+' ? 'income' : 'expense', m[2], m[3]);
+    else if (text) await answerQuestion(chatId, text, menuKb);
     else await reply(chatId, 'Не зрозумів. ' + HELP);
   }
 

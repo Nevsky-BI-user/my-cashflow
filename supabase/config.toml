@@ -32,3 +32,7 @@ verify_jwt = false
 # pg_cron раз на день з Bearer <service role> із Vault (секрет rates_refresh_service_key)
 [functions.rates-refresh]
 verify_jwt = true
+
+# Мовний сервіс на ноутбуці власника: без JWT, захист підписом HMAC секретом VOICE_SECRET
+[functions.voice-jobs]
+verify_jwt = false

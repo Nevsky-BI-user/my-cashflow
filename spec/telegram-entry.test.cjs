@@ -9,10 +9,11 @@ const kbCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/bot-kb
 const kb=new Function(kbCode+';return {KB_BTN,MAIN_KB,ENTRY_KB,ENTRY_INPUT_KB,APP_URL};')();
 const fixedCode=stripTypeScriptTypes(fs.readFileSync(path.join(root,'_shared/fixedmatch.ts'),'utf8').replace(/^export /gm,''));
 const fixedApi=new Function(fixedCode+';return {fixedCandidates,fixedOccurrence,fixedOccurrenceKey};')();
-let todayReports,salaryBot;
+let todayReports,salaryBot,voiceEntry;
 before(async()=>{todayReports=await import(require('node:url').pathToFileURL(path.join(root,'_shared/bot-reports.ts')).href);
   const sal=await import(require('node:url').pathToFileURL(path.join(root,'_shared/salary-bot.ts')).href);
-  salaryBot={salaryKeyboard:sal.salaryKeyboard,salaryEditKeyboard:sal.salaryEditKeyboard,parseSalaryAmount:sal.parseSalaryAmount};});
+  salaryBot={salaryKeyboard:sal.salaryKeyboard,salaryEditKeyboard:sal.salaryEditKeyboard,parseSalaryAmount:sal.parseSalaryAmount};
+  voiceEntry=await import(require('node:url').pathToFileURL(path.join(root,'_shared/voice-entry.ts')).href);});
 const code=stripTypeScriptTypes(source.replace(/^import[\s\S]*?from\s+['"][^'"]+['"];\r?\n/gm,''));
 const NOW=Date.parse('2026-10-21T10:00:00Z');
 class Clock extends Date{constructor(...args){super(...(args.length?args:[NOW]))}static now(){return NOW}}
@@ -92,13 +93,14 @@ function harness(options={}){
   const bindings={salaryOptions:options.salaryOptions??(async()=>({choices:[]})),...salaryBot,recordSalary:async(...args)=>{state.salary=(state.salary??[]).concat([args.slice(1)]);return options.recordSalary?options.recordSalary(...args):{status:'invalid'}},
     editSalaryAmount:async(...args)=>{state.salaryEdits=(state.salaryEdits??[]).concat([args.slice(1)]);return options.editSalaryAmount?options.editSalaryAmount(...args):{status:'missing'}},
     loadFinance:async()=>{if(options.adviceError)throw new Error('synthetic');return {input:{},projection:{}}},repaymentAdvice:()=>({}),repaymentAdviceText:()=>'',...kb,...fixedApi,createClient:()=>sb,fetch,Date:Clock,Deno:{env:{get:n=>n==='TELEGRAM_ALLOWED_IDS'?'1':'test'},serve:fn=>{handler=fn}},
-    creditPaid:()=>[],matchCredit:()=>null,parsePaidCallback:todayReports.parsePaidCallback,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
+    notEntry:t=>voiceEntry.notEntry(t),creditPaid:()=>[],matchCredit:()=>null,parsePaidCallback:todayReports.parsePaidCallback,__track:(name)=>state.reports.push(name),console:{log(){},error(){}},
     todayExpensesModel:todayReports.todayExpensesModel,formatTodayExpenses:m=>options.todayPages??todayReports.formatTodayExpenses(m),
     setTimeout:(fn,ms)=>{state.delays.push(ms);state.reportEvents.push('pause:'+ms);fn();return 0},
     __finance:()=>({projection:{},today:options.reportToday??'2026-10-21',txs:state.rows,cats:options.categories??[],accounts:options.accounts??[]}),
     formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({}),
     __sections:async()=>{if(options.sectionsError)throw new Error('synthetic');return options.sections??{top:['Баланс: 1 ₴'],cards:['Картки:','Картка: 1 ₴'],installments:[],due:['Найближчі платежі:','25.11 · Інтернет: 300 ₴'],unassigned:[]}},
     __recent:async()=>options.recent===undefined?['Останні операції:','21.10 · кава: -150,00 ₴']:options.recent};
+  if(options.voiceMods)Object.assign(bindings,voiceBindings(state,options,bindings.fetch));
   // Підставляємо лише фінансовий вміст: реальні reply/sendPhoto формують Telegram payload.
   new Function(...Object.keys(bindings),code+`;freeBlock=async()=>__sections();recentSection=async()=>__recent();last=async(chat,kb)=>reply(chat,'Останні',kb);chartReport=async(chat,d,kb)=>sendPhoto(chat,new Uint8Array([1]),'Графік','chart.png',kb);budgetReport=async(chat,d,kb)=>{await reply(chat,'Бюджет',kb);await sendPhoto(chat,new Uint8Array([1]),'Бюджет','budget.png')};withFinance=async(chat,fn)=>{__track('finance');await fn(chat,__finance())};`)(...Object.values(bindings));
   let next=1;
@@ -638,4 +640,112 @@ test('v215: уже записана виплата веде до «Змінит�
  const saved=async(sb,u,t,k,d,a,e,amount)=>({status:'saved',id:91,payout:{...choice,amount}});
  const advice=harness({adviceError:true,recordSalary:saved,pending:{kind:'salary_amount',salary_kind:'s',date:'2026-10-21',account_id:7,expires:new Date(NOW+600000).toISOString()}});
  await advice.send('19000');assert.equal(advice.state.messages.length,1);assert.match(advice.state.messages[0].text,/^✅ Зарплата/);
+});
+
+// ---------- Голосові й питання своїми словами ----------
+// Мовний сервіс (voiceOnline, voiceRun) і вибір моделі (askAgent) підмінені; розбір запису і мовлення справжні.
+function voiceBindings(state,options,baseFetch){
+  state.voice=[];state.voices=[];state.agent=[];
+  return {
+    parseVoiceEntry:options.voiceMods.parseVoiceEntry,toSpeech:options.voiceMods.toSpeech,
+    voiceOnline:async()=>options.voiceOnline??true,
+    voiceRun:async(sb,kind,input)=>{state.voice.push([kind,input]);return options.voiceRun?options.voiceRun(kind,input):null},
+    askAgent:async(q)=>{state.agent.push(q);return options.agent?options.agent(q):{kind:'error'}},
+    budgetAnswer:()=>'',formatSpending:()=>'',loadSpendingTxs:async()=>[],spendingModel:()=>({}),
+    fetch:async(url,init)=>{
+      if(url.includes('/sendVoice')){state.voices.push({caption:init.body.get('caption'),voice:init.body.get('voice')});return {ok:options.sendVoiceOk??true,status:200,text:async()=>''}}
+      if(url.includes('/sendChatAction'))return {ok:true,text:async()=>''};
+      return baseFetch(url,init);
+    },
+  };
+}
+async function voiceHarness(options={}){
+  const url=f=>require('node:url').pathToFileURL(path.join(root,'_shared',f)).href;
+  const [ve,sp]=await Promise.all([import(url('voice-entry.ts')),import(url('uk-speech.ts'))]);
+  return harness({...options,voiceMods:{parseVoiceEntry:ve.parseVoiceEntry,toSpeech:sp.toSpeech}});
+}
+const voiceMsg={voice:{file_id:'v1',duration:4,file_size:20000,mime_type:'audio/ogg'}};
+const stt=text=>kind=>kind==='stt'?{text}:null;
+
+test('голосове при вимкненому ноутбуці: чесна відповідь, нічого не розпізнається і не пишеться',async()=>{
+  const h=await voiceHarness({voiceOnline:false});await h.send(null,voiceMsg);
+  assert.match(h.state.messages.at(-1).text,/мовний сервіс на ноутбуці вимкнений/);
+  assert.equal(h.state.voice.length,0);assert.equal(h.state.rows.length,0);assert.equal(h.state.pending,null);
+});
+
+test('голосовий запис: лише через «✅ Так, додати», після підтвердження одна операція',async()=>{
+  const h=await voiceHarness({voiceRun:stt('500 гривень продукти.')});await h.send(null,voiceMsg);
+  assert.equal(h.state.voice[0][0],'stt');assert.ok(h.state.voice[0][1].audio_b64.length>0);
+  assert.equal(h.state.rows.length,0,'до підтвердження нічого не записано');
+  assert.equal(h.state.pending.amount,500);assert.equal(h.state.pending.description,'продукти');assert.equal(h.state.pending.type,'expense');
+  const ask=h.state.messages.at(-1);
+  assert.ok(ask.text.startsWith('🎙 «500 гривень продукти.»\nДодати витрату'),ask.text);
+  assert.equal(ask.reply_markup.keyboard[0][0].text,kb.KB_BTN.yes);
+  await h.send(kb.KB_BTN.yes);
+  assert.equal(h.state.rows.length,1);assert.equal(h.state.rows[0].amount,500);assert.equal(h.state.pending,null);
+});
+
+test('голосовий запис: тип з обраної кнопки, інша незавершена дія блокує запис',async()=>{
+  const h=await voiceHarness({pending:entry('income','choose'),voiceRun:stt('2000 подарунок')});await h.send(null,voiceMsg);
+  assert.equal(h.state.pending.type,'income');assert.equal(h.state.pending.amount,2000);
+  const other={amount:1,type:'expense',description:'x',date:'2026-10-21',source_id:'tg:0',expires:new Date(NOW+600000).toISOString()};
+  const b=await voiceHarness({pending:other,voiceRun:stt('300 аптека')});await b.send(null,voiceMsg);
+  assert.match(b.state.messages.at(-1).text,/Спочатку підтвердьте або скасуйте/);assert.deepEqual(b.state.pending,other);
+});
+
+test('голосове питання: відповідь голосом з текстом у підписі, озвучується текст словами',async()=>{
+  const answer='Продукти за жовтень: 8 200 ₴, 25 операцій.';
+  const h=await voiceHarness({voiceRun:kind=>kind==='stt'?{text:'скільки витратили на продукти в жовтні'}:{audio_b64:'T2dnUw==',duration:4},
+    agent:()=>({kind:'answer',text:answer,tools:['spending']})});
+  await h.send(null,voiceMsg);
+  assert.deepEqual(h.state.agent,['скільки витратили на продукти в жовтні']);
+  const tts=h.state.voice.find(v=>v[0]==='tts');
+  assert.equal(tts[1].text,'Продукти за жовтень: вісім тисяч двісті гривень, двадцять пʼять операцій.');
+  assert.equal(h.state.voices.length,1);
+  assert.equal(h.state.voices[0].caption,'🎙 «скільки витратили на продукти в жовтні»\n\n'+answer);
+  assert.equal(h.state.rows.length,0);
+});
+
+test('озвучення не вдалось: та сама відповідь текстом; модель не зрозуміла: підказка без вигаданої відповіді',async()=>{
+  const h=await voiceHarness({voiceRun:stt('що з картками'),agent:()=>({kind:'answer',text:'Картки: 1 ₴',tools:['balance:cards']})});
+  await h.send(null,voiceMsg);
+  assert.equal(h.state.voices.length,0);assert.equal(h.state.messages.at(-1).text,'🎙 «що з картками»\n\nКартки: 1 ₴');
+  const n=await voiceHarness({voiceRun:stt('ну привіт'),agent:()=>({kind:'not_question'})});await n.send(null,voiceMsg);
+  assert.match(n.state.messages.at(-1).text,/^🎙 «ну привіт»\nНе зрозумів/);
+  const e=await voiceHarness({voiceRun:()=>null});await e.send(null,voiceMsg);
+  assert.equal(e.state.messages.at(-1).text,'Не вдалося розпізнати голосове. Напишіть текстом.');
+});
+
+test('текстове питання: відповідь моделі-вибору, не питання і команди: довідка, незавершена дія не перехоплюється',async()=>{
+  const h=await voiceHarness({agent:()=>({kind:'answer',text:'Бюджет періоду: 1 ₴',tools:['budget']})});
+  await h.send('скільки лишилось на кафе?');
+  assert.equal(h.state.messages.at(-1).text,'Бюджет періоду: 1 ₴');assert.deepEqual(h.state.agent,['скільки лишилось на кафе?']);
+  const n=await voiceHarness({agent:()=>({kind:'not_question'})});await n.send('дякую');
+  assert.match(n.state.messages.at(-1).text,/^Напишіть питання про гроші родини/);
+  const f=await voiceHarness({agent:()=>({kind:'error'})});await f.send('скільки на кафе');
+  assert.equal(f.state.messages.at(-1).text,'Не вдалося відповісти. Спробуйте ще раз або скористайтесь кнопками.');
+  const c=await voiceHarness({agent:()=>({kind:'answer',text:'x'})});await c.send('/невідома');
+  assert.equal(c.state.agent.length,0);
+  const p=await voiceHarness({pending:entry(),agent:()=>({kind:'answer',text:'x'})});await p.send('скільки на кафе');
+  assert.equal(p.state.agent.length,0,'крок введення не віддає текст моделі');
+  const e=await voiceHarness();await e.send('150 кава');
+  assert.equal(e.state.rows.length,1);assert.equal(e.state.agent.length,0,'запис текстом як і раніше без моделі');
+  for(const q of ['10 листопада скільки витратили','2 тижні тому скільки на їжу','5 жовтня витрати','300 на кафе?']){
+    const t=await voiceHarness({agent:()=>({kind:'answer',text:'Витрати: 1 ₴',tools:['spending']})});await t.send(q);
+    assert.equal(t.state.rows.length,0,q+': число на початку питання не записується');assert.deepEqual(t.state.agent,[q]);
+  }
+  const d=await voiceHarness();await d.send('500 день народження Марії');
+  assert.equal(d.state.rows.length,1,'«день народження» лишається записом');
+});
+
+test('голосове у фоні: EdgeRuntime.waitUntil викликається методом, відповідь приходить після завершення фонової задачі',async()=>{
+  const rt={jobs:[],waitUntil(p){this.jobs.push(p)}};
+  globalThis.EdgeRuntime=rt;
+  try{
+    const h=await voiceHarness({voiceRun:stt('що з картками'),agent:()=>({kind:'answer',text:'Картки: 1 ₴',tools:['balance:cards']})});
+    await h.send(null,voiceMsg);
+    assert.equal(rt.jobs.length,1,'голосове віддане у waitUntil');
+    await Promise.all(rt.jobs);
+    assert.equal(h.state.messages.at(-1).text,'🎙 «що з картками»\n\nКартки: 1 ₴');
+  }finally{delete globalThis.EdgeRuntime}
 });

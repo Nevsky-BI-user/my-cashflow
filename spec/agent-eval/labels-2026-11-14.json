@@ -1,0 +1,1078 @@
+{
+"set": "blind-2026-11-14.jsonl",
+"sha256": "bf444f03cfc93f4fc84b64af55e09420ecfcbaeeb2af0059a51c798e8a56909f",
+"today": "2026-11-14",
+"labels": {
+"1": [
+[
+{
+"t": "balance",
+"section": "balance"
+}
+]
+],
+"2": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-09"
+],
+"to": "2026-11-14",
+"category": [
+"Кафе/Ресторани"
+]
+}
+],
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-09"
+],
+"to": "2026-11-14",
+"search": [
+"кав"
+]
+}
+]
+],
+"3": [
+[
+{
+"t": "balance",
+"section": "cards"
+}
+]
+],
+"4": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-13"
+],
+"to": "2026-11-13"
+}
+]
+],
+"5": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31",
+"category": [
+"Продукти"
+]
+}
+]
+],
+"6": [
+[
+{
+"t": "balance",
+"section": "payments"
+}
+]
+],
+"7": [
+[
+{
+"t": "balance",
+"section": "balance"
+}
+],
+[
+{
+"t": "budget",
+"category": null
+}
+]
+],
+"8": [
+[
+{
+"t": "budget",
+"category": null
+}
+],
+[
+{
+"t": "balance",
+"section": "balance"
+}
+]
+],
+"9": [
+[
+{
+"t": "balance",
+"section": "installments"
+}
+]
+],
+"10": [
+[
+{
+"t": "spending",
+"type": "income",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31"
+}
+]
+],
+"11": [
+[
+{
+"t": "balance",
+"section": "balance"
+}
+],
+[
+{
+"t": "budget",
+"category": null
+}
+],
+[
+{
+"t": "finance_unsupported"
+}
+],
+[
+{
+"t": "balance",
+"section": "payments"
+}
+]
+],
+"12": [
+[
+{
+"t": "entry"
+}
+]
+],
+"13": [
+[
+{
+"t": "add_request"
+}
+]
+],
+"14": [
+[
+{
+"t": "entry"
+}
+]
+],
+"15": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01"
+],
+"to": "2026-11-14",
+"search": [
+"атб"
+]
+}
+]
+],
+"16": [
+[
+{
+"t": "budget",
+"category": "Продукти"
+}
+]
+],
+"17": [
+[
+{
+"t": "balance",
+"section": "cards"
+}
+]
+],
+"18": [
+[
+{
+"t": "balance",
+"section": "cards"
+}
+],
+[
+{
+"t": "balance",
+"section": "installments"
+}
+]
+],
+"19": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-01-01"
+],
+"to": "2026-11-14",
+"category": [
+"Дитина"
+]
+}
+]
+],
+"20": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01"
+],
+"to": "2026-11-10"
+}
+]
+],
+"21": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-09-01"
+],
+"to": "2026-09-30",
+"search": [
+"бенз"
+]
+}
+],
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-09-01"
+],
+"to": "2026-09-30",
+"category": [
+"Авто",
+"Транспорт"
+]
+}
+]
+],
+"22": [
+[
+{
+"t": "balance",
+"section": "installments"
+}
+],
+[
+{
+"t": "finance_unsupported"
+}
+]
+],
+"23": [
+[
+{
+"t": "change_request"
+}
+]
+],
+"24": [
+[
+{
+"t": "change_request"
+}
+]
+],
+"25": [
+[
+{
+"t": "not_question"
+}
+]
+],
+"26": [
+[
+{
+"t": "not_question"
+}
+]
+],
+"27": [
+[
+{
+"t": "off_topic"
+}
+]
+],
+"28": [
+[
+{
+"t": "off_topic"
+}
+],
+[
+{
+"t": "not_question"
+}
+]
+],
+"29": [
+[
+{
+"t": "clarify"
+}
+],
+[
+{
+"t": "not_question"
+}
+],
+[
+{
+"t": "finance_unsupported"
+}
+]
+],
+"30": [
+[
+{
+"t": "clarify"
+}
+],
+[
+{
+"t": "not_question"
+}
+],
+[
+{
+"t": "finance_unsupported"
+}
+]
+],
+"31": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31",
+"category": [
+"Продукти"
+]
+},
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31",
+"category": [
+"Кафе/Ресторани"
+]
+}
+]
+],
+"32": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01"
+],
+"to": "2026-11-14",
+"search": [
+"сільп"
+]
+},
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01"
+],
+"to": "2026-11-14",
+"search": [
+"новус"
+]
+}
+]
+],
+"33": [
+[
+{
+"t": "balance",
+"section": "cards"
+},
+{
+"t": "balance",
+"section": "installments"
+}
+]
+],
+"34": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-14"
+],
+"to": "2026-11-14"
+}
+]
+],
+"35": [
+[
+{
+"t": "off_topic"
+}
+]
+],
+"36": [
+[
+{
+"t": "spending",
+"type": "expense",
+"nocat": true
+}
+]
+],
+"37": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-01-01"
+],
+"to": "2026-11-14",
+"search": [
+"rozetka",
+"розетк"
+]
+}
+]
+],
+"38": [
+[
+{
+"t": "finance_unsupported"
+}
+],
+[
+{
+"t": "balance",
+"section": "balance"
+}
+]
+],
+"39": [
+[
+{
+"t": "change_request"
+}
+]
+],
+"40": [
+[
+{
+"t": "balance",
+"section": "cards"
+}
+]
+],
+"41": [
+[
+{
+"t": "off_topic"
+}
+]
+],
+"42": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-02"
+],
+"to": "2026-11-08",
+"search": [
+"заправ",
+"бенз",
+"wog",
+"okko"
+]
+}
+],
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-02"
+],
+"to": "2026-11-08",
+"category": [
+"Авто",
+"Транспорт"
+]
+}
+]
+],
+"43": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31",
+"category": [
+"Продукти"
+]
+}
+]
+],
+"44": [
+[
+{
+"t": "balance",
+"section": "balance"
+}
+]
+],
+"45": [
+[
+{
+"t": "balance",
+"section": "cards"
+}
+]
+],
+"46": [
+[
+{
+"t": "balance",
+"section": "balance"
+}
+],
+[
+{
+"t": "budget",
+"category": null
+}
+]
+],
+"47": [
+[
+{
+"t": "balance",
+"section": "payments"
+}
+]
+],
+"48": [
+[
+{
+"t": "entry"
+}
+]
+],
+"49": [
+[
+{
+"t": "change_request"
+}
+]
+],
+"50": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-07",
+"2026-11-08",
+"2026-11-09"
+],
+"to": "2026-11-14",
+"search": [
+"аптек"
+]
+}
+],
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-07",
+"2026-11-08",
+"2026-11-09"
+],
+"to": "2026-11-14",
+"category": [
+"Здоровʼя"
+]
+}
+]
+],
+"51": [
+[
+{
+"t": "spending",
+"type": "income",
+"from": [
+"2026-09-01"
+],
+"to": "2026-09-30"
+}
+]
+],
+"52": [
+[
+{
+"t": "clarify"
+}
+],
+[
+{
+"t": "not_question"
+}
+],
+[
+{
+"t": "finance_unsupported"
+}
+],
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31"
+}
+]
+],
+"53": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01"
+],
+"to": "2026-11-14",
+"category": [
+"Кафе/Ресторани"
+]
+},
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01"
+],
+"to": "2026-11-14",
+"category": [
+"Доставка їжі",
+"Доставка і пошта"
+]
+}
+]
+],
+"54": [
+[
+{
+"t": "off_topic"
+}
+]
+],
+"55": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01",
+"2026-10-14",
+"2026-10-15",
+"2026-10-16"
+],
+"to": "2026-11-14",
+"search": [
+"wog",
+"вог"
+]
+}
+]
+],
+"56": [
+[
+{
+"t": "balance",
+"section": "installments"
+}
+]
+],
+"57": [
+[
+{
+"t": "not_question"
+}
+],
+[
+{
+"t": "off_topic"
+}
+]
+],
+"58": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-01-01"
+],
+"to": "2026-11-14",
+"category": [
+"Дитина"
+]
+}
+]
+],
+"59": [
+[
+{
+"t": "entry"
+}
+]
+],
+"60": [
+[
+{
+"t": "off_topic"
+}
+]
+],
+"61": [
+[
+{
+"t": "budget",
+"category": "Продукти"
+}
+]
+],
+"62": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-09"
+],
+"to": "2026-11-14",
+"category": [
+"Продукти"
+]
+}
+]
+],
+"63": [
+[
+{
+"t": "balance",
+"section": "balance"
+}
+]
+],
+"64": [
+[
+{
+"t": "balance",
+"section": "balance"
+}
+],
+[
+{
+"t": "budget",
+"category": null
+}
+]
+],
+"65": [
+[
+{
+"t": "balance",
+"section": "cards"
+}
+],
+[
+{
+"t": "balance",
+"section": "balance"
+}
+]
+],
+"66": [
+[
+{
+"t": "balance",
+"section": "cards"
+}
+]
+],
+"67": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31",
+"search": [
+"бенз"
+]
+}
+],
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31",
+"category": [
+"Авто",
+"Транспорт"
+]
+}
+]
+],
+"68": [
+[
+{
+"t": "entry"
+}
+]
+],
+"69": [
+[
+{
+"t": "clarify"
+}
+],
+[
+{
+"t": "not_question"
+}
+],
+[
+{
+"t": "finance_unsupported"
+}
+]
+],
+"70": [
+[
+{
+"t": "spending",
+"type": "income",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31"
+}
+]
+],
+"71": [
+[
+{
+"t": "balance",
+"section": "payments"
+}
+]
+],
+"72": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01",
+"2026-10-14",
+"2026-10-15",
+"2026-10-16"
+],
+"to": "2026-11-14",
+"search": [
+"glovo",
+"глово"
+]
+},
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01",
+"2026-10-14",
+"2026-10-15",
+"2026-10-16"
+],
+"to": "2026-11-14",
+"category": [
+"Кафе/Ресторани"
+]
+}
+],
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01",
+"2026-10-14",
+"2026-10-15",
+"2026-10-16"
+],
+"to": "2026-11-14",
+"category": [
+"Доставка їжі"
+]
+},
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-01",
+"2026-10-14",
+"2026-10-15",
+"2026-10-16"
+],
+"to": "2026-11-14",
+"category": [
+"Кафе/Ресторани"
+]
+}
+]
+],
+"73": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-09-01"
+],
+"to": "2026-09-30",
+"category": [
+"Дитина"
+]
+}
+]
+],
+"74": [
+[
+{
+"t": "balance",
+"section": "installments"
+}
+]
+],
+"75": [
+[
+{
+"t": "not_question"
+}
+]
+],
+"76": [
+[
+{
+"t": "not_question"
+}
+]
+],
+"77": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-11-13"
+],
+"to": "2026-11-13"
+}
+]
+],
+"78": [
+[
+{
+"t": "spending",
+"type": "expense",
+"from": [
+"2026-10-01"
+],
+"to": "2026-10-31",
+"category": [
+"Продукти"
+]
+}
+]
+],
+"79": [
+[
+{
+"t": "balance",
+"section": "balance"
+}
+]
+],
+"80": [
+[
+{
+"t": "add_request"
+}
+],
+[
+{
+"t": "entry"
+}
+]
+]
+},
+"note": "«за неделю», «за месяц»: календарний тиждень чи місяць або ковзні 7-8 і 30-32 дні до сьогодні; правило зафіксовано до першого справжнього прогону"
+}

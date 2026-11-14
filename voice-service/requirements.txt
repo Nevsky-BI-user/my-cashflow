@@ -1,0 +1,30 @@
+# Залежності мовного сервісу (Python 3.13, Windows), версії перевірено на ноутбуці.
+# torch потрібен лише для наголосів (stanza, ukrainian-accentor): ставимо збірку для процесора.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0+cpu
+
+# Розпізнавання мови
+faster-whisper==1.2.1
+ctranslate2==4.9.0
+av==19.0.2
+tokenizers==0.23.3
+huggingface_hub==2.4.0
+
+# Озвучення
+holos-tts-onnx==0.4
+onnxruntime==1.32.0
+ipa-uk @ git+https://github.com/patriotyk/ipa-uk.git@3faf05ec50fd4880965b6c76f8e479a4f82117f5
+ukrainian_word_stress @ git+https://github.com/patriotyk/ukrainian-word-stress.git@d5b37ea0abe9711930d9c3b0b13edec5a0675512
+# ukrainian-accentor ставиться залежністю word-stress з гілки main (перевірено на коміті 3dff5ec);
+# закріпити окремо не можна: pip бачить два різні посилання і відмовляє.
+stanza==1.15.0
+
+# Звук і числа
+numpy==2.5.4
+scipy==1.18.1
+soundfile==0.14.0
+
+# CUDA для розпізнавання на відеокарті NVIDIA (ctranslate2 збирано під CUDA 12).
+# Без відеокарти ці колеса просто не знадобляться: воркер перейде на процесор.
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.28.1.4
