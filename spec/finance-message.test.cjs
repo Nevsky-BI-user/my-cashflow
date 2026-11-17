@@ -37,10 +37,10 @@ test('Telegram status: tables with totals, own and credit totals in cards, no da
  p.untilPayout={end:'2026-10-21',days:9,cents:280000,dailyCents:31111};
  const html=formatFinanceMessage(p,undefined,[{name:'Ecoflow',n:2,amountCents:464300,lastDate:'2027-09-12'}],{end:'2026-10-21',leftCents:280000,dailyCents:31111,leftDays:9});
  const text=unesc(normalize(html));
- for(const re of [/^Бюджет 21\.10-06\.11\s+15 000$/m,/^  на день\s+938$/m,/^Лишилось до 21\.10\s+2 800$/m,/^  на день, 9 дн\.\s+311$/m,/^Власні\s+2 800$/m,/^Кредитні\s+16 000$/m,/^Баланс\s+-13 200$/m,
-  /^₴\s+Власні\s+Борг\s+Доступно\s*$/m,/^Ощад\s+2 800$/m,/^Приват\s+0\s+10 000$/m,/^Mono\s+0\s+6 000\s+24 000$/m,/^Разом\s+2 800\s+16 000\s+24 000$/m,/^Приват: план погашення 21\.10$/m,
+ for(const re of [/^Бюджет 21\.10-06\.11\s+15 000$/m,/^На день\s+938$/m,/^Лишилось до 21\.10\s+2 800$/m,/^На день, 9 дн\.\s+311$/m,/^Власні\s+2 800$/m,/^Кредитні\s+16 000$/m,/^Баланс\s+-13 200$/m,
+  /^Рахунок\s+Власні\s+Борг\s+Доступно\s*$/m,/^Ощад\s+2 800$/m,/^Приват\s+0\s+10 000$/m,/^Mono\s+0\s+6 000\s+24 000$/m,/^Разом\s+2 800\s+16 000\s+24 000$/m,/^Приват: план погашення 21\.10$/m,
   /^Ecoflow\s+2\s+4 643\s+9 286\s+09\.27$/m,/^Разом\s+4 643\s+9 286$/m,/^22\.10 Садочок\s+9 640$/m]) assert.match(text,re);
- assert.match(text,/^Бюджет 21\.10[^\n]*\n  на день[^\n]*\nЛишилось[^\n]*\n  на день[^\n]*\nВласні[^\n]*\nКредитні[^\n]*\nБаланс/m,'порядок');
+ assert.match(text,/^Бюджет 21\.10[^\n]*\nНа день[^\n]*\nЛишилось[^\n]*\nНа день[^\n]*\nВласні[^\n]*\nКредитні[^\n]*\nБаланс/m,'порядок');
  assert.ok(assertTotals(html)>=4,'перевірено колонки «Разом»');
  for(const gone of ['Доступно до','Бюджет на життя','Ecoflow сьогодні','Власні кошти сьогодні','Доступні кошти','бракує','Прогноз','План погашення','—','–']) assert.ok(!text.includes(gone),gone+'\n'+text);
  // Таблиця вміщується на екрані телефона: рядок не ширший за 40 знаків
@@ -104,13 +104,13 @@ test('v215: розділи статусу окремо, разом дають т
  const s=financeSections(p,lost,inst,budget);
  assert.deepEqual(Object.keys(s),['top','cards','installments','due','unassigned','totals']);
  // totals для голосу (voice-say.ts): ті самі числа, що в тексті розділів
- const bal=tables(s.top[0])[0].find(l=>/^Баланс\s/.test(l)),instT=tables(s.installments[0])[0];
+ const bal=tables(s.top[1])[0].find(l=>/^Баланс\s/.test(l)),instT=tables(s.installments[1])[0];
  assert.equal(s.totals.balanceCents,num(bal.replace(/^Баланс\s+/,'')));
  assert.equal(s.totals.installmentsCents,num(cellAt(instT.find(l=>/^Разом\s/.test(l)),[...instT[0].trimEnd().matchAll(/\S+/g)][3].index+4)));
  assert.equal(s.totals.cardDebtCents,1000000);assert.deepEqual(s.totals.next,{date:'2026-10-22',name:'Садочок',cents:964000});
- assert.equal(s.top.length,1);assert.ok(/^<pre>[^\n]*\nБюджет 21\.10/.test(s.top[0]));assert.ok(/\nБаланс\s+\S[^\n]*<\/pre>$/.test(s.top[0]));
- assert.equal(s.cards.length,2);assert.ok(s.cards[0].startsWith('<pre>₴'));assert.equal(s.cards[1],'Приват: план погашення 21.10');
- assert.equal(s.installments.length,1);assert.ok(s.due[0].startsWith('<pre>Найближчі платежі'));assert.ok(/^⚠️ Без рахунку: 2 операції/.test(s.unassigned[0]));
+ assert.equal(s.top.length,2);assert.equal(s.top[0],'Суми в ₴');assert.ok(/^<pre>Бюджет 21\.10/.test(s.top[1]));assert.ok(/\nБаланс\s+\S[^\n]*<\/pre>$/.test(s.top[1]));
+ assert.equal(s.cards.length,3);assert.equal(s.cards[0],'Суми в ₴');assert.ok(s.cards[1].startsWith('<pre>Рахунок'));assert.equal(s.cards[2],'Приват: план погашення 21.10');
+ assert.equal(s.installments.length,2);assert.ok(s.due[1].startsWith('<pre>Найближчі платежі'));assert.ok(/^⚠️ Без рахунку: 2 операції/.test(s.unassigned[0]));
  for(const part of [s.top,s.cards,s.installments,s.due,s.unassigned])assert.ok(part.every(line=>line!==''));
  assert.equal(formatFinanceMessage(p,lost,inst,budget),[s.top,s.cards,s.installments,s.due,s.unassigned].map(x=>x.join('\n')).join('\n\n'));
  const bare=sample();bare.events=[];const e=financeSections(bare);

@@ -1,10 +1,10 @@
-import { cellFormat, esc, hrn, preTable, uah } from './bot-table.ts';
+import { cellFormat, esc, hrn, preTable, registerTable, uah } from './bot-table.ts';
 import { expenseCategoryParts } from './expense-allocations.ts';
 import { ownCashSeries } from './own-history.ts';
 // Звіти Telegram-бота з тієї самої проєкції, що й застосунок: Графік, Бюджет, Тиждень, Місяць, ранковий підсумок,
 // нагадування про платежі на завтра і запис «Оплачено». Чисті функції без I/O: їх перевіряють node-тести.
 import { financeProjection, lastPayout, payoutBudget, repayDate, type SalaryCfg } from './budget.ts';
-import { dailyPart, day, money, shownOwnDebt } from './finance-message.ts';
+import { dailyPart, day, money, overLabel, shownOwnDebt } from './finance-message.ts';
 
 type P = Record<string, any>;
 export type Tx = {
@@ -240,6 +240,8 @@ export type BudgetModel = {
   rows: BudgetRow[]; topOver: BudgetRow[];
   reconciliation?: {plannedCents:number;actualCents:number;adjustmentCents:number;signedRemainingCents:number;availableCents:number;overrunCents:number};
   monthlyBudgetCovered?: boolean;
+  // v234: місячний план оцінено за останнім (прогноз), тож відʼємний залишок підписується як прогноз перевитрати
+  monthlyBudgetEstimated?: boolean;
 };
 
 export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, accounts: P[]): BudgetModel | null {
@@ -279,6 +281,7 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
     leftCents: cp.monthlyBudget?.covered ? (cp.reconciliation?.signedRemainingCents ?? cp.signedSpendableRemainingCents ?? pb.avail) : pb.avail,
     ...(cp.reconciliation ? {reconciliation:cp.reconciliation} : {}),
     monthlyBudgetCovered:!!cp.monthlyBudget?.covered,
+    monthlyBudgetEstimated:!!(cp.monthlyBudget?.covered && cp.monthlyBudget?.estimated),
     dailyCents: pb.daily, leftDays: Math.max(0, isoDiff(cp.start > today ? cp.start : today, cp.end)), rows, topOver,
   };
 }
@@ -289,10 +292,13 @@ export function formatBudget(m: BudgetModel | null): string {
   // коли він рівно бюджет мінус витрачено, береться різниця показаних клітинок, щоб сходилось на калькуляторі
   const pool = hrn(m.poolCents), spent = hrn(m.spentCents);
   const left = m.leftCents === m.poolCents - m.spentCents ? pool - spent : hrn(m.leftCents);
+  // v234 (власник 17.11.2026): без шапки з одним ₴, «На день» без відступу, перевитрата з поправкою звірки підписана як прогноз
+  const over = m.monthlyBudgetEstimated ? 'Прогноз перевитрати' : 'Перевитрата';
   const rows = [['Бюджет', uah(pool)], [`Витрачено, ${pct(m.spentCents, m.poolCents)}%`, uah(spent)],
-    left < 0 ? ['Перевитрата', uah(-left)] : ['Лишилось', uah(left)]];
-  if (m.leftDays > 0 && m.leftCents >= 0) rows.push([`  на день, ${m.leftDays} дн.`, uah(m.dailyCents)]);
-  const lines = [`📊 Бюджет періоду ${day(m.start)}-${day(m.end)}`, preTable(['', '₴'], rows, 22)];
+    left < 0 ? [over, uah(-left)] : ['Лишилось', uah(left)]];
+  if (m.leftDays > 0 && m.leftCents >= 0) rows.push([`На день, ${m.leftDays} дн.`, uah(m.dailyCents)]);
+  const lines = [`📊 Бюджет періоду ${day(m.start)}-${day(m.end)}`, 'Суми в ₴',
+    preTable(null, rows, 22, {kinds: rows.map((_, i) => i === 2 ? 'total' : 'row')})];
   if(m.monthlyBudgetCovered&&m.reconciliation?.adjustmentCents)lines.push(esc(reconciliationLine(m.reconciliation)));
   return lines.join('\n');
 }
@@ -357,7 +363,14 @@ export function weekTable(m: WeekModel): string {
   });
   if (!rows.length) return '';
   // Пробіли в кінці шапки: кнопка копіювання Telegram лягає на них, а не на «Баланс»
-  return '<pre>' + [' День     Витрати    Баланс    ', ...rows].join('\n') + '</pre>';
+  const html = '<pre>' + [' День     Витрати    Баланс    ', ...rows].join('\n') + '</pre>';
+  // v234: картинкою з сіткою; сьогодні жирним замість ▸
+  const days = m.days || [];
+  return registerTable(html, {
+    head: ['День', 'Витрати', 'Баланс'], aligns: ['l', 'r', 'r'],
+    rows: days.map((d) => [`${WD[new Date(d.date + 'T00:00:00Z').getUTCDay()]} ${day(d.date)}`, uah(d.spendCents), uah(d.balanceCents)]),
+    kinds: days.map((d) => d.date === m.from ? 'mark' : 'row'),
+  });
 }
 
 // HTML (parse_mode HTML): таблиця днів, далі події тижня
@@ -375,13 +388,13 @@ export function formatWeek(m: WeekModel): string {
     const f = cellFormat(vals), shown = f === uah ? vals.map(hrn) : vals;
     const rows = [['щоденні', f(shown[0])], ...spends.map((e, i) => [`${day(e.date)} ${e.name}${e.conditional ? ' (умовно)' : ''}`, f(shown[i + 1])])];
     rows.push(['Разом', f(shown.reduce((n, c) => n + c, 0))]);
-    lines.push('', preTable(['Витрати тижня', '₴'], rows, 22));
+    lines.push('', preTable(['Витрати тижня', 'Сума'], rows, 22));
   }
   const other = m.events.filter((e) => !isSpend(e));
   if (other.length) {
     const f = cellFormat(other.map((e) => e.cents));
     const rows = other.map((e) => [`${day(e.date)} ${e.name}${e.conditional ? ' (умовно)' : ''}`, (e.cents > 0 ? '+' : '') + f(e.cents)]);
-    lines.push('', preTable(['Інші події', '₴'], rows, 22));
+    lines.push('', preTable(['Інші події', 'Сума'], rows, 22));
   }
   return lines.join('\n');
 }
@@ -538,7 +551,12 @@ export function monthTable(m: MonthModel): string {
     else if (r[0].length > w0) out.push(r[0], line(['', ...r.slice(1)]));
     else out.push(line(r));
   }
-  return '<pre>' + esc(out.join('\n')) + '</pre>';
+  // v234: картинкою з сіткою; «За категоріями» рядком групи
+  return registerTable('<pre>' + esc(out.join('\n')) + '</pre>', {
+    head, aligns: ['l', 'r', 'r', 'r'],
+    rows: cells.map((r) => r || ['За категоріями', '', '', '']),
+    kinds: cells.map((r) => r ? 'row' : 'group'),
+  });
 }
 
 // HTML (parse_mode HTML): таблиця місяця, далі минулий місяць повністю і топ-5 місць
@@ -549,7 +567,7 @@ export function formatMonth(m: MonthModel): string {
     `${cap(prevName)} повністю: витрати ${money(m.prevFullSpent)}`];
   if (m.places.length) {
     const f = cellFormat(m.places.map((p) => p.cents));
-    lines.push('', preTable(['Топ-5 місць', '₴', 'Разів'], m.places.map((p) => [p.name, f(p.cents), String(p.count)]), 16));
+    lines.push('', preTable(['Топ-5 місць', 'Сума', 'Разів'], m.places.map((p) => [p.name, f(p.cents), String(p.count)]), 16));
   }
   return lines.join('\n');
 }
@@ -595,15 +613,15 @@ export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string, budg
     kv.push([`Бюджет періоду${cp.monthlyBudget.estimated ? '*' : ''}`, uah(cp.spendableTargetCents)]);
     if ((cp.overrunCents || 0) > 0) kv.push(['Перевитрата', uah(cp.overrunCents)]);
     else {
-      kv.push([cp.spendableRemainingCents < 0 ? 'Перевитрата' : 'Залишок', uah(Math.abs(cp.spendableRemainingCents))]);
-      if (budget && dailyPart(budget)) kv.push([`  на день, ${budget.leftDays} дн.`, uah(budget.dailyCents)]);
+      kv.push([cp.spendableRemainingCents < 0 ? (cp.monthlyBudget.estimated ? 'Прогноз перевитрати' : 'Перевитрата') : 'Залишок', uah(Math.abs(cp.spendableRemainingCents))]);
+      if (budget && dailyPart(budget)) kv.push([`На день, ${budget.leftDays} дн.`, uah(budget.dailyCents)]);
     }
   } else if (budget) {
-    kv.push(budget.leftCents < 0 ? [`Перевитрата до ${day(budget.end)}`, uah(-budget.leftCents)] : [`Бюджет до ${day(budget.end)}`, uah(budget.leftCents)]);
-    if (dailyPart(budget)) kv.push([`  на день, ${budget.leftDays} дн.`, uah(budget.dailyCents)]);
+    kv.push(budget.leftCents < 0 ? [overLabel(budget), uah(-budget.leftCents)] : [`Бюджет до ${day(budget.end)}`, uah(budget.leftCents)]);
+    if (dailyPart(budget)) kv.push([`На день, ${budget.leftDays} дн.`, uah(budget.dailyCents)]);
   }
   if (u && u.days > 0 && u.cents < 0) kv.push([`Не вистачає до ${day(u.end)}`, uah(-u.cents)]);
-  const lines = [`☀️ Доброго ранку! ${day(today)}`, preTable(['', '₴'], kv, 24)];
+  const lines = [`☀️ Доброго ранку! ${day(today)}`, 'Суми в ₴', preTable(null, kv, 24, {kinds: kv.map(() => 'row')})];
   if (cp?.monthlyBudget?.covered && cp.monthlyBudget.estimated) lines.push('* прогноз за останнім місячним планом');
   if(cp?.monthlyBudget?.covered&&cp?.reconciliation?.adjustmentCents)lines.push(esc(reconciliationLine(cp.reconciliation)));
   // Сьогодні й завтра однією таблицею зі спільними колонками; порожній день лишається реченням над таблицею
@@ -613,15 +631,17 @@ export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string, budg
   ];
   const all = groups.flatMap((g) => g[2]);
   const f = cellFormat(all.map((r) => r.cents));
-  const body: string[][] = [];
+  const body: string[][] = [], kinds: ('row' | 'total' | 'group')[] = [];
   lines.push('');
   for (const [title, empty, rows] of groups) {
     if (!rows.length) { lines.push(empty); continue; }
     const shown = rows.map((r) => f === uah ? hrn(r.cents) : r.cents);
     body.push([title, ''], ...rows.map((r, i) => ['  ' + r.name, f(shown[i])]));
-    if (rows.length > 1) body.push(['  Разом', f(shown.reduce((n, c) => n + c, 0))]);
+    kinds.push('group', ...rows.map(() => 'row' as const));
+    // v234: підсумок дня названо днем, щоб не читався як сума обох днів
+    if (rows.length > 1) { body.push([title === 'Сьогодні' ? '  Разом сьогодні' : '  Разом завтра', f(shown.reduce((n, c) => n + c, 0))]); kinds.push('total'); }
   }
-  if (body.length) lines.push(preTable(['Платежі', '₴'], body, 24));
+  if (body.length) lines.push(preTable(['Платежі', 'Сума'], body, 24, {kinds}));
   return lines.join('\n');
 }
 

@@ -97,7 +97,7 @@ function harness(options={}){
     todayExpensesModel:todayReports.todayExpensesModel,formatTodayExpenses:m=>options.todayPages??todayReports.formatTodayExpenses(m),
     setTimeout:(fn,ms)=>{state.delays.push(ms);state.reportEvents.push('pause:'+ms);fn();return 0},
     __finance:()=>({projection:{},today:options.reportToday??'2026-10-21',txs:state.rows,cats:options.categories??[],accounts:options.accounts??[]}),
-    formatWeek:()=>'',weekModel:()=>({}),formatMonth:()=>'',monthModel:()=>({}),
+    formatWeek:()=>'',weekModel:()=>({}),richReport:()=>null,formatMonth:()=>'',monthModel:()=>({}),
     __sections:async()=>{if(options.sectionsError)throw new Error('synthetic');return options.sections??{top:['Баланс: 1 ₴'],cards:['Картки:','Картка: 1 ₴'],installments:[],due:['Найближчі платежі:','25.11 · Інтернет: 300 ₴'],unassigned:[]}},
     __recent:async()=>options.recent===undefined?['Останні операції:','21.10 · кава: -150,00 ₴']:options.recent};
   if(options.voiceMods)Object.assign(bindings,voiceBindings(state,options,bindings.fetch));

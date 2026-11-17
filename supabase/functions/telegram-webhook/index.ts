@@ -17,6 +17,7 @@ import {
 } from '../_shared/bot-reports.ts';
 import { balanceChartSvg, donutSvg } from '../_shared/bot-charts.ts';
 import { svgToPng } from '../_shared/render-png.ts';
+import { richReport } from '../_shared/rich-send.ts';
 import { APP_URL, KB_BTN, MAIN_KB, ENTRY_KB, ENTRY_INPUT_KB } from '../_shared/bot-kb.ts';
 import { askAgent, budgetAnswer, type AgentResult, type AgentTools } from '../_shared/bot-agent.ts';
 import { formatSpending, loadSpendingTxs, spendingModel } from '../_shared/spending.ts';
@@ -1672,7 +1673,9 @@ async function balance(chatId: number, section: StatusSection = 'balance', kb: u
     lines = [...recent, ...(recent.length && s.unassigned.length ? [''] : []), ...s.unassigned];
   } else lines = section === 'cards' ? s.cards : section === 'installments' ? s.installments : section === 'payments' ? s.due : s.top;
   // Розділи містять таблиці <pre>, тож HTML; назви в них екрановані (bot-table.ts)
-  return reply(chatId, lines.length ? lines.join('\n') : EMPTY_SECTION[section], kb, true);
+  // v234: таблиці картинкою з сіткою (replyRich), не вийшло, тоді текст
+  if (!lines.length) return reply(chatId, EMPTY_SECTION[section], kb, true);
+  return replyRich(chatId, lines.join('\n'), kb, `${section}.png`);
 }
 
 // Місяць після «за» (знахідний відмінок збігається з називним)
@@ -1696,7 +1699,8 @@ async function financeTransactions(from: string, today: string, since: number): 
 // Погоджений план та прогноз каси: та сама чиста модель, що у застосунку.
 async function freeBlock(today: string): Promise<FinanceSections> {
   const [acc, fix, cred, sal, cats] = await Promise.all([
-    sb.from('accounts').select('id,name,kind,balance,debt,credit_limit,debt_month,active,mono_account_id,balance_updated_at,min_spend,min_spend_fee')
+    // v234: '*' несе й owner (колонка «Хто» картинки); до застосування міграції запит не падає
+    sb.from('accounts').select('*')
       .eq('active', true).order('sort_order', { ascending: true }).order('id', { ascending: true }),
     sb.from('fixed_payments').select('id,name,amount,day_of_month,month_of_year,period,weekday,bank,type,active,credit_ok,variable,end_date').eq('active', true),
     sb.from('credits').select('id,name,monthly_amount,payment_day,start_year,start_month,total_payments,credit_ok,source'),
@@ -1786,10 +1790,11 @@ async function last(chatId: number, kb: unknown = MAIN_KB) {
 
 // ---------- Звіти кнопок: Графік, Бюджет, Тиждень, Місяць ----------
 // Картинка multipart-запитом sendPhoto; підпис фото до 1024 символів
-async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name: string, kb: unknown = undefined): Promise<boolean> {
+async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name: string, kb: unknown = undefined, html = false): Promise<boolean> {
   try {
     const fd = new FormData();
     fd.append('chat_id', String(chatId));
+    if (html) fd.append('parse_mode', 'HTML');
     if (kb) fd.append('reply_markup', JSON.stringify(kb));
     fd.append('caption', caption.slice(0, 1024));
     fd.append('photo', new Blob([png as BlobPart], { type: 'image/png' }), name);
@@ -1800,6 +1805,19 @@ async function sendPhoto(chatId: number, png: Uint8Array, caption: string, name:
     console.error('sendPhoto failed:', e);
     return false;
   }
+}
+
+// v234: звіт із таблицями картинкою з сіткою (rich-send.ts), решта тексту підписом; не вийшло, тоді текст як раніше
+async function replyRich(chatId: number, html: string, kb: unknown = MAIN_KB, name = 'table.png') {
+  const r = richReport(html);
+  if (r) {
+    try {
+      if (await sendPhoto(chatId, await svgToPng(r.svg), r.caption, name, kb, true)) return;
+    } catch (e) {
+      console.error('table image failed:', (e as Error)?.message);
+    }
+  }
+  return reply(chatId, html, kb, true);
 }
 
 // Дані з тієї самої проєкції, що статус і застосунок; помилка завантаження або звіту дає коротку відповідь
@@ -1835,7 +1853,7 @@ async function chartReport(chatId: number, d: FinanceData, kb: unknown = MAIN_KB
 // 📊 Бюджет: текст окремим повідомленням (підпис фото обмежений 1024 символами), потім кільце категорій
 async function budgetReport(chatId: number, d: FinanceData, kb: unknown = MAIN_KB) {
   const m = budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts);
-  await reply(chatId, formatBudget(m), kb, true);
+  await replyRich(chatId, formatBudget(m), kb, 'budget-table.png');
   if (!m || !m.rows.some((r) => r.fact > 0)) return;
   try {
     await sendPhoto(chatId, await svgToPng(donutSvg(m)), 'Витрати періоду за категоріями', 'budget.png');
@@ -2201,11 +2219,11 @@ Deno.serve(async (req) => {
   else if (/^\/operations$/i.test(text) || text === BTN.operations) await balance(chatId, 'operations', menuKb);
   else if (/^\/chart$/i.test(text) || text === BTN.chart) await withFinance(chatId, (c, d) => chartReport(c, d, menuKb), menuKb);
   else if (/^\/budget$/i.test(text) || text === BTN.budget) await withFinance(chatId, (c, d) => budgetReport(c, d, menuKb), menuKb);
-  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => reply(c, formatWeek(weekModel(d.projection, d.today)), menuKb, true), menuKb);
+  else if (/^\/week$/i.test(text) || text === BTN.week) await withFinance(chatId, (c, d) => replyRich(c, formatWeek(weekModel(d.projection, d.today)), menuKb, 'week.png'), menuKb);
   else if (/^\/today$/i.test(text) || text === BTN.today) await withFinance(chatId, async (c, d) => {
     await sendTodayExpenses(c, formatTodayExpenses(todayExpensesModel(d.txs, d.cats, d.accounts, d.today)), menuKb);
   }, menuKb);
-  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => reply(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), menuKb, true), menuKb);
+  else if (/^\/month$/i.test(text) || text === BTN.month) await withFinance(chatId, (c, d) => replyRich(c, formatMonth(monthModel(d.txs, d.cats, d.accounts, d.today)), menuKb, 'month.png'), menuKb);
   else if (/^\/last$/i.test(text) || text === BTN.last) await last(chatId, menuKb);
   else if (/^\/help$/i.test(text) || text === BTN.help) await reply(chatId, HELP, MAIN_KB);
   else if (/^\/app$/i.test(text) || text === BTN.app) await reply(chatId, 'Відкрити застосунок:', APP_KB);
