@@ -1,9 +1,10 @@
+import { cellFormat, esc, hrn, preTable, uah } from './bot-table.ts';
 import { expenseCategoryParts } from './expense-allocations.ts';
 import { ownCashSeries } from './own-history.ts';
 // Звіти Telegram-бота з тієї самої проєкції, що й застосунок: Графік, Бюджет, Тиждень, Місяць, ранковий підсумок,
 // нагадування про платежі на завтра і запис «Оплачено». Чисті функції без I/O: їх перевіряють node-тести.
 import { financeProjection, lastPayout, payoutBudget, repayDate, type SalaryCfg } from './budget.ts';
-import { budgetLeftLine, dailyPart, day, leftOrOver, money, untilPayoutLine } from './finance-message.ts';
+import { dailyPart, day, money, shownOwnDebt } from './finance-message.ts';
 
 type P = Record<string, any>;
 export type Tx = {
@@ -38,7 +39,6 @@ const pct = (part: number, whole: number) => whole > 0 ? Math.round(part * 100 /
 const MONTHS = ['січень', 'лютий', 'березень', 'квітень', 'травень', 'червень', 'липень', 'серпень', 'вересень', 'жовтень', 'листопад', 'грудень'];
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // «2 рази», «5 разів», «21 раз»
-const times = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'раз' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'рази' : 'разів';
 
 // Київський час: дата і година (0-23) для моменту now. Літній і зимовий час рахує Intl
 export function kyivNow(now: Date): { date: string; hour: number } {
@@ -285,10 +285,15 @@ export function budgetModel(pr: P, txs: Tx[], cats: P[], today: string, fi: P, a
 
 export function formatBudget(m: BudgetModel | null): string {
   if (!m) return 'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.';
-  const lines = [`📊 Бюджет періоду ${day(m.start)}-${day(m.end)}`,
-    `Бюджет: ${money(m.poolCents)} · витрачено ${money(m.spentCents)} (${pct(m.spentCents, m.poolCents)}%) · ${leftOrOver(m.leftCents)}`];
-  if(m.monthlyBudgetCovered&&m.reconciliation?.adjustmentCents)lines.push(reconciliationLine(m.reconciliation));
-  if (m.leftDays > 0 && m.leftCents >= 0) lines.push(`До ${day(m.end)}: ${money(m.dailyCents)}/день (${m.leftDays} дн.)`);
+  // v233: показники таблицею. Залишок з моделі (з коригуванням звірки місячних меж, тоді під таблицею рядок «Звірка»);
+  // коли він рівно бюджет мінус витрачено, береться різниця показаних клітинок, щоб сходилось на калькуляторі
+  const pool = hrn(m.poolCents), spent = hrn(m.spentCents);
+  const left = m.leftCents === m.poolCents - m.spentCents ? pool - spent : hrn(m.leftCents);
+  const rows = [['Бюджет', uah(pool)], [`Витрачено, ${pct(m.spentCents, m.poolCents)}%`, uah(spent)],
+    left < 0 ? ['Перевитрата', uah(-left)] : ['Лишилось', uah(left)]];
+  if (m.leftDays > 0 && m.leftCents >= 0) rows.push([`  на день, ${m.leftDays} дн.`, uah(m.dailyCents)]);
+  const lines = [`📊 Бюджет періоду ${day(m.start)}-${day(m.end)}`, preTable(['', '₴'], rows, 22)];
+  if(m.monthlyBudgetCovered&&m.reconciliation?.adjustmentCents)lines.push(esc(reconciliationLine(m.reconciliation)));
   return lines.join('\n');
 }
 
@@ -340,12 +345,9 @@ export function weekModel(pr: P, today: string): WeekModel {
   };
 }
 
-const signed = (c: number) => (c > 0 ? '+' : c < 0 ? '-' : '') + money(Math.abs(c));
 
 const WD = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-// Гривні без копійок для таблиці; пробіл тисяч звичайний, щоб моноширинні колонки рівнялись
-const uah = (c: number) => (c < 0 ? '-' : '') + String(Math.round(Math.abs(c) / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+// esc, uah і таблиці <pre>: спільний bot-table.ts (v233)
 
 // Таблиця дня у <pre>: день тижня і дата, щоденні витрати, баланс на кінець дня; сьогодні позначене ▸
 export function weekTable(m: WeekModel): string {
@@ -365,17 +367,21 @@ export function formatWeek(m: WeekModel): string {
   if (table) lines.push('', 'Баланс на кінець дня: сьогодні поточний, далі прогноз, ₴', table);
   // Під таблицею: разом витрати тижня з розписом (щоденні + кожен платіж), далі інші події (виплати, погашення, доходи)
   const isSpend = (e: { kind: string; cents: number }) => (e.kind === 'mandatory' || e.kind === 'fee') && e.cents < 0;
+  // v233: розпис витрат і інші події таблицями; «Разом» з показаних клітинок
   if (m.days?.length) {
     const total = m.days.reduce((n, d) => n + d.spendCents, 0);
     const spends = m.events.filter(isSpend);
-    lines.push('', `Разом витрати за тиждень: ${money(total)}`);
-    lines.push(`· щоденні витрати: ${money(total + spends.reduce((n, e) => n + e.cents, 0))}`);
-    for (const e of spends) lines.push(`· ${day(e.date)} ${esc(e.name)}: ${money(-e.cents)}${e.conditional ? ' (умовно)' : ''}`);
+    const vals = [total + spends.reduce((n, e) => n + e.cents, 0), ...spends.map((e) => -e.cents)];
+    const f = cellFormat(vals), shown = f === uah ? vals.map(hrn) : vals;
+    const rows = [['щоденні', f(shown[0])], ...spends.map((e, i) => [`${day(e.date)} ${e.name}${e.conditional ? ' (умовно)' : ''}`, f(shown[i + 1])])];
+    rows.push(['Разом', f(shown.reduce((n, c) => n + c, 0))]);
+    lines.push('', preTable(['Витрати тижня', '₴'], rows, 22));
   }
   const other = m.events.filter((e) => !isSpend(e));
   if (other.length) {
-    lines.push('');
-    for (const e of other) lines.push(`${day(e.date)} · ${esc(e.name)}: ${signed(e.cents)}${e.conditional ? ' (умовно)' : ''}`);
+    const f = cellFormat(other.map((e) => e.cents));
+    const rows = other.map((e) => [`${day(e.date)} ${e.name}${e.conditional ? ' (умовно)' : ''}`, (e.cents > 0 ? '+' : '') + f(e.cents)]);
+    lines.push('', preTable(['Інші події', '₴'], rows, 22));
   }
   return lines.join('\n');
 }
@@ -542,8 +548,8 @@ export function formatMonth(m: MonthModel): string {
     'Суми в ₴, зміна до того самого відрізка минулого місяця', monthTable(m), '',
     `${cap(prevName)} повністю: витрати ${money(m.prevFullSpent)}`];
   if (m.places.length) {
-    lines.push('', 'Топ-5 місць:');
-    m.places.forEach((p, i) => lines.push(`${i + 1}. ${esc(p.name)}: ${money(p.cents)}` + (p.count > 1 ? ` (${p.count} ${times(p.count)})` : '')));
+    const f = cellFormat(m.places.map((p) => p.cents));
+    lines.push('', preTable(['Топ-5 місць', '₴', 'Разів'], m.places.map((p) => [p.name, f(p.cents), String(p.count)]), 16));
   }
   return lines.join('\n');
 }
@@ -580,18 +586,42 @@ const dueOn = (pr: P, date: string) => paymentDues(pr, date)
 
 // v186: budget = budgetModel (залишок бюджету періоду на день, як звіт «Бюджет»); власні мінус обовʼязкові лише як попередження про нестачу
 export function formatDigest(pr: P, credits: P[], txs: Tx[], today: string, budget: BudgetModel | null = null): string {
-  const s = pr.snapshot, u = pr.untilPayout, tomorrow = plusDays(today, 1);
-  const lines = [`☀️ Доброго ранку! ${day(today)}`, `Баланс: ${money(s.positiveOwnCents - s.creditDebtCents)}`];
-  if(pr.currentPeriod?.monthlyBudget?.covered)lines.push('Бюджет періоду: '+money(pr.currentPeriod.spendableTargetCents)+' · '+((pr.currentPeriod.overrunCents||0)>0?leftOrOver(-pr.currentPeriod.overrunCents):leftOrOver(pr.currentPeriod.spendableRemainingCents,'залишок'))+(budget&&(pr.currentPeriod.overrunCents||0)<=0?dailyPart(budget):'')+(pr.currentPeriod.monthlyBudget.estimated?' (прогноз за останнім місячним планом)':''));
-  else if (budget) lines.push(budgetLeftLine(budget));
-  if(pr.currentPeriod?.monthlyBudget?.covered&&pr.currentPeriod?.reconciliation?.adjustmentCents)lines.push(reconciliationLine(pr.currentPeriod.reconciliation));
-  const short = u && u.days > 0 ? untilPayoutLine(u) : null;
-  if (short) lines.push(short);
-  const list = (title: string, empty: string, rows: { name: string; cents: number }[]) => rows.length
-    ? [`${title}: ${money(rows.reduce((n, r) => n + r.cents, 0))}`, ...rows.map((r) => `· ${r.name}: ${money(r.cents)}`)]
-    : [empty];
-  lines.push('', ...list('Заплановано на сьогодні', 'На сьогодні запланованих списань немає.', [...installmentsOn(credits, txs, today), ...dueOn(pr, today)]));
-  lines.push(...list(`Заплановано на завтра, ${day(tomorrow)}`, 'На завтра запланованих платежів немає.', dueOn(pr, tomorrow)));
+  // v233 (власник: «оформи все у вигляді таблиці»): HTML, показники і списки платежів таблицями <pre>
+  const s = pr.snapshot, u = pr.untilPayout, tomorrow = plusDays(today, 1), cp = pr.currentPeriod;
+  // Баланс тими самими показаними клітинками, що розділ «Баланс» бота: число одне
+  const shown = shownOwnDebt(s);
+  const kv: string[][] = [['Баланс', uah(shown.ownCents - shown.debtCents)]];
+  if (cp?.monthlyBudget?.covered) {
+    kv.push([`Бюджет періоду${cp.monthlyBudget.estimated ? '*' : ''}`, uah(cp.spendableTargetCents)]);
+    if ((cp.overrunCents || 0) > 0) kv.push(['Перевитрата', uah(cp.overrunCents)]);
+    else {
+      kv.push([cp.spendableRemainingCents < 0 ? 'Перевитрата' : 'Залишок', uah(Math.abs(cp.spendableRemainingCents))]);
+      if (budget && dailyPart(budget)) kv.push([`  на день, ${budget.leftDays} дн.`, uah(budget.dailyCents)]);
+    }
+  } else if (budget) {
+    kv.push(budget.leftCents < 0 ? [`Перевитрата до ${day(budget.end)}`, uah(-budget.leftCents)] : [`Бюджет до ${day(budget.end)}`, uah(budget.leftCents)]);
+    if (dailyPart(budget)) kv.push([`  на день, ${budget.leftDays} дн.`, uah(budget.dailyCents)]);
+  }
+  if (u && u.days > 0 && u.cents < 0) kv.push([`Не вистачає до ${day(u.end)}`, uah(-u.cents)]);
+  const lines = [`☀️ Доброго ранку! ${day(today)}`, preTable(['', '₴'], kv, 24)];
+  if (cp?.monthlyBudget?.covered && cp.monthlyBudget.estimated) lines.push('* прогноз за останнім місячним планом');
+  if(cp?.monthlyBudget?.covered&&cp?.reconciliation?.adjustmentCents)lines.push(esc(reconciliationLine(cp.reconciliation)));
+  // Сьогодні й завтра однією таблицею зі спільними колонками; порожній день лишається реченням над таблицею
+  const groups: [string, string, { name: string; cents: number }[]][] = [
+    ['Сьогодні', 'На сьогодні запланованих списань немає.', [...installmentsOn(credits, txs, today), ...dueOn(pr, today)]],
+    [`Завтра, ${day(tomorrow)}`, 'На завтра запланованих платежів немає.', dueOn(pr, tomorrow)],
+  ];
+  const all = groups.flatMap((g) => g[2]);
+  const f = cellFormat(all.map((r) => r.cents));
+  const body: string[][] = [];
+  lines.push('');
+  for (const [title, empty, rows] of groups) {
+    if (!rows.length) { lines.push(empty); continue; }
+    const shown = rows.map((r) => f === uah ? hrn(r.cents) : r.cents);
+    body.push([title, ''], ...rows.map((r, i) => ['  ' + r.name, f(shown[i])]));
+    if (rows.length > 1) body.push(['  Разом', f(shown.reduce((n, c) => n + c, 0))]);
+  }
+  if (body.length) lines.push(preTable(['Платежі', '₴'], body, 24));
   return lines.join('\n');
 }
 

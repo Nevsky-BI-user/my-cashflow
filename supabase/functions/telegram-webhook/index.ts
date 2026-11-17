@@ -8,6 +8,7 @@ import { fixedCandidates, fixedOccurrence, fixedOccurrenceKey } from '../_shared
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { financeProjection, lastPayout, type AccTx } from '../_shared/budget.ts';
 import { financeSections, type FinanceSections } from '../_shared/finance-message.ts';
+import { cellFormat, esc, preTable } from '../_shared/bot-table.ts';
 import { paymentDates, paymentPage, type PaymentKind } from '../_shared/payment-picker.ts';
 import { creditPaid, matchCredit } from '../_shared/creditmatch.ts';
 import { loadFinance, loadMonthlyBudgets, type FinanceData } from '../_shared/bot-data.ts';
@@ -443,7 +444,7 @@ async function onSalary(chatId:number,userId:string,parts:string[],answer:(s:str
  // Порада щодо погашення окремо: її збій не має виглядати як збій уже збереженої виплати
  try{
   const finance=await loadFinance(sb,todayKyiv()),advice=repaymentAdviceText(repaymentAdvice(finance.input,finance.projection,result.payout.accountId,todayKyiv()));
-  if(advice)await reply(chatId,advice);
+  if(advice)await reply(chatId,advice,undefined,true);
  }catch(e){console.error('salary advice failed',(e as Error)?.message);}
 }
 
@@ -1670,7 +1671,8 @@ async function balance(chatId: number, section: StatusSection = 'balance', kb: u
     if (!recent) return reply(chatId, 'Не вдалося отримати список операцій.', kb);
     lines = [...recent, ...(recent.length && s.unassigned.length ? [''] : []), ...s.unassigned];
   } else lines = section === 'cards' ? s.cards : section === 'installments' ? s.installments : section === 'payments' ? s.due : s.top;
-  return reply(chatId, lines.length ? lines.join('\n') : EMPTY_SECTION[section], kb);
+  // Розділи містять таблиці <pre>, тож HTML; назви в них екрановані (bot-table.ts)
+  return reply(chatId, lines.length ? lines.join('\n') : EMPTY_SECTION[section], kb, true);
 }
 
 // Місяць після «за» (знахідний відмінок збігається з називним)
@@ -1747,8 +1749,8 @@ async function freeBlock(today: string): Promise<FinanceSections> {
 const fmtMoney = (n: number) =>
   new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + ' ₴';
 
-// Останні 5 операцій рядками: для статусу і для /last
-async function recentLines(): Promise<string[] | null> {
+// Останні 5 операцій рядками таблиці [дата й опис, сума зі знаком, рахунок]: для статусу і для /last
+async function recentLines(): Promise<string[][] | null> {
   const { data, error } = await sb
     .from('transactions')
     .select('amount,type,description,date,source,account_id')
@@ -1760,24 +1762,26 @@ async function recentLines(): Promise<string[] | null> {
   const { data: accRows, error: accErr } = await sb.from('accounts').select('id,name');
   if (accErr) console.error('last: accounts lookup error:', accErr);
   const accName = new Map((accRows || []).map((a) => [a.id, a.name]));
+  // Одна точність на колонку: копійки, лише якщо хоч одна сума їх має
+  const f = cellFormat(data.map((t) => Math.round(Number(t.amount) * 100)));
   return data.map((t) => {
     const d = `${t.date.slice(8, 10)}.${t.date.slice(5, 7)}`;
     const an = t.account_id != null ? accName.get(t.account_id) : null;
-    return `${d} · ${t.description || ''}: ${t.type === 'income' ? '+' : '-'}${fmtMoney(Number(t.amount))}${an ? ' (' + an + ')' : ''}`;
+    return [`${d} ${t.description || ''}`.trim(), (t.type === 'income' ? '+' : '-') + f(Math.round(Number(t.amount) * 100)), an || ''];
   });
 }
 
-// Розділ «Операції»: заголовок і рядки; null, якщо список не прочитався, порожній масив, якщо записів немає
+// Розділ «Операції»: таблиця (HTML); null, якщо список не прочитався, порожній масив, якщо записів немає
 async function recentSection(): Promise<string[] | null> {
-  const lines = await recentLines();
-  return lines && lines.length ? ['Останні операції:', ...lines] : lines;
+  const rows = await recentLines();
+  return rows && rows.length ? [preTable(['Останні операції', '₴', 'Рахунок'], rows, 16)] : rows;
 }
 
 async function last(chatId: number, kb: unknown = MAIN_KB) {
-  const lines = await recentLines();
+  const lines = await recentSection();
   if (!lines) return reply(chatId, 'Не вдалося отримати список.', kb);
   if (!lines.length) return reply(chatId, 'Записів ще немає.', kb);
-  return reply(chatId, '📋 Останні:\n' + lines.join('\n'), kb);
+  return reply(chatId, lines.join('\n'), kb, true);
 }
 
 // ---------- Звіти кнопок: Графік, Бюджет, Тиждень, Місяць ----------
@@ -1831,7 +1835,7 @@ async function chartReport(chatId: number, d: FinanceData, kb: unknown = MAIN_KB
 // 📊 Бюджет: текст окремим повідомленням (підпис фото обмежений 1024 символами), потім кільце категорій
 async function budgetReport(chatId: number, d: FinanceData, kb: unknown = MAIN_KB) {
   const m = budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts);
-  await reply(chatId, formatBudget(m), kb);
+  await reply(chatId, formatBudget(m), kb, true);
   if (!m || !m.rows.some((r) => r.fact > 0)) return;
   try {
     await sendPhoto(chatId, await svgToPng(donutSvg(m)), 'Витрати періоду за категоріями', 'budget.png');
@@ -1933,13 +1937,13 @@ async function agentAnswer(question: string): Promise<AgentResult & { speech?: s
       if (accs.error) throw new Error('accounts lookup failed');
       const m = spendingModel(txs, cats, accs.data || [], q);
       says.push(saySpending(m, today));
-      return formatSpending(m, today);
+      return esc(formatSpending(m, today));
     }),
     budget: (category) => safe('budget', async () => {
       const d = await (finance ??= loadFinance(sb, today));
       const m = budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts);
       says.push(sayBudget(m, category));
-      return budgetAnswer(m, category);
+      return esc(budgetAnswer(m, category));
     }),
   };
   const r = await askAgent(question, { apiKey: CLAUDE_API_KEY, model: Deno.env.get('AGENT_MODEL') || undefined, today, categories: cats.map((c) => c.name) }, tools);
@@ -1951,7 +1955,9 @@ async function answerQuestion(chatId: number, text: string, kb: unknown) {
   if (!CLAUDE_API_KEY || text.startsWith('/') || text.length > 500) return reply(chatId, 'Не зрозумів. ' + HELP);
   await tgCall('sendChatAction', { chat_id: chatId, action: 'typing' });
   const r = await agentAnswer(text);
-  if (r.kind === 'answer' || r.kind === 'clarify' || r.kind === 'off_topic') return reply(chatId, r.text, kb);
+  // Відповідь складена з виходів інструментів: таблиці розділів статусу (HTML) і екранований текст, тож HTML
+  if (r.kind === 'answer') return reply(chatId, r.text, kb, true);
+  if (r.kind === 'clarify' || r.kind === 'off_topic') return reply(chatId, r.text, kb);
   // «дякую», «ок», «привіт»: один рядок-підказка замість усієї довідки
   if (r.kind === 'not_question') return reply(chatId, 'Напишіть питання про гроші родини, наприклад «скільки витратили на продукти в жовтні», або суму й опис: «250 кава».', kb);
   return reply(chatId, 'Не вдалося відповісти. Спробуйте ще раз або скористайтесь кнопками.', kb);
@@ -1967,12 +1973,13 @@ function fromBase64(b64: string): Uint8Array {
   return out;
 }
 
-async function sendVoice(chatId: number, ogg: Uint8Array, caption: string, kb: unknown): Promise<boolean> {
+async function sendVoice(chatId: number, ogg: Uint8Array, caption: string, kb: unknown, html = false): Promise<boolean> {
   try {
     const fd = new FormData();
     fd.append('chat_id', String(chatId));
     if (kb) fd.append('reply_markup', JSON.stringify(kb));
     fd.append('caption', caption.slice(0, 1024));
+    if (html) fd.append('parse_mode', 'HTML');
     fd.append('voice', new Blob([ogg as BlobPart], { type: 'audio/ogg' }), 'answer.ogg');
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendVoice`, { method: 'POST', body: fd });
     if (!r.ok) console.error('sendVoice failed:', r.status, (await r.text()).slice(0, 200));
@@ -2014,18 +2021,20 @@ async function handleVoice(chatId: number, userId: string, updateId: number, voi
     return reply(chatId, `${heard}\n` + (r.kind === 'error' ? 'Не вдалося відповісти. Спробуйте ще раз або скористайтесь кнопками.'
       : 'Не зрозумів. Скажіть суму й опис, щоб записати операцію, або спитайте про баланс чи витрати.'), kb);
   }
-  const caption = `${heard}\n\n${r.text}`;
+  // Підпис і текст як HTML: відповідь може містити таблицю <pre>; почуте й прості тексти екрануються
+  const body = r.kind === 'answer' ? r.text : esc(r.text), heardHtml = esc(heard);
+  const caption = `${heardHtml}\n\n${body}`;
   await tgCall('sendChatAction', { chat_id: chatId, action: 'record_voice' });
   // Голосом коротко: одна фраза з числом (voice-say.ts); повний текст лише в підписі
-  const tts = await voiceRun(sb, 'tts', { text: (r.speech || toSpeech(r.text)).slice(0, 2000) }, 45_000);
+  const tts = await voiceRun(sb, 'tts', { text: (r.speech || toSpeech(r.text.replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'))).slice(0, 2000) }, 45_000);
   if (typeof tts?.audio_b64 === 'string' && tts.audio_b64) {
     const long = caption.length > 1024;
-    if (await sendVoice(chatId, fromBase64(tts.audio_b64), long ? heard : caption, kb)) {
-      if (long) await reply(chatId, r.text, kb);
+    if (await sendVoice(chatId, fromBase64(tts.audio_b64), long ? heardHtml : caption, kb, true)) {
+      if (long) await reply(chatId, body, kb, true);
       return;
     }
   }
-  await reply(chatId, caption, kb);
+  await reply(chatId, caption, kb, true);
 }
 
 Deno.serve(async (req) => {

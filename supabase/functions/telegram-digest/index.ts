@@ -31,12 +31,12 @@ function sameSecret(a: string, b: string): boolean {
   return diff === 0;
 }
 
-async function send(chatId: number, text: string, markup?: unknown): Promise<boolean> {
+async function send(chatId: number, text: string, markup?: unknown, html = false): Promise<boolean> {
   try {
     const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, reply_markup: markup }),
+      body: JSON.stringify({ chat_id: chatId, text, reply_markup: markup, ...(html ? { parse_mode: 'HTML' } : {}) }),
     });
     if (!r.ok) console.error('digest: sendMessage failed:', r.status, (await r.text()).slice(0, 200));
     return r.ok;
@@ -95,7 +95,8 @@ Deno.serve(async (req) => {
   let sent = 0;
   for (const chatId of chats) {
     // Підсумок не розкриває згорнуту користувачем панель кнопок.
-    if (await send(chatId, digest)) sent++;
+    // v233: підсумок і порада з таблицями <pre>, тому HTML
+    if (await send(chatId, digest, undefined, true)) sent++;
     if(salaryToday.length&&await send(chatId,'Сьогодні день виплати. Підтвердіть надходження:',salaryKeyboard(salaryToday)))sent++;
     // Кожне нагадування окремим повідомленням: кнопка «Оплачено» редагує саме його
     for (const it of due) if (await send(chatId, formatReminder(it), paidKb(it.callback))) sent++;

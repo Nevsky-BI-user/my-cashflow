@@ -167,7 +167,7 @@ export async function runCalls(calls: { name: string; input: any }[], deps: Pick
       if (!p) { lines.push('Не зрозумів період. Назвіть місяць, тиждень або дати.'); continue; }
       const search = typeof a.search === 'string' ? a.search.replace(/[«»"<>]/g, '').trim().slice(0, 40) : '';
       const category = a.category != null ? catOk(a.category) : null;
-      if (a.category != null && !category && !search) { lines.push(`Категорії «${String(a.category).slice(0, 40)}» немає.`); continue; }
+      if (a.category != null && !category && !search) { lines.push(`Категорії «${String(a.category).slice(0, 40).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}» немає.`); continue; }
       lines.push(await tools.spending({ type: a.type === 'income' ? 'income' : 'expense', ...p, category, search: search || null }));
       used.push('spending');
     } else if (c.name === 'budget') {
