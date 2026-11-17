@@ -99,7 +99,7 @@ test('Бюджет: бюджет періоду як плитка застосу
  assert.match(t,/^📊 Бюджет періоду 06\.10-21\.10\n/);
  // v151: суми з periodBudgetStart на фікстурі (A 10 801,16 ₴ менше 15 000, тож бюджет 15 000); на день = лишилось / 9 днів 12.10-20.10
  // v233: таблицею в гривнях; Лишилось = Бюджет мінус Витрачено з показаних клітинок (15 000 - 12 374)
- for(const re of [/^Бюджет\s+15 000$/m,/^Витрачено, 82%\s+12 374$/m,/^Лишилось\s+2 626$/m,/^  на день, 9 дн\.\s+292$/m])assert.match(t,re);
+ for(const re of [/^Бюджет\s+15 000$/m,/^Витрачено, 82%\s+12 374$/m,/^Лишилось\s+2 626$/m,/^На день, 9 дн\.\s+292$/m])assert.match(t,re);
  for(const gone of ['Категорії, факт','Найбільші перевитрати','⚠️'])assert.ok(!t.includes(gone),gone+'\n'+t);
  assert.equal(rep.formatBudget(null),'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
  // v183: перевитрата періоду: «перевитрата X» без мінуса, рядка «/день» немає
@@ -165,7 +165,7 @@ test('Тиждень: події 7 днів, баланс на кінець за
  const t=norm(rep.formatWeek(w));
  assert.ok(t.startsWith('📅 Тиждень 12.10-18.10\n'),t);
  // v233: розпис витрат тижня таблицею; Разом = сума показаних рядків (6 000 + 500 + 300 + 1 500)
- for(const re of [/^Витрати тижня\s+₴\s*$/m,/^щоденні\s+6 000$/m,/^12\.10 Прибирання\s+500$/m,/^13\.10 Інтернет\s+300$/m,/^13\.10 Телефон \(розстрочка\)\s+1 500$/m,/^Разом\s+8 300$/m])assert.match(plain(t),re);
+ for(const re of [/^Витрати тижня\s+Сума\s*$/m,/^щоденні\s+6 000$/m,/^12\.10 Прибирання\s+500$/m,/^13\.10 Інтернет\s+300$/m,/^13\.10 Телефон \(розстрочка\)\s+1 500$/m,/^Разом\s+8 300$/m])assert.match(plain(t),re);
  assert.ok(!t.includes('Щоденні витрати за бюджетом'),t);
  assert.ok(!t.includes('Баланс на кінець 18.10'),'рядка балансу на кінець немає');
  assert.ok(!t.includes('Каса'),'рядка про касу немає\n'+t);
@@ -212,7 +212,7 @@ test('Місяць: той самий відрізок минулого міся
  assert.equal(new Set(numRows.map(l=>l.length)).size,1,pre.join('\n'));
  assert.ok(pre.every(l=>!l.includes('…')),'без обрізання');
  // v233: топ-5 місць таблицею: сума і кількість разів
- for(const re of [/^Топ-5 місць\s+₴\s+Разів\s*$/m,/^Фора\s+3 462,52\s+5$/m,/^Сільпо\s+1 368,13\s+2$/m])assert.match(plain(t),re);
+ for(const re of [/^Топ-5 місць\s+Сума\s+Разів\s*$/m,/^Фора\s+3 462,52\s+5$/m,/^Сільпо\s+1 368,13\s+2$/m])assert.match(plain(t),re);
  // Довга назва категорії: окремим рядком, числа рядком нижче
  const long=norm(rep.monthTable({...m,cats:[{name:'Дуже довга назва категорії',cur:100000,prev:50000}]}));
  assert.ok(long.includes('\nДуже довга назва категорії\n'),long);
@@ -309,8 +309,8 @@ test('Ранковий підсумок і нагадування з фікст�
  const {pr,rep,fx}=await setup();
  const t=plain(rep.formatDigest(pr,fx.credits,fx.transactions,fx.today));
  // v233: показники і списки таблицями; Разом = сума показаних рядків
- assert.match(t,/^☀️ Доброго ранку! 12\.10\n\s+₴\s*\nБаланс\s+-33 428$/m);
- assert.match(t,/^Платежі\s+₴\s*\nСьогодні\n  Прибирання\s+500\nЗавтра, 13\.10\n  Інтернет\s+300\n  Телефон \(розстрочка\)\s+1 500\n  Разом\s+1 800$/m);
+ assert.match(t,/^☀️ Доброго ранку! 12\.10\nСуми в ₴\nБаланс\s+-33 428$/m);
+ assert.match(t,/^Платежі\s+Сума\s*\nСьогодні\n  Прибирання\s+500\nЗавтра, 13\.10\n  Інтернет\s+300\n  Телефон \(розстрочка\)\s+1 500\n  Разом завтра\s+1 800$/m);
  assert.ok(!t.includes('Ecoflow'),'сьогоднішня розстрочка вже оплачена операцією');
  const due=rep.dueTomorrow(pr,fx.fixed,fx.credits,fx.today);
  assert.deepEqual(due.map(d=>d.callback),['pd:f:11:2026-10-13','pd:c:22:2026-10-13']);
@@ -414,7 +414,7 @@ test('Ранковий підсумок: залишок бюджету на де
  const {rep}=await setup();
  const base={snapshot:{positiveOwnCents:139800,creditDebtCents:0},events:[],untilPayout:{end:'2026-11-06',days:14,cents:139800,dailyCents:9985}};
  const t=plain(rep.formatDigest(base,[],[],'2026-10-23',{end:'2026-11-06',leftCents:1200000,dailyCents:85714,leftDays:14}));
- assert.match(t,/^Бюджет до 06\.11\s+12 000\n  на день, 14 дн\.\s+857$/m);
+ assert.match(t,/^Бюджет до 06\.11\s+12 000\nНа день, 14 дн\.\s+857$/m);
  assert.ok(!t.includes('Доступно до')&&!t.includes('99,85'),t);
  const short=plain(rep.formatDigest({...base,untilPayout:{end:'2026-11-06',days:14,cents:-50000,dailyCents:0}},[],[],'2026-10-23',null));
  assert.match(short,/^Не вистачає до 06\.11\s+500$/m);

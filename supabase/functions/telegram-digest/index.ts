@@ -1,4 +1,6 @@
 import { repaymentAdvice, repaymentAdviceText } from '../_shared/repayment.ts';
+import { richReport } from '../_shared/rich-send.ts';
+import { svgToPng } from '../_shared/render-png.ts';
 import { salaryOptions, salaryKeyboard } from '../_shared/salary-bot.ts';
 // Ранковий підсумок і нагадування на завтра в Telegram.
 // Викликає pg_cron щогодини о :00 UTC (міграція 27-telegram-digest.sql); функція сама перевіряє, що в Києві зараз 9-та година,
@@ -42,6 +44,23 @@ async function send(chatId: number, text: string, markup?: unknown, html = false
     return r.ok;
   } catch (e) {
     console.error('digest: sendMessage failed:', e);
+    return false;
+  }
+}
+
+// v234: таблиці підсумку картинкою з сіткою (rich-send.ts), решта тексту підписом
+async function sendPhoto(chatId: number, png: Uint8Array, caption: string): Promise<boolean> {
+  try {
+    const fd = new FormData();
+    fd.append('chat_id', String(chatId));
+    fd.append('parse_mode', 'HTML');
+    fd.append('caption', caption);
+    fd.append('photo', new Blob([png as BlobPart], { type: 'image/png' }), 'digest.png');
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: 'POST', body: fd });
+    if (!r.ok) console.error('digest: sendPhoto failed:', r.status, (await r.text()).slice(0, 200));
+    return r.ok;
+  } catch (e) {
+    console.error('digest: sendPhoto failed:', e);
     return false;
   }
 }
@@ -92,11 +111,15 @@ Deno.serve(async (req) => {
   try { budget = budgetModel(d.projection, d.txs, d.cats, d.today, d.input, d.accounts); } catch (e) { console.error('digest: budget failed', (e as Error)?.message); }
   const digest = formatDigest(d.projection, d.credits, d.txs, d.today, budget)+(advice?'\n\n'+advice:'');
   const due = dueTomorrow(d.projection, d.fixed, d.credits, d.today);
+  // Картинка одна на всі чати; не вийшло, тоді текст як раніше
+  const rich = richReport(digest);
+  let png: Uint8Array | null = null;
+  if (rich) try { png = await svgToPng(rich.svg); } catch (e) { console.error('digest: table image failed', (e as Error)?.message); }
   let sent = 0;
   for (const chatId of chats) {
     // Підсумок не розкриває згорнуту користувачем панель кнопок.
     // v233: підсумок і порада з таблицями <pre>, тому HTML
-    if (await send(chatId, digest, undefined, true)) sent++;
+    if ((png && rich && await sendPhoto(chatId, png, rich.caption)) || await send(chatId, digest, undefined, true)) sent++;
     if(salaryToday.length&&await send(chatId,'Сьогодні день виплати. Підтвердіть надходження:',salaryKeyboard(salaryToday)))sent++;
     // Кожне нагадування окремим повідомленням: кнопка «Оплачено» редагує саме його
     for (const it of due) if (await send(chatId, formatReminder(it), paidKb(it.callback))) sent++;
