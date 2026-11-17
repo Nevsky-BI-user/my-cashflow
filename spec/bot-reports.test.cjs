@@ -7,6 +7,8 @@ const {pathToFileURL}=require('node:url');
 const {botFixture}=require('./bot-fixture.cjs');
 const mod=f=>import(pathToFileURL(path.resolve(__dirname,'../supabase/functions/_shared/'+f)).href);
 const norm=s=>String(s).replace(/[  ]/g,' ');
+// v233: текст звіту без тегів <pre> і HTML-екранування, щоб перевіряти рядки таблиць
+const plain=s=>norm(s).replace(/<\/?pre>/g,'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
 const cents=v=>Math.round((Number(v)||0)*100);
 
 async function setup(){
@@ -93,16 +95,16 @@ test('Бюджет: бюджет періоду як плитка застосу
  }
  assert.ok(m.topOver.length<=3);
  for(let i=1;i<m.topOver.length;i++)assert.ok(m.topOver[i-1].fact-m.topOver[i-1].plan>=m.topOver[i].fact-m.topOver[i].plan);
- const t=norm(rep.formatBudget(m));
+ const t=plain(rep.formatBudget(m));
  assert.match(t,/^📊 Бюджет періоду 06\.10-21\.10\n/);
  // v151: суми з periodBudgetStart на фікстурі (A 10 801,16 ₴ менше 15 000, тож бюджет 15 000); на день = лишилось / 9 днів 12.10-20.10
- assert.ok(t.includes('Бюджет: 15 000 ₴ · витрачено 12 373,94 ₴ (82%) · лишилось 2 626,06 ₴'),t);
- assert.ok(t.includes('До 21.10: 291,78 ₴/день (9 дн.)'),t);
+ // v233: таблицею в гривнях; Лишилось = Бюджет мінус Витрачено з показаних клітинок (15 000 - 12 374)
+ for(const re of [/^Бюджет\s+15 000$/m,/^Витрачено, 82%\s+12 374$/m,/^Лишилось\s+2 626$/m,/^  на день, 9 дн\.\s+292$/m])assert.match(t,re);
  for(const gone of ['Категорії, факт','Найбільші перевитрати','⚠️'])assert.ok(!t.includes(gone),gone+'\n'+t);
  assert.equal(rep.formatBudget(null),'Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
  // v183: перевитрата періоду: «перевитрата X» без мінуса, рядка «/день» немає
- const over=norm(rep.formatBudget({...m,leftCents:-50000,dailyCents:0}));
- assert.ok(over.includes('· перевитрата 500 ₴'),over);
+ const over=plain(rep.formatBudget({...m,poolCents:1500000,spentCents:1550000,leftCents:-50000,dailyCents:0}));
+ assert.match(over,/^Перевитрата\s+500$/m);
  assert.ok(!/лишилось -|\/день/.test(over),over);
 });
 
@@ -162,7 +164,8 @@ test('Тиждень: події 7 днів, баланс на кінець за
  assert.deepEqual(w.gap,short?{date:short.date,cents:short.arrearsCents}:null);
  const t=norm(rep.formatWeek(w));
  assert.ok(t.startsWith('📅 Тиждень 12.10-18.10\n'),t);
- for(const l of['Разом витрати за тиждень: 8 300 ₴','· щоденні витрати: 6 000 ₴','· 12.10 Прибирання: 500 ₴','· 13.10 Інтернет: 300 ₴','· 13.10 Телефон (розстрочка): 1 500 ₴'])assert.ok(t.includes(l),l+'\n'+t);
+ // v233: розпис витрат тижня таблицею; Разом = сума показаних рядків (6 000 + 500 + 300 + 1 500)
+ for(const re of [/^Витрати тижня\s+₴\s*$/m,/^щоденні\s+6 000$/m,/^12\.10 Прибирання\s+500$/m,/^13\.10 Інтернет\s+300$/m,/^13\.10 Телефон \(розстрочка\)\s+1 500$/m,/^Разом\s+8 300$/m])assert.match(plain(t),re);
  assert.ok(!t.includes('Щоденні витрати за бюджетом'),t);
  assert.ok(!t.includes('Баланс на кінець 18.10'),'рядка балансу на кінець немає');
  assert.ok(!t.includes('Каса'),'рядка про касу немає\n'+t);
@@ -208,7 +211,8 @@ test('Місяць: той самий відрізок минулого міся
  const numRows=pre.slice(1).filter(l=>/\d/.test(l));
  assert.equal(new Set(numRows.map(l=>l.length)).size,1,pre.join('\n'));
  assert.ok(pre.every(l=>!l.includes('…')),'без обрізання');
- for(const l of['Топ-5 місць:\n1. Фора: 3 462,52 ₴ (5 разів)','4. Сільпо: 1 368,13 ₴ (2 рази)'])assert.ok(t.includes(l),l+'\n'+t);
+ // v233: топ-5 місць таблицею: сума і кількість разів
+ for(const re of [/^Топ-5 місць\s+₴\s+Разів\s*$/m,/^Фора\s+3 462,52\s+5$/m,/^Сільпо\s+1 368,13\s+2$/m])assert.match(plain(t),re);
  // Довга назва категорії: окремим рядком, числа рядком нижче
  const long=norm(rep.monthTable({...m,cats:[{name:'Дуже довга назва категорії',cur:100000,prev:50000}]}));
  assert.ok(long.includes('\nДуже довга назва категорії\n'),long);
@@ -303,10 +307,10 @@ test('Ранковий підсумок: 9-та година за Києвом �
 
 test('Ранковий підсумок і нагадування з фікстури',async()=>{
  const {pr,rep,fx}=await setup();
- const t=norm(rep.formatDigest(pr,fx.credits,fx.transactions,fx.today));
- assert.ok(t.startsWith('☀️ Доброго ранку! 12.10\nБаланс: -33 428 ₴\n'),t);
- assert.ok(t.includes('Заплановано на сьогодні: 500 ₴\n· Прибирання: 500 ₴'),t);
- assert.ok(t.includes('Заплановано на завтра, 13.10: 1 800 ₴\n· Інтернет: 300 ₴\n· Телефон (розстрочка): 1 500 ₴'),t);
+ const t=plain(rep.formatDigest(pr,fx.credits,fx.transactions,fx.today));
+ // v233: показники і списки таблицями; Разом = сума показаних рядків
+ assert.match(t,/^☀️ Доброго ранку! 12\.10\n\s+₴\s*\nБаланс\s+-33 428$/m);
+ assert.match(t,/^Платежі\s+₴\s*\nСьогодні\n  Прибирання\s+500\nЗавтра, 13\.10\n  Інтернет\s+300\n  Телефон \(розстрочка\)\s+1 500\n  Разом\s+1 800$/m);
  assert.ok(!t.includes('Ecoflow'),'сьогоднішня розстрочка вже оплачена операцією');
  const due=rep.dueTomorrow(pr,fx.fixed,fx.credits,fx.today);
  assert.deepEqual(due.map(d=>d.callback),['pd:f:11:2026-10-13','pd:c:22:2026-10-13']);
@@ -325,8 +329,8 @@ test('19 жовтня: платіж Клод 10 800 не зменшується 
   const due=rep.dueTomorrow(pr,fixed,[],'2026-10-19');
   assert.equal(due.length,1);assert.equal(due[0].cents,1080000);
   assert.ok(norm(rep.formatReminder(due[0])).includes('Завтра, 20.10: Клод, 10 800 ₴'));
-  const digest=norm(rep.formatDigest(pr,[],[],'2026-10-19'));
-  assert.ok(digest.includes('Заплановано на завтра, 20.10: 10 800 ₴\n· Клод: 10 800 ₴'),digest);
+  const digest=plain(rep.formatDigest(pr,[],[],'2026-10-19'));
+  assert.match(digest,/^Завтра, 20\.10\n  Клод\s+10 800$/m);
  }
 });
 
@@ -341,9 +345,9 @@ test('Нагадування обʼєднує власну й кредитну �
  const before=JSON.stringify(pr);
  const due=rep.dueTomorrow(pr,fixed,[],'2026-10-19');
  assert.equal(due.length,1);assert.equal(due[0].cents,1080000);assert.equal(due[0].callback,'pd:f:1:2026-10-20');
- const digest=norm(rep.formatDigest(pr,[],[],'2026-10-19'));
- assert.ok(digest.includes('Заплановано на завтра, 20.10: 10 800 ₴\n· Клод: 10 800 ₴'),digest);
- assert.equal((digest.match(/· Клод:/g)||[]).length,1);
+ const digest=plain(rep.formatDigest(pr,[],[],'2026-10-19'));
+ assert.match(digest,/^Завтра, 20\.10\n  Клод\s+10 800$/m);
+ assert.equal((digest.match(/^  Клод\s/gm)||[]).length,1);
  assert.equal(JSON.stringify(pr),before,'форматування не змінює фінансові події');
 });
 
@@ -409,10 +413,10 @@ test('«Оплачено»: розбір callback лише з id, повторн
 test('Ранковий підсумок: залишок бюджету на день замість «Доступно до»',async()=>{
  const {rep}=await setup();
  const base={snapshot:{positiveOwnCents:139800,creditDebtCents:0},events:[],untilPayout:{end:'2026-11-06',days:14,cents:139800,dailyCents:9985}};
- const t=norm(rep.formatDigest(base,[],[],'2026-10-23',{end:'2026-11-06',leftCents:1200000,dailyCents:85714,leftDays:14}));
- assert.ok(t.includes('Бюджет до 06.11: лишилось 12 000 ₴ · 857,14 ₴/день (14 дн.)'),t);
+ const t=plain(rep.formatDigest(base,[],[],'2026-10-23',{end:'2026-11-06',leftCents:1200000,dailyCents:85714,leftDays:14}));
+ assert.match(t,/^Бюджет до 06\.11\s+12 000\n  на день, 14 дн\.\s+857$/m);
  assert.ok(!t.includes('Доступно до')&&!t.includes('99,85'),t);
- const short=norm(rep.formatDigest({...base,untilPayout:{end:'2026-11-06',days:14,cents:-50000,dailyCents:0}},[],[],'2026-10-23',null));
- assert.ok(short.includes('Не вистачає до 06.11: 500 ₴'),short);
+ const short=plain(rep.formatDigest({...base,untilPayout:{end:'2026-11-06',days:14,cents:-50000,dailyCents:0}},[],[],'2026-10-23',null));
+ assert.match(short,/^Не вистачає до 06\.11\s+500$/m);
  assert.ok(!/\/день/.test(short),short);
 });

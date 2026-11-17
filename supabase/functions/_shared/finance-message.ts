@@ -1,5 +1,6 @@
 // Текст Telegram із тієї самої проєкції, що й застосунок. Без API та надсилання повідомлень.
 import type { financeProjection } from './budget.ts';
+import { cellFormat, esc, hrn, preTable, uah } from './bot-table.ts';
 type FinanceMessage = ReturnType<typeof financeProjection>;
 export const money = (cents: number) => new Intl.NumberFormat('uk-UA', {maximumFractionDigits: 2}).format(cents / 100) + ' ₴';
 export const day = (value: string) => value.slice(8, 10) + '.' + value.slice(5, 7);
@@ -16,11 +17,22 @@ export const budgetLeftLine = (m: BudgetLeft) => `Бюджет до ${day(m.end)
 export const previousDay = (value: string) => new Date(Date.parse(value + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
 const plural = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'операція' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'операції' : 'операцій';
 
+// Власні й кредитні в гривнях так, як їх показують клітинки таблиць: сума округлених рядків рахунків
+// Без переліку рахунків (знімок лише з підсумками): підсумки знімка, округлені так само
+export function shownOwnDebt(snapshot: {accounts?: any[]; unassignedAdjustmentCents?: number; positiveOwnCents?: number; creditDebtCents?: number}): {ownCents: number; debtCents: number} {
+  const accounts = snapshot.accounts || [];
+  if (!accounts.length) return {ownCents: hrn(snapshot.positiveOwnCents || 0), debtCents: hrn(snapshot.creditDebtCents || 0)};
+  return {
+    ownCents: Math.max(0, accounts.reduce((n, a) => n + hrn(Math.max(0, a.balanceCents || 0)), 0) + hrn(snapshot.unassignedAdjustmentCents || 0)),
+    debtCents: accounts.reduce((n, a) => n + hrn(a.debtCents || 0), 0),
+  };
+}
+
 export type Installment = {name: string; n: number; amountCents: number; lastDate?: string};
 
 // Розділи статусу бота окремими рядками (v215, власник: «Баланс» лише основне, решта окремими кнопками):
-// top: бюджет на початок періоду, залишок бюджету на день, нестача до виплати, власні, баланс;
-// cards, installments, due: картки, розстрочки, найближчі платежі з заголовком; unassigned: попередження про операції без рахунку.
+// top: таблиця бюджет періоду, залишок бюджету на день, нестача до виплати, власні, кредитні, баланс;
+// cards, installments, due: таблиці <pre> (HTML) карток з рядком «Разом», розстрочок, найближчих платежів; unassigned: попередження.
 // Порожній розділ дає порожній масив.
 // totals: ті самі числа для короткої голосової відповіді (voice-say.ts), рахуються тут один раз разом із текстом
 export type FinanceTotals = {balanceCents: number; cardDebtCents: number; installmentsCents: number; next: {date: string; name: string; cents: number} | null};
@@ -32,39 +44,68 @@ export function financeSections(p: FinanceMessage, unassigned: {count: number; a
   const own = p.snapshot.positiveOwnCents;
   const cardDebt = accounts.reduce((sum, a) => sum + (a.debtCents || 0), 0);
   const balanceCents = own - cardDebt;
+  // v233 (власник 17.11.2026: «оформи все у вигляді таблиці»): кожен розділ таблицею <pre>, одиниця один раз у підписі.
+  // Гривні без копійок; Баланс і «Разом» рахуються з показаних клітинок, щоб сходились на калькуляторі.
+  // Назву розділу показує кнопка, тож над таблицею підпису немає; ₴ стоїть у шапці.
   const top: string[] = [];
+  const kv: string[][] = [];
   const plan = p.nextPlan;
-  // Порядок: бюджет на початок періоду, залишок бюджету на день, нестача до виплати, власні, баланс (власні мінус борг карток)
-  if (plan) top.push(`Бюджет на початок періоду: ${money(plan.spendableTargetCents ?? plan.targetCents)} · ${money(plan.averageDailyCents)}/день (${day(plan.start)}-${day(plan.end)})`);
+  // Порядок: бюджет на початок періоду, залишок бюджету на день, нестача до виплати, власні, кредитні, баланс
+  if (plan) kv.push([`Бюджет ${day(plan.start)}-${day(plan.end)}`, uah(plan.spendableTargetCents ?? plan.targetCents)], ['  на день', uah(plan.averageDailyCents)]);
   else top.push('Бюджет недоступний: налаштуйте суми та дати виплат у застосунку.');
   // v186: залишок бюджету поточного періоду на день; власні мінус обовʼязкові до виплати лише як попередження про нестачу
-  if (budget) top.push(budgetLeftLine(budget));
-  const u = p.untilPayout, short = u && u.days > 0 ? untilPayoutLine(u) : null;
-  if (short) top.push(short);
-  top.push(`Власні кошти: ${money(own)}`, `Баланс: ${money(balanceCents)}`);
+  if (budget) {
+    kv.push(budget.leftCents < 0 ? [`Перевитрата до ${day(budget.end)}`, uah(-budget.leftCents)] : [`Лишилось до ${day(budget.end)}`, uah(budget.leftCents)]);
+    if (dailyPart(budget)) kv.push([`  на день, ${budget.leftDays} дн.`, uah(budget.dailyCents)]);
+  }
+  const u = p.untilPayout;
+  if (u && u.days > 0 && u.cents < 0) kv.push([`Не вистачає до ${day(u.end)}`, uah(-u.cents)]);
+  // Власні й кредитні тими самими показаними клітинками, що «Разом» у розділі «Картки»: число одне на обох екранах
+  const {ownCents: ownShown, debtCents: debtShown} = shownOwnDebt(p.snapshot);
+  kv.push(['Власні', uah(ownShown)], ['Кредитні', uah(debtShown)], ['Баланс', uah(ownShown - debtShown)]);
+  top.push(preTable(['', '₴'], kv, 24));
   const cards: string[] = [];
   if (accounts.length) {
-    cards.push('Картки:');
+    // Рахунки рядками: власні, борг, доступний кредит; «Разом» з показаних клітинок
+    const rows: string[][] = [], notes: string[] = [];
+    let ownT = 0, debtT = 0, freeT = 0, hasFree = false;
     for (const a of accounts) {
-      const parts = [`${a.name}: ${money(a.balanceCents || 0)}`];
+      const bal = hrn(a.balanceCents || 0), debt = hrn(a.debtCents || 0);
+      const limit = Number(a.credit_limit) > 0 ? hrn(Math.max(0, Math.round(Number(a.credit_limit) * 100) - (a.debtCents || 0))) : null;
+      ownT += bal; debtT += debt;
+      if (limit != null) { freeT += limit; hasFree = true; }
+      rows.push([String(a.name), uah(bal), debt ? uah(debt) : '', limit != null ? uah(limit) : '']);
+      const extra: string[] = [];
       if (a.debtCents > 0) {
         const repay = p.events.find(e => e.kind === 'repay' && e.cashDeltaCents < 0 && String(e.id).startsWith(`repay:${a.id}:`));
-        parts.push(`борг ${money(a.debtCents)}` + (repay ? ` · план погашення ${day(repay.date)}` : ''));
+        if (repay) extra.push(`план погашення ${day(repay.date)}`);
       }
-      if (Number(a.credit_limit) > 0) parts.push(`доступно ${money(Math.max(0, Math.round(Number(a.credit_limit) * 100) - (a.debtCents || 0)))}`);
       const ms = p.minSpend.find(m => String(m.accountId) === String(a.id));
-      if (ms) parts.push(ms.left > 0 ? `мін. витрати ${money(ms.spent * 100)} з ${money(ms.min * 100)}` : 'мін. витрати виконано');
-      cards.push(parts.join(' · '));
+      if (ms) extra.push(ms.left > 0 ? `мін. витрати ${money(ms.spent * 100)} з ${money(ms.min * 100)}` : 'мін. витрати виконано');
+      if (extra.length) notes.push(`${esc(String(a.name))}: ${extra.join(' · ')}`);
     }
+    // Операції без рахунку після ручних залишків входять у власні кошти: окремим рядком, щоб «Разом» сходився з Балансом
+    const adj = p.snapshot.unassignedAdjustmentCents || 0;
+    if (hrn(adj)) { ownT += hrn(adj); rows.push(['Без рахунку', uah(adj), '', '']); }
+    rows.push(['Разом', uah(ownT), uah(debtT), hasFree ? uah(freeT) : '']);
+    cards.push(preTable(['₴', 'Власні', 'Борг', 'Доступно'], rows, 12), ...notes);
   }
   const inst: string[] = [];
   if (installments.length) {
-    inst.push(`Розстрочки: ${money(instCents)}`);
-    // Залишок розстрочки: кількість × платіж = сума, дата останнього платежу
-    for (const i of installments) inst.push(`${i.name}: ${i.n} × ${money(i.amountCents)} = ${money(i.n * i.amountCents)}` + (i.lastDate ? ` · до ${day(i.lastDate)}.${i.lastDate.slice(0, 4)}` : ''));
+    // Залишок розстрочки: кількість × платіж = сума, місяць останнього платежу; точність колонки одна на всю колонку
+    const f = cellFormat(installments.map(i => i.amountCents));
+    const rows = installments.map(i => [i.name, String(i.n), f(i.amountCents), f(i.n * i.amountCents), i.lastDate ? i.lastDate.slice(5, 7) + '.' + i.lastDate.slice(2, 4) : '']);
+    rows.push(['Разом', '', f(installments.reduce((n, i) => n + i.amountCents, 0)), f(instCents), '']);
+    inst.push(preTable(['₴', 'К-ть', 'Платіж', 'Сума', 'До'], rows, 10));
   }
   const events = p.events.filter(e => ['mandatory', 'fee'].includes(e.kind)).slice(0, 3);
-  const due = events.length ? ['Найближчі платежі:', ...events.map(e => `${day(e.date)} · ${e.name}: ${money(-e.cashDeltaCents)}${e.certainty === 'conditional' ? ' (умовно)' : ''}`)] : [];
+  const due: string[] = [];
+  if (events.length) {
+    const f = cellFormat(events.map(e => -e.cashDeltaCents));
+    const rows = events.map(e => [`${day(e.date)} ${e.name}${e.certainty === 'conditional' ? ' (умовно)' : ''}`, f(-e.cashDeltaCents)]);
+    if (events.length > 1) rows.push(['Разом', f(events.reduce((n, e) => n - e.cashDeltaCents, 0))]);
+    due.push(preTable(['Найближчі платежі', '₴'], rows, 24));
+  }
   const lost = unassigned.count > 0 ? [`⚠️ Без рахунку: ${unassigned.count} ${plural(unassigned.count)} на ${money(unassigned.amountCents)}. Виберіть рахунок під повідомленнями або в застосунку.`] : [];
   const next = events[0] ? {date: events[0].date, name: events[0].name, cents: -events[0].cashDeltaCents} : null;
   return {top, cards, installments: inst, due, unassigned: lost, totals: {balanceCents, cardDebtCents: cardDebt, installmentsCents: instCents, next}};

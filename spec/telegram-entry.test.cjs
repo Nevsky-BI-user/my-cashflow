@@ -551,6 +551,8 @@ test('v215: розділ під час незавершеного підтвер
  }
  const entryState=harness({pending:entry()});await entryState.send(kb.KB_BTN.cards);
  assert.equal(entryState.state.pending,null);assert.equal(entryState.state.messages.at(-1).text,'Картки:\nКартка: 1 ₴');
+ // v233: розділи статусу містять таблиці <pre>, тому йдуть з parse_mode HTML
+ assert.equal(entryState.state.messages.at(-1).parse_mode,'HTML');
 });
 
 test('v215: «Так / Ні» лишається лише для живого підтвердження, інакше меню повертає головну клавіатуру',async()=>{
@@ -647,7 +649,7 @@ test('v215: уже записана виплата веде до «Змінит�
 function voiceBindings(state,options,baseFetch){
   state.voice=[];state.voices=[];state.agent=[];
   return {
-    parseVoiceEntry:options.voiceMods.parseVoiceEntry,toSpeech:options.voiceMods.toSpeech,
+    parseVoiceEntry:options.voiceMods.parseVoiceEntry,toSpeech:options.voiceMods.toSpeech,esc:options.voiceMods.esc,
     voiceOnline:async()=>options.voiceOnline??true,
     voiceRun:async(sb,kind,input)=>{state.voice.push([kind,input]);return options.voiceRun?options.voiceRun(kind,input):null},
     askAgent:async(q)=>{state.agent.push(q);return options.agent?options.agent(q):{kind:'error'}},
@@ -661,8 +663,8 @@ function voiceBindings(state,options,baseFetch){
 }
 async function voiceHarness(options={}){
   const url=f=>require('node:url').pathToFileURL(path.join(root,'_shared',f)).href;
-  const [ve,sp]=await Promise.all([import(url('voice-entry.ts')),import(url('uk-speech.ts'))]);
-  return harness({...options,voiceMods:{parseVoiceEntry:ve.parseVoiceEntry,toSpeech:sp.toSpeech}});
+  const [ve,sp,tb]=await Promise.all([import(url('voice-entry.ts')),import(url('uk-speech.ts')),import(url('bot-table.ts'))]);
+  return harness({...options,voiceMods:{parseVoiceEntry:ve.parseVoiceEntry,toSpeech:sp.toSpeech,esc:tb.esc}});
 }
 const voiceMsg={voice:{file_id:'v1',duration:4,file_size:20000,mime_type:'audio/ogg'}};
 const stt=text=>kind=>kind==='stt'?{text}:null;

@@ -1,3 +1,4 @@
+import { cellFormat, hrn, preTable, uah } from './bot-table.ts';
 import { monthPayouts, payoutBudget } from './budget.ts';
 // Порада лише з фактичних власних коштів у день виплати; прогнозну зарплату не додаємо.
 export function repaymentAdvice(data:any,projection:any,sourceId:number|string,today:string){
@@ -35,5 +36,10 @@ export function repaymentAdvice(data:any,projection:any,sourceId:number|string,t
 export function repaymentAdviceText(advice:ReturnType<typeof repaymentAdvice>){
  if(advice.reason)return '';
  const money=(n:number)=>new Intl.NumberFormat('uk-UA',{maximumFractionDigits:2}).format(n/100)+' ₴';
- return advice.items.length?'На погашення кредиток після обовʼязкових платежів і бюджету: '+money(advice.availableCents)+'\n'+advice.items.map(i=>'· '+i.name+': '+money(i.amountCents)).join('\n'):'Після резерву обовʼязкових платежів і бюджету вільних власних коштів для погашення немає.';
+ // v233: HTML, розподіл по кредитках таблицею <pre>
+ if(!advice.items.length)return 'Після резерву обовʼязкових платежів і бюджету вільних власних коштів для погашення немає.';
+ const f=cellFormat(advice.items.map(i=>i.amountCents)),shown=f===uah?advice.items.map(i=>hrn(i.amountCents)):advice.items.map(i=>i.amountCents);
+ const rows=advice.items.map((i,k)=>[i.name,f(shown[k])]);
+ if(rows.length>1)rows.push(['Разом',f(shown.reduce((n,c)=>n+c,0))]);
+ return 'На погашення кредиток після обовʼязкових платежів і бюджету: '+money(advice.availableCents)+'\n'+preTable(['Кредитка','₴'],rows,16);
 }
