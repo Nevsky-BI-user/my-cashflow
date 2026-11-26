@@ -195,7 +195,7 @@ npx -y supabase@latest secrets set MONO_REFRESH_SECRET=<значення 1> TWIN
 select vault.create_secret('<значення 1>', 'mono_refresh_secret', 'Заголовок x-mono-refresh-secret для mono-refresh');
 ```
 
-3. Функції (`telegram-webhook` бере дані статусу зі спільного `_shared/bot-status.ts`, `mono-balance` зі спільного `_shared/mono-refresh.ts`, поведінка не змінилась):
+3. Функції (через CLI, бо він читає `verify_jwt` з `config.toml`; через MCP чи Dashboard явно вказати `verify_jwt = false` для `mono-refresh` і `family-status`; `telegram-webhook` бере дані статусу зі спільного `_shared/bot-status.ts`, `mono-balance` зі спільного `_shared/mono-refresh.ts`, поведінка не змінилась):
 
 ```
 npx -y supabase@latest functions deploy mono-refresh family-status mono-balance telegram-webhook
@@ -233,4 +233,4 @@ def family_status(secret: str) -> dict:
 - `budget`: `start`, `end`, `left` (відʼємне: перевитрата), `daily` (на день, null за перевитрати), `left_days`, `estimated` (місячний план оцінено, тоді «Прогноз перевитрати»); null, якщо бюджет недоступний.
 - `freshness.latest_transaction_at`: час запису найновішої операції. `today` (Київ) і `generated_at`.
 
-Перевірка відповіді: `python scripts/verify_family_status.py --json <збережена відповідь>` (файл із живими даними не комітити); без ключів скрипт порівнює відповідь із текстом бота на синтетичній фікстурі.
+Перевірка відповіді: `python scripts/verify_family_status.py --json <збережена відповідь>` (файл із живими даними не комітити); без `--json` скрипт порівнює відповідь із текстом бота на синтетичній фікстурі (`--variant base|rich`, `--date YYYY-MM-DD`).

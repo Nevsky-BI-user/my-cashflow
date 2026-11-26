@@ -64,6 +64,8 @@ def internal(s):
     b = s['budget']
     if b and b['daily'] is not None:
         check('Бюджет: на день є лише за додатного залишку', 1 if b['left'] > 0 and b['left_days'] > 0 else 0, 1)
+    if b:
+        check('Бюджет: перевитрата без суми на день', 1 if b['left'] > 0 or b['daily'] is None else 0, 1)
     secret_like = [k for k in json.dumps(s, ensure_ascii=False).split('"') if re.search(r'token|description|mono_account_id|user_id', k)]
     check('У відповіді немає токенів, описів операцій і службових id', len(secret_like), 0)
 
@@ -82,23 +84,22 @@ def top_table(sections):
     return out
 
 
+NUM = r'-?\d{1,3}(?: \d{3})*(?:,\d\d)?'
+
+
 def cards_table(sections):
+    """Рядки таблиці «Картки» з тексту: назва ліворуч, далі числа, кожне праворуч під своїм підписом шапки."""
     lines = pre_lines('\n'.join(sections['cards']))
     head = lines[0]
-    cols = ['Власні', 'Борг', 'Доступно']
-    edges = [head.index(c) + len(c) for c in cols]
+    edges = [head.index(c) + len(c) for c in ('Власні', 'Борг', 'Доступно')]
     rows, pending = [], None
     for line in lines[1:]:
-        name_part = line[:head.index('Власні')].rstrip()
-        cells = []
-        start = len(name_part)
-        for e in edges:
-            cells.append(num(line[start:e]) if len(line) > start else None)
-            start = e
-        if all(c is None for c in cells):
+        m = re.match(r'^(.*?)\s{2,}(' + NUM + r')$', line[:edges[0]])
+        if not m:
             pending = line.strip()  # довга назва окремим рядком, числа рядком нижче
             continue
-        rows.append((pending or name_part.strip(), cells))
+        cells = [num(m.group(2))] + [num(line[edges[i - 1]:edges[i]]) if len(line) > edges[i - 1] else None for i in (1, 2)]
+        rows.append((pending or m.group(1).strip(), cells))
         pending = None
     return rows
 
@@ -109,7 +110,7 @@ def bot_parity(s, sections):
     check('«Баланс»: Кредитні', s['credit_debt_total'], top.get('Кредитні'))
     check('«Баланс»: Баланс', s['balance'], top.get('Баланс'))
     b = s['budget']
-    left = next(((k, v) for k, v in top.items() if k.startswith('Лишилось до') or 'перевитрати до' in k.lower()), None)
+    left = next(((k, v) for k, v in top.items() if k.startswith('Лишилось до') or re.match(r'(Прогноз перевитрати|Перевитрата) до ', k)), None)
     check('«Баланс»: рядок залишку бюджету є (порівняння не порожнє)', 1 if left and b else 0, 1)
     if left and b:
         sign = 1 if left[0].startswith('Лишилось') else -1
@@ -141,12 +142,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--json', help='збережена відповідь family-status (лише внутрішні тотожності)')
     ap.add_argument('--date', help='дата фікстури YYYY-MM-DD (локальний прогін)')
+    ap.add_argument('--variant', default='base', choices=['base', 'rich'], help='варіант фікстури')
     a = ap.parse_args()
     if a.json:
         data = json.loads(Path(a.json).read_text(encoding='utf-8'))
         internal(data)
     else:
-        cmd = ['node', str(ROOT / 'spec' / 'family-status-fixture.mjs')] + ([a.date] if a.date else [])
+        cmd = ['node', str(ROOT / 'spec' / 'family-status-fixture.mjs'), a.date or '', a.variant]
         out = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', check=True, cwd=ROOT).stdout
         data = json.loads(out)
         check('HTTP 200 на підписаний GET', data['httpStatus'], 200)

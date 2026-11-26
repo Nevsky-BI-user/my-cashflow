@@ -29,15 +29,19 @@ test('без підпису, зі старою міткою, чужим підп
  assert.deepEqual(touched,[]);
 });
 
-test('підписаний GET: ті самі числа, що «Баланс» і «Картки» бота, підсумки сходяться з рядками',async()=>{
- const {both}=await fixture();const r=await both();const s=r.status;
+for(const [variant,day] of [['base','2026-10-12'],['rich','2026-10-12'],['rich','2026-10-25']])test(`підписаний GET (${variant}, ${day}): ті самі числа, що «Баланс» і «Картки» бота, підсумки сходяться з рядками`,async()=>{
+ const {both}=await fixture();const r=await both(day,variant);const s=r.status;
  assert.equal(r.httpStatus,200);
  // Бот: розділи з тих самих даних статусу; Власні, Кредитні, Баланс і «Разом» з тексту таблиць
  const plain=t=>t.replace(/<\/?pre>/g,'').replace(/[  ]/g,' ');
  const top=plain(r.sections.top.join('\n')),cards=plain(r.sections.cards.join('\n'));
  const val=(text,label)=>{const m=text.match(new RegExp('^'+label+'\\s+(-?[\\d ]+)$','m'));assert.ok(m,label+' немає в тексті бота');return Number(m[1].replace(/ /g,''));};
  assert.equal(s.own_total,val(top,'Власні'));assert.equal(s.credit_debt_total,val(top,'Кредитні'));assert.equal(s.balance,val(top,'Баланс'));
- assert.ok(s.budget,'бюджет періоду є');assert.equal(s.budget.left,val(top,'Лишилось до \\d\\d\\.\\d\\d'));assert.equal(s.budget.daily,val(top,'На день, \\d+ дн\\.'));
+ assert.ok(s.budget,'бюджет періоду є');
+ if(s.budget.left>=0){assert.equal(s.budget.left,val(top,'Лишилось до \\d\\d\\.\\d\\d'));assert.equal(s.budget.daily,val(top,'На день, \\d+ дн\\.'));}
+ else{assert.equal(-s.budget.left,val(top,'(?:Прогноз перевитрати|Перевитрата) до \\d\\d\\.\\d\\d'));assert.equal(s.budget.daily,null);}
+ // rich: відʼємний і шестизначний залишки, без рядка «Без рахунку»; довга назва рахунку в «Картках» окремим рядком
+ if(variant==='rich'){assert.equal(s.unassigned_own,null);assert.ok(s.accounts.some(a=>a.own<0)&&s.accounts.some(a=>a.own>=100000));assert.ok(s.budget.left<0);}
  const total=cards.match(/^Разом\s+(-?[\d ]+?)\s{2,}(-?[\d ]+?)\s{2,}(-?[\d ]+)$/m);assert.ok(total);
  assert.deepEqual([s.accounts_total.own,s.accounts_total.debt,s.accounts_total.available],total.slice(1).map(x=>Number(x.replace(/ /g,''))));
  // Калькулятор над показаними числами
@@ -63,8 +67,8 @@ test('підписаний GET: ті самі числа, що «Баланс» 
 
 test('функція лише читає: жодних записів у базу, і config.toml вимикає JWT лише для неї з підписом',async()=>{
  const {both}=await fixture();const r=await both();
- assert.ok(r.sbCalls.length>0);
- for(const c of r.sbCalls)for(const [op] of c.ops)assert.ok(!['insert','update','upsert','delete','rpc'].includes(op),op);
+ assert.ok(r.handlerCalls.length>0&&r.sbCalls.length>0);
+ for(const c of [...r.handlerCalls,...r.sbCalls])for(const [op] of c.ops)assert.ok(!['insert','update','upsert','delete','rpc'].includes(op),op);
  const src=fs.readFileSync(path.join(root,'supabase/functions/_shared/family-status.ts'),'utf8')+fs.readFileSync(path.join(root,'supabase/functions/family-status/index.ts'),'utf8');
  assert.ok(!/\.(insert|update|upsert|delete|rpc)\(/.test(src));
  assert.match(src,/Deno\.env\.get\('TWIN_SECRET'\)/);
