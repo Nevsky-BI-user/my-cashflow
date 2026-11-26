@@ -58,7 +58,9 @@ function endpoint(name, rows, current='wife') {
  let handler;
  let source=fs.readFileSync(path.join(__dirname,`../supabase/functions/${name}/index.ts`),'utf8');
  source=source.replace(/^import .*;\r?\n/gm,'');
- const helpers=require('../supabase/functions/_shared/mono-accounts.ts');
+ const helpers={...require('../supabase/functions/_shared/mono-accounts.ts')};
+ // mono-balance і mono-refresh беруть оновлення з _shared/mono-refresh.ts (імпорти вище вирізано)
+ if(name==='mono-balance'||name==='mono-refresh')Object.assign(helpers,require('../supabase/functions/_shared/mono-refresh.ts'));
  const context={...helpers,createClient:()=>sb,Deno:{env:{get:k=>k==='MONO_WEBHOOK_SECRET'?'test-secret':'test'},serve:fn=>handler=fn},console,Response,Request,URL,setTimeout,fetch:async(url,options)=>{
   calls.push({url,options});
   if(url.endsWith('/client-info'))return Response.json({accounts:options.headers['X-Token']==='wife-token'?[card]:[{...card,id:'h',maskedPan:['4444******1234']}]});

@@ -34,6 +34,37 @@ export function shownOwnDebt(snapshot: {accounts?: any[]; unassignedAdjustmentCe
 
 const KIND: Record<string, string> = {debit: 'дебетова', credit: 'кредитна', cash: 'готівка'};
 
+// Рядки розділу «Картки» числами (гривні, округлені як клітинки таблиці): власні, борг, доступний кредит.
+// «Разом» рахується з цих рядків, тож сходиться на калькуляторі. Спільне для таблиці бота і функції family-status.
+// Доступно лише в рахунку з кредитним лімітом, інакше null; «Без рахунку» (ручні операції без рахунку після
+// мітки ручних залишків) окремим рядком, null, коли округлено до нуля
+export type AccountRow = {id: string | number; name: string; owner: string | null; kind: string | null; bank: string | null;
+  ownCents: number; debtCents: number; availableCents: number | null; balanceUpdatedAt: string | null; mono: boolean; notes: string[]};
+export type AccountRows = {rows: AccountRow[]; unassignedCents: number | null; totals: {ownCents: number; debtCents: number; availableCents: number | null}};
+export function accountRows(p: FinanceMessage): AccountRows {
+  const rows: AccountRow[] = [];
+  let ownT = 0, debtT = 0, freeT = 0, hasFree = false;
+  for (const a of p.snapshot.accounts || []) {
+    const bal = hrn(a.balanceCents || 0), debt = hrn(a.debtCents || 0);
+    const limit = Number(a.credit_limit) > 0 ? hrn(Math.max(0, Math.round(Number(a.credit_limit) * 100) - (a.debtCents || 0))) : null;
+    ownT += bal; debtT += debt;
+    if (limit != null) { freeT += limit; hasFree = true; }
+    const extra: string[] = [];
+    if (a.debtCents > 0) {
+      const repay = p.events.find(e => e.kind === 'repay' && e.cashDeltaCents < 0 && String(e.id).startsWith(`repay:${a.id}:`));
+      if (repay) extra.push(`план погашення ${day(repay.date)}`);
+    }
+    const ms = p.minSpend.find(m => String(m.accountId) === String(a.id));
+    if (ms) extra.push(ms.left > 0 ? `мін. витрати ${money(ms.spent * 100)} з ${money(ms.min * 100)}` : 'мін. витрати виконано');
+    rows.push({id: a.id, name: String(a.name), owner: a.owner ? String(a.owner) : null, kind: a.kind ?? null, bank: a.bank ?? null,
+      ownCents: bal, debtCents: debt, availableCents: limit, balanceUpdatedAt: a.balance_updated_at ?? null, mono: !!a.mono_account_id, notes: extra});
+  }
+  // Операції без рахунку після ручних залишків входять у власні кошти: окремим рядком, щоб «Разом» сходився з Балансом
+  const adj = hrn(p.snapshot.unassignedAdjustmentCents || 0);
+  if (adj) ownT += adj;
+  return {rows, unassignedCents: adj ? adj : null, totals: {ownCents: ownT, debtCents: debtT, availableCents: hasFree ? freeT : null}};
+}
+
 export type Installment = {name: string; n: number; amountCents: number; lastDate?: string};
 
 // Розділи статусу бота окремими рядками (v215, власник: «Баланс» лише основне, решта окремими кнопками):
@@ -74,31 +105,17 @@ export function financeSections(p: FinanceMessage, unassigned: {count: number; a
   top.push('Суми в ₴', preTable(null, kv, 24));
   const cards: string[] = [];
   if (accounts.length) {
-    // Рахунки рядками: власні, борг, доступний кредит; «Разом» з показаних клітинок
     // Картинка: окремі колонки Хто (поле owner, порожнє лишається порожнім) і Тип (kind); текст лишається вузьким
-    const rows: string[][] = [], img: string[][] = [], notes: string[] = [];
-    let ownT = 0, debtT = 0, freeT = 0, hasFree = false;
-    for (const a of accounts) {
-      const bal = hrn(a.balanceCents || 0), debt = hrn(a.debtCents || 0);
-      const limit = Number(a.credit_limit) > 0 ? hrn(Math.max(0, Math.round(Number(a.credit_limit) * 100) - (a.debtCents || 0))) : null;
-      ownT += bal; debtT += debt;
-      if (limit != null) { freeT += limit; hasFree = true; }
-      rows.push([String(a.name), uah(bal), debt ? uah(debt) : '', limit != null ? uah(limit) : '']);
-      img.push([String(a.name), String(a.owner || ''), KIND[String(a.kind)] || '', uah(bal), debt ? uah(debt) : '', limit != null ? uah(limit) : '']);
-      const extra: string[] = [];
-      if (a.debtCents > 0) {
-        const repay = p.events.find(e => e.kind === 'repay' && e.cashDeltaCents < 0 && String(e.id).startsWith(`repay:${a.id}:`));
-        if (repay) extra.push(`план погашення ${day(repay.date)}`);
-      }
-      const ms = p.minSpend.find(m => String(m.accountId) === String(a.id));
-      if (ms) extra.push(ms.left > 0 ? `мін. витрати ${money(ms.spent * 100)} з ${money(ms.min * 100)}` : 'мін. витрати виконано');
-      if (extra.length) notes.push(`${esc(String(a.name))}: ${extra.join(' · ')}`);
+    const ar = accountRows(p), rows: string[][] = [], img: string[][] = [], notes: string[] = [];
+    for (const a of ar.rows) {
+      rows.push([a.name, uah(a.ownCents), a.debtCents ? uah(a.debtCents) : '', a.availableCents != null ? uah(a.availableCents) : '']);
+      img.push([a.name, a.owner || '', KIND[String(a.kind)] || '', uah(a.ownCents), a.debtCents ? uah(a.debtCents) : '', a.availableCents != null ? uah(a.availableCents) : '']);
+      if (a.notes.length) notes.push(`${esc(a.name)}: ${a.notes.join(' · ')}`);
     }
-    // Операції без рахунку після ручних залишків входять у власні кошти: окремим рядком, щоб «Разом» сходився з Балансом
-    const adj = p.snapshot.unassignedAdjustmentCents || 0;
-    if (hrn(adj)) { ownT += hrn(adj); rows.push(['Без рахунку', uah(adj), '', '']); img.push(['Без рахунку', '', '', uah(adj), '', '']); }
-    rows.push(['Разом', uah(ownT), uah(debtT), hasFree ? uah(freeT) : '']);
-    img.push(['Разом', '', '', uah(ownT), uah(debtT), hasFree ? uah(freeT) : '']);
+    if (ar.unassignedCents != null) { rows.push(['Без рахунку', uah(ar.unassignedCents), '', '']); img.push(['Без рахунку', '', '', uah(ar.unassignedCents), '', '']); }
+    const t = ar.totals;
+    rows.push(['Разом', uah(t.ownCents), uah(t.debtCents), t.availableCents != null ? uah(t.availableCents) : '']);
+    img.push(['Разом', '', '', uah(t.ownCents), uah(t.debtCents), t.availableCents != null ? uah(t.availableCents) : '']);
     cards.push('Суми в ₴', preTable(['Рахунок', 'Власні', 'Борг', 'Доступно'], rows, 12, {
       head: ['Рахунок', 'Хто', 'Тип', 'Власні', 'Борг', 'Доступно'], rows: img,
       kinds: img.map((r) => r[0] === 'Разом' ? 'total' : 'row'), aligns: ['l', 'l', 'l', 'r', 'r', 'r'],

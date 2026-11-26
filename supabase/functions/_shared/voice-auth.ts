@@ -2,6 +2,8 @@
 // Ноутбук лише сам звертається до Supabase (вихідні HTTPS-запити), до нього ніхто не підключається.
 // Підпис: X-Voice-Sig = hex(HMAC-SHA256(VOICE_SECRET, "<ts>\n" + тіло)), X-Voice-Ts = unix-секунди.
 // Тіло JSON містить дію (op), тож підпис покриває і дію, і дані. Запит старший чи новіший за 120 с відхиляється.
+// Ту саму перевірку бере family-status (клієнт telegram-twin, секрет TWIN_SECRET, заголовки X-Twin-Ts і X-Twin-Sig):
+// тіла в GET немає, тож замість нього підписується рядок 'GET /family-status' (_shared/family-status.ts).
 const enc = new TextEncoder();
 
 export const nowTs = () => Math.floor(Date.now() / 1000);

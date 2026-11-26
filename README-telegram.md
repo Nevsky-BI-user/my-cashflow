@@ -167,3 +167,70 @@ npx -y supabase@latest functions deploy telegram-webhook telegram-setup categori
 Якщо прийшла інша сума, натисніть «✏️ Інша сума» під кнопкою виплати і надішліть фактичну суму (наприклад `51234,56` або `51 234`). Бот чекає 10 хвилин, `/no` скасовує; перевірки дати, рахунку й повтору ті самі, наявний дохід шукається за введеною сумою. Під записаною виплатою є «✏️ Змінити суму»: нова сума замінює записану. Суму доходу з Monobank змінити не можна, її задає банк. Виправлення потребує міграції `20261112120000_salary_payout_amount_edit.sql`.
 
 У день виплати ранковий підсумок і підтвердження надходження показують суми погашення кредиток із фактично доступних власних коштів після обовʼязкових платежів і бюджету періоду. Саме натискання зарплати гроші між картками не переказує.
+
+## Баланс Monobank без застосунку і стан для telegram-twin (v235)
+
+Дві серверні функції поза ботом.
+
+- `mono-refresh`: pg_cron кожні 30 хв оновлює баланси рахунків Monobank, навіть коли застосунок ніхто не відкривав. Логіка та сама, що в `mono-balance` (`_shared/mono-refresh.ts`): знімок, свіжіший за 60 с, не запитується вдруге (ліміт Monobank на client-info), відповідь 429 нічого не пише. Захист: заголовок `x-mono-refresh-secret`, cron бере його з Vault, як `telegram-digest`. Відповідь лише з лічильниками, без балансів.
+- `family-status`: GET лише для читання для локального клієнта власника (userbot telegram-twin на ПК). Числа ті самі, що в розділах бота «Баланс» і «Картки» (`_shared/bot-status.ts`, `_shared/family-status.ts`). Без операцій, токенів і id.
+
+Курси `rates-refresh` у cron не додані: їх показує лише застосунок, він сам оновлює курси, старші за 12 год.
+
+### Розгортання
+
+1. Секрети (імена): `MONO_REFRESH_SECRET`, `TWIN_SECRET`, кожен щонайменше 32 символи. Згенерувати значення (PowerShell), записати собі:
+
+```
+-join ((1..2) | ForEach-Object { [guid]::NewGuid().ToString('N') })
+```
+
+```
+npx -y supabase@latest secrets set MONO_REFRESH_SECRET=<значення 1> TWIN_SECRET=<значення 2>
+```
+
+2. Те саме значення `MONO_REFRESH_SECRET` у Vault (SQL Editor у Dashboard):
+
+```
+select vault.create_secret('<значення 1>', 'mono_refresh_secret', 'Заголовок x-mono-refresh-secret для mono-refresh');
+```
+
+3. Функції (`telegram-webhook` бере дані статусу зі спільного `_shared/bot-status.ts`, `mono-balance` зі спільного `_shared/mono-refresh.ts`, поведінка не змінилась):
+
+```
+npx -y supabase@latest functions deploy mono-refresh family-status mono-balance telegram-webhook
+```
+
+4. Задача cron: лише міграція `56-mono-refresh-cron.sql` (копія `supabase/migrations/20261126120000_mono_refresh_cron.sql`) через SQL Editor. `db push` не запускати: у теці є старі міграції, які на базі не застосовувались.
+
+Перевірка: `select jobname, schedule, active from cron.job;` показує `mono-refresh` і `*/30 * * * *`; через пів години `balance_updated_at` рахунків Monobank свіжий. Запит до `family-status` без підпису дає 401.
+
+### Як telegram-twin кличе family-status
+
+Підпис: `X-Twin-Sig = hex(HMAC-SHA256(TWIN_SECRET, "<ts>\nGET /family-status"))`, `X-Twin-Ts = <ts>` (unix-секунди). Мітка, старша чи новіша за 120 с від часу сервера, відхиляється; годинник ПК має бути синхронізований. Ключ Supabase не потрібен (`verify_jwt = false`).
+
+```python
+import hashlib, hmac, json, time, urllib.request
+
+URL = 'https://lisedsqwdzshsxydghag.supabase.co/functions/v1/family-status'
+
+def family_status(secret: str) -> dict:
+    ts = str(int(time.time()))
+    sig = hmac.new(secret.encode(), f'{ts}\nGET /family-status'.encode(), hashlib.sha256).hexdigest()
+    req = urllib.request.Request(URL, method='GET', headers={'X-Twin-Ts': ts, 'X-Twin-Sig': sig})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r)
+```
+
+Контрольний вектор (той самий у `spec/family-status.test.cjs`): секрет `0123456789abcdef0123456789abcdef-test-secret`, ts `1794600000` дають `ac3409fcf3fa86d870ab41c6256e265d9b8837f4cd55f9ef6ad1347cdd1d7ea0`.
+
+Відповідь (гривні, округлені як клітинки таблиць бота; підсумки рахуються з показаних рядків):
+
+- `accounts[]`: `name`, `bank`, `kind`, `owner`, `own` (власні), `debt` (борг), `available` (доступний кредит або null), `source` (`mono` чи `manual`), `balance_updated_at`. Баланс ручного рахунку вже з операціями після мітки, як у боті.
+- `unassigned_own`: операції без рахунку після ручних залишків (рядок «Без рахунку» в «Картках») або null; `accounts_total`: «Разом» карток.
+- `own_total`, `credit_debt_total`, `balance`: «Власні», «Кредитні», «Баланс» з розділу «Баланс».
+- `next_payday`, `free_until_payday`: найближча виплата і власні мінус обовʼязкові платежі до неї (відʼємне число бот показує як «Не вистачає»); `payments_until_payday[]` (`date`, `name`, `amount`, `conditional`) і `payments_until_payday_total`.
+- `budget`: `start`, `end`, `left` (відʼємне: перевитрата), `daily` (на день, null за перевитрати), `left_days`, `estimated` (місячний план оцінено, тоді «Прогноз перевитрати»); null, якщо бюджет недоступний.
+- `freshness.latest_transaction_at`: час запису найновішої операції. `today` (Київ) і `generated_at`.
+
+Перевірка відповіді: `python scripts/verify_family_status.py --json <збережена відповідь>` (файл із живими даними не комітити); без ключів скрипт порівнює відповідь із текстом бота на синтетичній фікстурі.
