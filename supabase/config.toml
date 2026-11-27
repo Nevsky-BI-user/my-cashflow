@@ -24,15 +24,25 @@ verify_jwt = true
 [functions.mono-balance]
 verify_jwt = true
 
+# Баланс Monobank без застосунку: кличе pg_cron раз на 30 хв без JWT, захист заголовком x-mono-refresh-secret
+# (секрет MONO_REFRESH_SECRET, у cron з Vault: mono_refresh_secret)
+[functions.mono-refresh]
+verify_jwt = false
+
 # Ранковий підсумок: кличе pg_cron без JWT, захист заголовком x-digest-secret (секрет DIGEST_SECRET, у cron з Vault)
 [functions.telegram-digest]
 verify_jwt = false
 
-# Курси НБУ і ПриватБанку: застосунок кличе з JWT користувача (whitelist у коді),
-# pg_cron раз на день з Bearer <service role> із Vault (секрет rates_refresh_service_key)
+# Курси НБУ і ПриватБанку: застосунок кличе з JWT користувача (whitelist у коді), коли курсам понад 12 год.
+# Задачі cron немає: курси читає лише застосунок, він їх і оновлює (бот курсів не показує)
 [functions.rates-refresh]
 verify_jwt = true
 
 # Мовний сервіс на ноутбуці власника: без JWT, захист підписом HMAC секретом VOICE_SECRET
 [functions.voice-jobs]
+verify_jwt = false
+
+# Стан фінансів для локального клієнта власника (telegram-twin): без JWT, лише GET,
+# захист підписом HMAC секретом TWIN_SECRET з міткою часу (до 120 с)
+[functions.family-status]
 verify_jwt = false
